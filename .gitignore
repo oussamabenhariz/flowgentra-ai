@@ -1,0 +1,22 @@
+# Build artifacts
+target/
+**/*.rlib
+**/*.rmeta
+
+# Cargo lock for examples
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Build output
+build_output.txt
