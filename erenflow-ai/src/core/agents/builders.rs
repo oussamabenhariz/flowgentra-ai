@@ -74,11 +74,12 @@ impl Default for AgentConfig {
 impl AgentConfig {
     /// Create new agent configuration
     pub fn new(name: impl Into<String>, agent_type: AgentType) -> Self {
-        let mut config = Self::default();
-        config.name = name.into();
-        config.agent_type = agent_type.to_string();
-        config.system_prompt = super::SystemPrompts::get_default(agent_type);
-        config
+        Self {
+            name: name.into(),
+            agent_type: agent_type.to_string(),
+            system_prompt: super::SystemPrompts::get_default(agent_type),
+            ..Default::default()
+        }
     }
 }
 
@@ -190,7 +191,7 @@ impl AgentBuilder {
 
     /// Build agent (returns boxed trait object)
     pub fn build(self) -> Result<Box<dyn Agent>, ErenFlowError> {
-        match AgentType::from_str(&self.config.agent_type) {
+        match AgentType::from_type_str(&self.config.agent_type) {
             AgentType::ZeroShotReAct => Ok(Box::new(super::ZeroShotReActAgent::new(self.config))),
             AgentType::FewShotReAct => Ok(Box::new(super::FewShotReActAgent::new(self.config))),
             AgentType::Conversational => Ok(Box::new(super::ConversationalAgent::new(self.config))),
@@ -200,7 +201,7 @@ impl AgentBuilder {
 
 impl AgentType {
     /// Parse string as agent type
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_type_str(s: &str) -> Self {
         match s {
             "zero-shot-react" => AgentType::ZeroShotReAct,
             "few-shot-react" => AgentType::FewShotReAct,
@@ -243,13 +244,13 @@ mod tests {
     #[test]
     fn test_agent_type_parsing() {
         assert_eq!(
-            AgentType::from_str("zero-shot-react"),
+            AgentType::from_type_str("zero-shot-react"),
             AgentType::ZeroShotReAct
         );
         assert_eq!(
-            AgentType::from_str("conversational"),
+            AgentType::from_type_str("conversational"),
             AgentType::Conversational
         );
-        assert_eq!(AgentType::from_str("invalid"), AgentType::ZeroShotReAct);
+        assert_eq!(AgentType::from_type_str("invalid"), AgentType::ZeroShotReAct);
     }
 }
