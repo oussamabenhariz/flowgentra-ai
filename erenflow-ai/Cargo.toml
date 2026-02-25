@@ -1,13 +1,16 @@
 [package]
 name = "erenflow-ai"
 version = "0.1.0"
-edition = "2026"
+edition = "2021"
 description = "A LangGraph-inspired Rust library for building AI agents with graphs"
 authors = ["Oussama Ben Hariz"]
 license = "MIT"
 repository = "https://github.com/oussamabenhariz/ErenFlowAI"
-keywords = ["ai", "agent", "llm", "graph"]
+homepage = "https://github.com/oussamabenhariz/ErenFlowAI"
+documentation = "https://docs.rs/erenflow-ai"
+keywords = ["ai", "agent", "llm", "graph", "workflow"]
 categories = ["algorithms", "development-tools"]
+readme = "README.md"
 
 [dependencies]
 # Async runtime
@@ -45,7 +48,7 @@ chrono = { version = "0.4", features = ["serde"] }
 inventory = "0.1"
 
 # Procedural macros for handler registration
-erenflow-ai-macros = { version = "0.2", path = "../erenflow-ai-macros" }
+erenflow-ai-macros = { version = "0.1", path = "../erenflow-ai-macros" }
 
 # Tracing UI (optional)
 axum = { version = "0.7", optional = true }
