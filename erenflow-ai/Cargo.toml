@@ -1,10 +1,10 @@
 [package]
 name = "erenflow-ai"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "A LangGraph-inspired Rust library for building AI agents with graphs"
-authors = ["Oussama Ben Hariz"]
-license = "MIT"
+authors.workspace = true
+license.workspace = true
 repository = "https://github.com/oussamabenhariz/ErenFlowAI"
 homepage = "https://github.com/oussamabenhariz/ErenFlowAI"
 documentation = "https://docs.rs/erenflow-ai"
