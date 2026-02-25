@@ -11,6 +11,7 @@ use std::sync::RwLock;
 
 /// Metadata stored with each checkpoint (e.g. last node name, timestamp).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CheckpointMetadata {
     /// Last executed node name
     pub last_node: Option<String>,
@@ -21,15 +22,6 @@ pub struct CheckpointMetadata {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-impl Default for CheckpointMetadata {
-    fn default() -> Self {
-        Self {
-            last_node: None,
-            execution_path: Vec::new(),
-            extra: HashMap::new(),
-        }
-    }
-}
 
 /// A checkpoint is a saved state plus metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]

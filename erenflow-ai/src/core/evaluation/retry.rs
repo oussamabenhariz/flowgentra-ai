@@ -229,7 +229,7 @@ impl RetryPolicy {
             return "No retries performed".to_string();
         }
 
-        let mut report = format!("Retry Report:\n");
+        let mut report = "Retry Report:\n".to_string();
         report.push_str(&format!("Attempts: {}\n", result.retry_count + 1));
         report.push_str(&format!("Success: {}\n", result.success));
         report.push_str(&format!(

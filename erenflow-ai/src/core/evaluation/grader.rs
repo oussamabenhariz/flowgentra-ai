@@ -279,7 +279,7 @@ Format as JSON same as before.
 
         let score = if let Some(line) = lines.iter().find(|l| l.to_lowercase().contains("score")) {
             line.split(':')
-                .last()
+                .next_back()
                 .and_then(|s| s.trim().parse::<f64>().ok())
                 .unwrap_or(0.7)
         } else {
@@ -288,7 +288,7 @@ Format as JSON same as before.
 
         let rating = if let Some(line) = lines.iter().find(|l| l.to_lowercase().contains("rating"))
         {
-            line.split(':').last().unwrap_or(&"Good").trim().to_string()
+            line.split(':').next_back().unwrap_or("Good").trim().to_string()
         } else {
             "Good".to_string()
         };

@@ -208,10 +208,7 @@ impl Agent {
 
         // Register all conditions
         type EdgeConditionFn = std::sync::Arc<
-            dyn Fn(
-                    &State,
-                )
-                    -> std::result::Result<Option<String>, crate::core::error::ErenFlowError>
+            dyn Fn(&State) -> std::result::Result<Option<String>, crate::core::error::ErenFlowError>
                 + Send
                 + Sync,
         >;

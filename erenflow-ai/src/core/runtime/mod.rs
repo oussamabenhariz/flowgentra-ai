@@ -492,17 +492,14 @@ impl AgentRuntime {
                             let _ = self.middleware_pipeline.execute_on_complete(&state).await;
                             return Ok(state);
                         }
-                        match edge.should_take(&state).await {
-                            Ok(true) => {
-                                let next = edge
-                                    .get_next_node(&state)
-                                    .await?
-                                    .unwrap_or_else(|| edge.to.clone());
-                                if seen.insert(next.clone()) {
-                                    next_nodes.push(next);
-                                }
+                        if let Ok(true) = edge.should_take(&state).await {
+                            let next = edge
+                                .get_next_node(&state)
+                                .await?
+                                .unwrap_or_else(|| edge.to.clone());
+                            if seen.insert(next.clone()) {
+                                next_nodes.push(next);
                             }
-                            _ => {}
                         }
                     }
                 }

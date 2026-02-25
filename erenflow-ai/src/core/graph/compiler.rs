@@ -308,21 +308,21 @@ impl GraphCompiler {
 
         // Initialize all nodes
         for node in &nodes_set {
-            adjacency.entry(node.clone()).or_insert_with(Vec::new);
+            adjacency.entry(node.clone()).or_default();
             reverse_adjacency
                 .entry(node.clone())
-                .or_insert_with(Vec::new);
+                .or_default();
         }
 
         // Add edges
         for (from, to) in edges {
             adjacency
                 .entry(from.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(to.clone());
             reverse_adjacency
                 .entry(to)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(from);
         }
 
@@ -507,12 +507,11 @@ impl GraphCompiler {
         let mut rec_stack = HashSet::new();
 
         for node in &self.nodes {
-            if !visited.contains(node) {
-                if self.dfs_has_cycle(node, &mut visited, &mut rec_stack)? {
+            if !visited.contains(node)
+                && self.dfs_has_cycle(node, &mut visited, &mut rec_stack)? {
                     let path = self.find_cycle_path();
                     return Err(CompilationError::InfiniteLoop(path));
                 }
-            }
         }
 
         Ok(())
@@ -610,7 +609,7 @@ impl GraphCompiler {
         for (node, depth) in node_depths {
             stages
                 .entry(*depth)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(node.clone());
         }
 

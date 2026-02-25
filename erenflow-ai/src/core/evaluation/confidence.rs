@@ -196,7 +196,7 @@ impl ConfidenceScorer {
                     score += 0.1;
                 }
 
-                score.max(0.0).min(1.0)
+                score.clamp(0.0, 1.0)
             }
             Value::Object(o) => {
                 if o.is_empty() {
@@ -255,7 +255,7 @@ impl ConfidenceScorer {
                 indicators.push("Relevant to task".into());
             }
 
-            relevance.max(0.4).min(1.0)
+            relevance.clamp(0.4, 1.0)
         } else {
             // Without task description, assume relevant
             0.7
@@ -290,7 +290,7 @@ impl ConfidenceScorer {
                     score += 0.1;
                 }
 
-                score.max(0.0).min(1.0)
+                score.clamp(0.0, 1.0)
             }
             Value::String(s) => {
                 let words = s.split_whitespace().count();

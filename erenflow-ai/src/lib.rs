@@ -46,13 +46,13 @@
 pub mod core;
 
 // Re-export the register_handler macro
-pub use erenflow_ai_macros::register_handler;
 pub use core::agent::{from_config_path, ArcHandler, HandlerEntry};
 pub use core::config::AgentConfig;
 pub use core::error::{ErenFlowError, Result};
 pub use core::graph::Graph;
 pub use core::runtime::AgentRuntime;
 pub use core::state::State;
+pub use erenflow_ai_macros::register_handler;
 
 /// Prelude module for commonly used types and macros.
 ///

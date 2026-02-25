@@ -10,17 +10,13 @@ use std::sync::RwLock;
 
 /// Configuration for buffer/window: limit how many messages are kept or returned.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct BufferWindowConfig {
     /// Maximum number of messages to keep per thread (sliding window). None = no limit.
     #[serde(default)]
     pub max_messages: Option<usize>,
 }
 
-impl Default for BufferWindowConfig {
-    fn default() -> Self {
-        Self { max_messages: None }
-    }
-}
 
 /// Conversation memory: message history per thread with optional buffer/window.
 pub trait ConversationMemory: Send + Sync {
@@ -94,7 +90,7 @@ impl ConversationMemory for InMemoryConversationMemory {
             .store
             .read()
             .map_err(|e| crate::core::error::ErenFlowError::StateError(e.to_string()))?;
-        let list = guard.get(thread_id).map(Vec::clone).unwrap_or_default();
+        let list = guard.get(thread_id).cloned().unwrap_or_default();
         let out = match limit {
             Some(n) if list.len() > n => list[list.len().saturating_sub(n)..].to_vec(),
             _ => list,

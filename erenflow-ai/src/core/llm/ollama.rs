@@ -88,9 +88,7 @@ impl LLMClient for OllamaClient {
             .get("message")
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
-            .ok_or_else(|| {
-                ErenFlowError::LLMError("Invalid Ollama response format".to_string())
-            })?;
+            .ok_or_else(|| ErenFlowError::LLMError("Invalid Ollama response format".to_string()))?;
 
         Ok(Message::assistant(content))
     }

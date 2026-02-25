@@ -76,9 +76,7 @@ impl LLMClient for OpenAIClient {
             .and_then(|c| c.get("message"))
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
-            .ok_or_else(|| {
-                ErenFlowError::LLMError("Invalid OpenAI response format".to_string())
-            })?;
+            .ok_or_else(|| ErenFlowError::LLMError("Invalid OpenAI response format".to_string()))?;
 
         Ok(Message::assistant(content))
     }
@@ -131,9 +129,7 @@ impl LLMClient for OpenAIClient {
             .and_then(|c| c.get("message"))
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
-            .ok_or_else(|| {
-                ErenFlowError::LLMError("Invalid OpenAI response format".to_string())
-            })?;
+            .ok_or_else(|| ErenFlowError::LLMError("Invalid OpenAI response format".to_string()))?;
 
         let usage = data.get("usage").map(|u| TokenUsage {
             prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),

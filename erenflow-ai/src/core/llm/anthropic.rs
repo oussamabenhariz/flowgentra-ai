@@ -83,9 +83,7 @@ impl LLMClient for AnthropicClient {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| {
-                ErenFlowError::LLMError(format!("Anthropic API request failed: {}", e))
-            })?;
+            .map_err(|e| ErenFlowError::LLMError(format!("Anthropic API request failed: {}", e)))?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
