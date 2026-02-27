@@ -1,0 +1,74 @@
+# QA Agent Configuration
+# A simple question-answering agent that processes user queries and uses Mistral LLM
+
+name: "qa_agent"
+description: "A question-answering agent using Mistral"
+
+# LLM Configuration - Using Mistral
+llm:
+  provider: mistral
+  model: "mistral-small-latest"
+  api_key: ${MISTRAL_API_KEY}
+  temperature: 0.7
+  max_tokens: 1024
+  timeout: 30
+
+# Graph Configuration - Workflow Definition
+graph:
+  nodes:
+    # Node 1: Validate and prepare input
+    - name: validate_input
+      description: "Validate and prepare user input"
+      handler: handlers::validate_input
+      timeout: 5
+
+    # Node 2: Get context (optional enrichment)
+    - name: get_context
+      description: "Retrieve relevant context for the question"
+      handler: handlers::get_context
+      timeout: 10
+
+    # Node 3: Generate answer using LLM
+    - name: generate_answer
+      description: "Generate answer using Mistral LLM"
+      handler: handlers::generate_answer
+      uses_llm: true
+      timeout: 20
+
+    # Node 4: Format the response
+    - name: format_response
+      description: "Format the final response"
+      handler: handlers::format_response
+      timeout: 5
+
+  edges:
+    # Start to validation
+    - from: START
+      to: validate_input
+      description: "Begin workflow"
+
+    # Validation to context retrieval
+    - from: validate_input
+      to: get_context
+      description: "Input validated, get context"
+
+    # Context to answer generation
+    - from: get_context
+      to: generate_answer
+      description: "Context ready, generate answer"
+
+    # Answer to formatting
+    - from: generate_answer
+      to: format_response
+      description: "Answer generated, format it"
+
+    # End
+    - from: format_response
+      to: END
+      description: "Complete"
+
+# Memory Configuration (optional)
+memory:
+  type: "conversation"
+  max_messages: 10
+  buffer_size: 5

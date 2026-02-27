@@ -1,0 +1,19 @@
+[package]
+name = "qa-agent-example"
+version = "0.1.0"
+edition = "2021"
+description = "ErenFlowAI QA Agent Example with config.yaml and handlers"
+
+[dependencies]
+erenflow-ai = { path = "../../" }
+tokio = { version = "1.35", features = ["full"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+dotenv = "0.15"
+
+[[bin]]
+name = "qa_agent"
+path = "src/main.rs"
