@@ -1,0 +1,80 @@
+[package]
+name = "flowgentra-ai"
+version.workspace = true
+edition.workspace = true
+description = "A LangGraph-inspired Rust library for building AI agents with graphs"
+authors.workspace = true
+license.workspace = true
+repository = "https://github.com/oussamabenhariz/FlowgentraAI"
+homepage = "https://github.com/oussamabenhariz/FlowgentraAI"
+documentation = "https://docs.rs/flowgentra-ai"
+keywords = ["ai", "agent", "llm", "graph", "workflow"]
+categories = ["algorithms", "development-tools"]
+readme = "../README.md"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_yml = "0.0.12"
+serde_json = "1.0"
+
+# Async traits and utilities
+async-trait = "0.1"
+futures = "0.3"
+
+# Global state and lazy initialization
+once_cell = "1.19"
+
+# Error handling
+thiserror = "1.0"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+
+# HTTP client (for LLM/MCP calls)
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# Web framework (for visualization UI and web APIs)
+axum = "0.7"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+regex = "1.10"
+dotenv = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Auto-registration via inventory
+inventory = "0.1"
+
+# Procedural macros for handler registration
+flowgentra-ai-macros = { version = "0.1", path = "../flowgentra-ai-macros" }
+
+# Visualization (SVG generation for graphs)
+svg = { version = "0.13" }
+dashmap = "6.1.0"
+
+# Middleware and Services
+tower = { version = "0.4", features = ["util", "retry", "timeout"] }
+
+# PDF text extraction
+pdf-extract = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+
+[lib]
+name = "flowgentra_ai"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flowgentra-ai"
+path = "src/main.rs"
+
+

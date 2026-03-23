@@ -1,14 +1,14 @@
-# Contributing to ErenFlowAI
+# Contributing to FlowgentraAI
 
-Thank you for your interest in contributing to ErenFlowAI! We welcome contributions of all kinds.
+Thank you for your interest in contributing to FlowgentraAI! We welcome contributions of all kinds.
 
 ## Getting Started
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/ErenFlowAI.git
-   cd ErenFlowAI
+   git clone https://github.com/YOUR_USERNAME/FlowgentraAI.git
+   cd FlowgentraAI
    ```
 
 3. **Create a feature branch**:
@@ -63,24 +63,24 @@ cargo clippy
 ## Project Structure
 
 ```
-erenflow-ai/              - Main library crate
+flowgentra-ai/              - Main library crate
 ├── src/
 │   ├── core/            - Core AI agent framework
 │   ├── lib.rs
 │   └── main.rs
 └── Cargo.toml
 
-erenflow-ai-macros/       - Procedural macros crate
+flowgentra-ai-macros/       - Procedural macros crate
 ├── src/
 └── Cargo.toml
 ```
 
 ## Documentation
 
-- See `erenflow-ai/README.md` for feature overview
-- See `erenflow-ai/QUICKSTART.md` for quick start guide
-- See `erenflow-ai/DEVELOPER_GUIDE.md` for architecture details
-- See `erenflow-ai/CONFIG_GUIDE.md` for configuration reference
+- See `flowgentra-ai/README.md` for feature overview
+- See `flowgentra-ai/QUICKSTART.md` for quick start guide
+- See `flowgentra-ai/DEVELOPER_GUIDE.md` for architecture details
+- See `flowgentra-ai/CONFIG_GUIDE.md` for configuration reference
 
 ## Code Style
 
@@ -94,4 +94,4 @@ We follow standard Rust conventions:
 
 Feel free to open an issue or discussion for questions about contributing.
 
-Thank you for helping make ErenFlowAI better! 🎉
+Thank you for helping make FlowgentraAI better! 🎉

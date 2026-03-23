@@ -1,0 +1,74 @@
+# RAG (Retrieval-Augmented Generation) Example
+# Demonstrates indexing PDF documents into ChromaDB, retrieving relevant context,
+# and answering questions using an LLM augmented with retrieved knowledge.
+#
+# Prerequisites:
+#   1. Start ChromaDB:  python rag-example/run_chroma.py
+#   2. Set env var:     MISTRAL_API_KEY  (used for both LLM and embeddings)
+#   3. (Optional) Place PDF files in rag-example/data/
+
+name: "rag_pipeline"
+description: "RAG knowledge-base Q&A with ChromaDB and real embeddings"
+
+llm:
+  provider: mistral
+  model: mistral-small-latest
+  api_key: ${MISTRAL_API_KEY}
+
+graph:
+  rag:
+    vector_store:
+      type: chroma
+      endpoint: "http://localhost:8000"
+      collection: "rag_example_docs"
+
+    embeddings:
+      provider: mistral
+      model: mistral-embed
+      api_key: ${MISTRAL_API_KEY}
+
+    retrieval:
+      top_k: 5
+      similarity_threshold: 0.3
+
+    pdf:
+      chunk_size: 1000
+      chunk_overlap: 200
+
+  nodes:
+    - name: index_documents
+      handler: index_documents
+
+    - name: retrieve_context
+      handler: retrieve_context
+
+    - name: answer_with_context
+      handler: answer_with_context
+
+    - name: rag_coordinator
+      type: supervisor
+      config:
+        strategy: sequential
+        children: [index_documents, retrieve_context, answer_with_context]
+        collect_stats: true
+
+  edges:
+    - from: START
+      to: rag_coordinator
+    - from: rag_coordinator
+      to: END
+
+state_schema:
+  query:
+    type: string
+  pdf_dir:
+    type: string
+    description: "Directory containing PDF files to index"
+  indexed_count:
+    type: integer
+  retrieved_documents:
+    type: object
+  context:
+    type: string
+  answer:
+    type: string

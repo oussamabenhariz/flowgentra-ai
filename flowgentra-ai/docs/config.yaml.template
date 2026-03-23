@@ -1,0 +1,217 @@
+```plaintext
+# FlowgentraAI Agent Configuration Template
+# 
+# This is a template configurations for creating your FlowgentraAI agent.
+# Copy this file and modify it for your specific use case.
+#
+# REQUIRED: You must create a config.yaml file in your project root
+# to use FlowgentraAI. This file defines your entire agent.
+#
+# Documentation: See CONFIG_GUIDE.md for complete reference
+#
+
+# ============================================================================
+# REQUIRED: Basic Agent Metadata
+# ============================================================================
+name: "my_agent"
+description: "Description of what your agent does"
+
+# ============================================================================
+# REQUIRED: LLM Configuration
+# ============================================================================
+# Choose your language model provider
+# 
+# Supported providers:
+# - openai (GPT-4, GPT-3.5-turbo, etc.)
+# - anthropic (Claude)
+# - mistral
+# - groq
+# - azure (Azure OpenAI)
+# - ollama (local)
+#
+llm:
+  provider: openai              # Required
+
+  # Model identifier (varies by provider)
+  model: gpt-4                  # Required
+  # Options: gpt-4, gpt-4-turbo, gpt-3.5-turbo (OpenAI)
+  # Options: claude-3-opus-20240229, claude-3-sonnet (Anthropic)
+  # Options: mistral-large, mistral-medium (Mistral)
+  # Options: mixtral-8x7b-32768 (Groq)
+  # Options: mistral, llama2, neural-chat (Ollama)
+
+  # API Key - Use environment variables!
+  api_key: ${OPENAI_API_KEY}    # Required
+  # Set: export OPENAI_API_KEY="sk-..."
+  # Or:  Create .env file with OPENAI_API_KEY=sk-...
+
+  # Temperature: 0.0 (deterministic) to 1.0 (creative)
+  temperature: 0.7              # Optional
+
+  # Maximum tokens for responses
+  max_tokens: 2000              # Optional
+
+  # Request timeout in seconds
+  timeout: 30                   # Optional
+
+  # Fallback providers (automatic failover)
+  fallbacks:                    # Optional
+    - provider: anthropic
+      model: claude-3-opus-20240229
+      api_key: ${ANTHROPIC_API_KEY}
+      temperature: 0.7
+
+# ============================================================================
+# REQUIRED: Graph Configuration (Your Workflow)
+# ============================================================================
+# Defines the nodes (steps) and edges (connections) of your agent
+#
+graph:
+  nodes:
+    # Node 1: Input Processing
+    - name: input_processor
+      description: "Extract and validate user input"
+      handler: handlers::input_processor
+      # timeout: 10              # Optional: timeout in seconds
+      # retries: 3               # Optional: auto-retry count
+
+    # Node 2: Generate Response
+    - name: generate_response
+      description: "Generate response using LLM"
+      handler: handlers::generate_response
+      timeout: 20
+
+    # Add more nodes as needed...
+
+  edges:
+    # Edge 1: Start to first node
+    - from: START
+      to: input_processor
+      description: "Begin workflow"
+
+    # Edge 2: Between nodes
+    - from: input_processor
+      to: generate_response
+      description: "Process input and generate response"
+
+    # Edge 3: End
+    - from: generate_response
+      to: END
+      description: "Complete workflow"
+
+    # Optional: Conditional edges
+    # - from: some_node
+    #   to: another_node
+    #   condition: my_condition
+    #   description: "Only if condition is true"
+
+# ============================================================================
+# OPTIONAL: State Schema
+# ============================================================================
+# Document what data flows through your agent
+# Format: Each field can have a type and description
+#
+# Supports both structured format:
+#   field_name:
+#     type: string
+#     description: "Field description"
+#
+# And legacy format:
+#   field_name: "string - Field description"
+#
+state_schema:
+  input:
+    type: string
+    description: "User input"
+  response:
+    type: string
+    description: "Agent response"
+  # Add more fields as your agent uses them
+
+# ============================================================================
+# OPTIONAL: Conditional Routing
+# ============================================================================
+# Define conditions used in edges (if using conditional routing)
+#
+conditions:
+  # - name: is_complex_query
+  #   description: "Check if query complexity > 70"
+  # - name: is_simple_query
+  #   description: "Check if query is straightforward"
+
+# ============================================================================
+# OPTIONAL: RAG Configuration
+# ============================================================================
+# Enable Retrieval-Augmented Generation (semantic search)
+#
+# rag:
+#   enabled: true
+#   vector_store:
+#     type: pinecone            # Options: pinecone, weaviate, chroma
+#     index_name: "my-index"
+#     environment: "us-west-2-aws"
+#     api_key: ${PINECONE_API_KEY}
+#   embedding_model: openai
+#   embedding_dimension: 1536
+#   retrieval_strategy: semantic
+#   top_k: 5
+
+# ============================================================================
+# OPTIONAL: MCP Configuration
+# ============================================================================
+# Model Context Protocol - Connect external tools
+#
+# mcp:
+#   enabled: true
+#   tools:
+#     - name: web_search
+#       description: "Search the web for information"
+#       type: external
+#       endpoint: "http://localhost:3000/web_search"
+#     - name: calculator
+#       description: "Perform calculations"
+#       type: builtin
+
+# ============================================================================
+# OPTIONAL: Middleware
+# ============================================================================
+# Add request/response processing middleware
+#
+middleware:
+  - name: logging
+    enabled: true
+    # level: debug
+  # - name: rate_limiting
+  #   enabled: true
+  #   rpm: 60
+  # - name: cache
+  #   enabled: true
+  #   ttl: 3600
+
+# ============================================================================
+# OPTIONAL: Health Monitoring
+# ============================================================================
+# Monitor agent and service health
+#
+# health:
+#   enabled: true
+#   check_interval: 30
+#   checks:
+#     - llm_connectivity
+#     - memory_usage
+
+# ============================================================================
+# OPTIONAL: Observability & Tracing
+# ============================================================================
+# Enable distributed tracing for debugging
+#
+# observability:
+#   tracing_enabled: true
+#   trace_level: debug
+#   spans:
+#     - name: handler_execution
+#       sample_rate: 1.0
+#     - name: llm_calls
+#       sample_rate: 0.5
+
+```

@@ -1,5 +1,10 @@
 [workspace]
-members = ["erenflow-ai", "erenflow-ai-macros", "simple-example"]
+members = [
+    "flowgentra-ai",
+    "flowgentra-ai-macros",
+    "rag-example",
+    ]
+
 resolver = "2"
 
 [workspace.package]
@@ -7,5 +12,5 @@ version = "0.1.1"
 edition = "2021"
 authors = ["Oussama Ben Hariz"]
 license = "MIT"
-repository = "https://github.com/oussamabenhariz/ErenFlowAI"
-homepage = "https://github.com/oussamabenhariz/ErenFlowAI"
+repository = "https://github.com/oussamabenhariz/FlowgentraAI"
+homepage = "https://github.com/oussamabenhariz/FlowgentraAI"

@@ -1,0 +1,242 @@
+//! File-based checkpointer — persists state checkpoints as JSON files on disk.
+//!
+//! Each thread gets its own directory, and each checkpoint is a separate JSON file.
+//! This allows resuming graph execution across process restarts.
+//!
+//! # Directory layout
+//! ```text
+//! <base_dir>/
+//!   <thread_id>/
+//!     step_0000.json
+//!     step_0001.json
+//!     ...
+//! ```
+
+use async_trait::async_trait;
+use std::path::{Path, PathBuf};
+
+use crate::core::state::State;
+use super::checkpoint::{Checkpoint, Checkpointer};
+use super::error::{Result, StateGraphError};
+
+/// File-based checkpointer that persists checkpoints as JSON files.
+pub struct FileCheckpointer {
+    base_dir: PathBuf,
+}
+
+impl FileCheckpointer {
+    /// Create a new file checkpointer rooted at the given directory.
+    /// Creates the directory if it doesn't exist.
+    pub fn new(base_dir: impl AsRef<Path>) -> std::io::Result<Self> {
+        let base_dir = base_dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&base_dir)?;
+        Ok(Self { base_dir })
+    }
+
+    fn thread_dir(&self, thread_id: &str) -> PathBuf {
+        self.base_dir.join(thread_id)
+    }
+
+    fn step_file(&self, thread_id: &str, step: usize) -> PathBuf {
+        self.thread_dir(thread_id)
+            .join(format!("step_{:04}.json", step))
+    }
+
+    /// Scan a thread directory for step numbers.
+    async fn scan_steps(&self, thread_id: &str) -> Result<Vec<usize>> {
+        let dir = self.thread_dir(thread_id);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut steps = Vec::new();
+        let mut entries = tokio::fs::read_dir(&dir)
+            .await
+            .map_err(|e| StateGraphError::CheckpointError(format!("ReadDir: {}", e)))?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| StateGraphError::CheckpointError(format!("ReadDir: {}", e)))?
+        {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(step) = parse_step_filename(&name) {
+                steps.push(step);
+            }
+        }
+
+        steps.sort();
+        Ok(steps)
+    }
+}
+
+fn parse_step_filename(name: &str) -> Option<usize> {
+    let stem = name.strip_prefix("step_")?.strip_suffix(".json")?;
+    stem.parse().ok()
+}
+
+/// Serializable checkpoint representation.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CheckpointFile {
+    thread_id: String,
+    step: usize,
+    node_name: String,
+    state: serde_json::Value,
+    timestamp: i64,
+    metadata: std::collections::HashMap<String, String>,
+}
+
+#[async_trait]
+impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Checkpointer<S>
+    for FileCheckpointer
+{
+    async fn save(&self, checkpoint: &Checkpoint<S>) -> Result<()> {
+        let dir = self.thread_dir(&checkpoint.thread_id);
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| StateGraphError::CheckpointError(format!("Create dir: {}", e)))?;
+
+        let file = CheckpointFile {
+            thread_id: checkpoint.thread_id.clone(),
+            step: checkpoint.step,
+            node_name: checkpoint.node_name.clone(),
+            state: serde_json::to_value(&checkpoint.state)
+                .map_err(|e| StateGraphError::CheckpointError(format!("Serialize: {}", e)))?,
+            timestamp: checkpoint.timestamp,
+            metadata: checkpoint.metadata.clone(),
+        };
+
+        let json = serde_json::to_string_pretty(&file)
+            .map_err(|e| StateGraphError::CheckpointError(format!("Serialize: {}", e)))?;
+
+        let path = self.step_file(&checkpoint.thread_id, checkpoint.step);
+        tokio::fs::write(&path, json)
+            .await
+            .map_err(|e| StateGraphError::CheckpointError(format!("Write: {}", e)))?;
+
+        tracing::debug!(thread_id = %checkpoint.thread_id, step = checkpoint.step, "Checkpoint saved to file");
+        Ok(())
+    }
+
+    async fn load(&self, thread_id: &str, step: usize) -> Result<Option<Checkpoint<S>>> {
+        let path = self.step_file(thread_id, step);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let json = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(|e| StateGraphError::CheckpointError(format!("Read: {}", e)))?;
+
+        let file: CheckpointFile = serde_json::from_str(&json)
+            .map_err(|e| StateGraphError::CheckpointError(format!("Deserialize: {}", e)))?;
+
+        let state: S = serde_json::from_value(file.state)
+            .map_err(|e| StateGraphError::CheckpointError(format!("State deserialize: {}", e)))?;
+
+        Ok(Some(Checkpoint {
+            thread_id: file.thread_id,
+            step: file.step,
+            node_name: file.node_name,
+            state,
+            timestamp: file.timestamp,
+            metadata: file.metadata,
+        }))
+    }
+
+    async fn load_latest(&self, thread_id: &str) -> Result<Option<Checkpoint<S>>> {
+        let steps = self.scan_steps(thread_id).await?;
+        match steps.last() {
+            Some(&step) => self.load(thread_id, step).await,
+            None => Ok(None),
+        }
+    }
+
+    async fn list_checkpoints(&self, thread_id: &str) -> Result<Vec<(usize, i64)>> {
+        let steps = self.scan_steps(thread_id).await?;
+        let mut results = Vec::new();
+        for step in steps {
+            if let Some(cp) = self.load(thread_id, step).await? {
+                results.push((cp.step, cp.timestamp));
+            }
+        }
+        Ok(results)
+    }
+
+    async fn delete(&self, thread_id: &str, step: usize) -> Result<()> {
+        let path = self.step_file(thread_id, step);
+        if path.exists() {
+            tokio::fs::remove_file(&path)
+                .await
+                .map_err(|e| StateGraphError::CheckpointError(format!("Delete: {}", e)))?;
+        }
+        Ok(())
+    }
+
+    async fn delete_thread(&self, thread_id: &str) -> Result<()> {
+        let dir = self.thread_dir(thread_id);
+        if dir.exists() {
+            tokio::fs::remove_dir_all(&dir)
+                .await
+                .map_err(|e| StateGraphError::CheckpointError(format!("DeleteThread: {}", e)))?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::state::PlainState;
+
+    #[tokio::test]
+    async fn test_file_checkpointer_save_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cp = FileCheckpointer::new(tmp.path()).unwrap();
+
+        let mut state = PlainState::new();
+        state.set("key", serde_json::json!("value"));
+
+        let checkpoint =
+            Checkpoint::new("thread1".to_string(), 0, "node1".to_string(), state);
+        cp.save(&checkpoint).await.unwrap();
+
+        let loaded = cp.load("thread1", 0).await.unwrap().unwrap();
+        assert_eq!(loaded.node_name, "node1");
+        assert_eq!(loaded.state.get("key"), Some(&serde_json::json!("value")));
+    }
+
+    #[tokio::test]
+    async fn test_file_checkpointer_latest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cp = FileCheckpointer::new(tmp.path()).unwrap();
+
+        for step in 0..3 {
+            let mut state = PlainState::new();
+            state.set("step", serde_json::json!(step));
+            let checkpoint = Checkpoint::new(
+                "thread1".to_string(),
+                step,
+                format!("node_{}", step),
+                state,
+            );
+            cp.save(&checkpoint).await.unwrap();
+        }
+
+        let latest = cp.load_latest("thread1").await.unwrap().unwrap();
+        assert_eq!(latest.step, 2);
+    }
+
+    #[tokio::test]
+    async fn test_file_checkpointer_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cp = FileCheckpointer::new(tmp.path()).unwrap();
+
+        let state = PlainState::new();
+        let checkpoint = Checkpoint::new("t1".to_string(), 0, "n1".to_string(), state);
+        cp.save(&checkpoint).await.unwrap();
+
+        cp.delete("t1", 0).await.unwrap();
+        assert!(cp.load("t1", 0).await.unwrap().is_none());
+    }
+}

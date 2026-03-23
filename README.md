@@ -1,8 +1,12 @@
-# ErenFlowAI: Build Intelligent Agents in Rust
+# FlowgentraAI: Build Intelligent Agents in Rust
+
+<div align="center">
+  <img src="logo/logo.png" alt="FlowgentraAI Logo" width="200">
+</div>
 
 **Making AI agents simple, powerful, and fun to build.**
 
-ErenFlowAI is your toolkit for creating sophisticated AI agents that think, plan, and solve problems. Inspired by LangGraph but built for Rust's performance and safety.
+FlowgentraAI is your toolkit for creating sophisticated AI agents that think, plan, and solve problems. Inspired by LangGraph but built for Rust's performance and safety.
 
 ## 💡 What Can You Build?
 
@@ -56,7 +60,7 @@ Connect to anything:
 
 ```toml
 [dependencies]
-erenflow-ai = "0.1"
+flowgentra-ai = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -103,7 +107,7 @@ println!("{}", response);
 | **Understanding Memory, Planner, Evaluation** | [FEATURES.md](FEATURES.md) | 20 min |
 | **Config Setup** | [CONFIG_GUIDE.md](CONFIG_GUIDE.md) | 20 min |
 | **Advanced Patterns** | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | 30 min |
-| **Using Tools (MCP)** | [examples/MCP_AGENTS_GUIDE.md](erenflow-ai/examples/MCP_AGENTS_GUIDE.md) | 15 min |
+| **Using Tools (MCP)** | [examples/MCP_AGENTS_GUIDE.md](flowgentra-ai/examples/MCP_AGENTS_GUIDE.md) | 15 min |
 
   edges:
     - from: START
@@ -130,7 +134,7 @@ state_schema:
 Create `handlers.rs`:
 
 ```rust
-use erenflow_ai::prelude::*;
+use flowgentra_ai::prelude::*;
 use serde_json::json;
 
 pub async fn process_input(mut state: State) -> Result<State> {
@@ -168,7 +172,7 @@ pub mod handlers {
 In `main.rs`:
 
 ```rust
-use erenflow_ai::prelude::*;
+use flowgentra_ai::prelude::*;
 use serde_json::json;
 
 mod handlers;
@@ -201,7 +205,7 @@ async fn main() -> Result<()> {
 
 ### Graph Structure
 
-An ErenFlowAI agent is fundamentally a **directed graph** where:
+An FlowgentraAI agent is fundamentally a **directed graph** where:
 
 - **Nodes** = Computational steps (handlers)
 - **Edges** = Connections between nodes with optional conditions
@@ -561,7 +565,7 @@ observability:
 
 ## 📁 Creating a config.yaml File
 
-The `config.yaml` file is the heart of your ErenFlowAI agent. Here's a complete guide:
+The `config.yaml` file is the heart of your FlowgentraAI agent. Here's a complete guide:
 
 ### Required Fields
 
@@ -649,7 +653,7 @@ cargo run
 
 ## 🏗️ Project Structure
 
-Recommended layout for an ErenFlowAI project:
+Recommended layout for an FlowgentraAI project:
 
 ```
 my_agent_project/
@@ -685,7 +689,7 @@ Full API documentation is available via rustdoc. Generate and open it locally wi
 cargo doc --open
 ```
 
-When published to crates.io, docs are also available at [docs.rs/erenflow-ai](https://docs.rs/erenflow-ai).
+When published to crates.io, docs are also available at [docs.rs/flowgentra-ai](https://docs.rs/flowgentra-ai).
 
 See [CHANGELOG.md](CHANGELOG.md) for version history and migration notes.
 

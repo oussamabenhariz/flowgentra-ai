@@ -1,0 +1,74 @@
+# MCP Example — Docker mode
+# The MCP server runs inside a Docker container, auto-managed by the framework.
+#
+# Build the image first:
+#   cd mcp-example && docker build -t mcp-tools .
+#
+# Then run:
+#   cargo run    (from mcp-example/ directory)
+
+name: "mcp_pipeline"
+description: "LLM + MCP tool integration demo (Docker)"
+
+llm:
+  provider: mistral
+  model: mistral-small-latest
+  api_key: ${MISTRAL_API_KEY}
+
+state_schema:
+  expression:
+    type: string
+  text:
+    type: string
+  question:
+    type: string
+  tool_list:
+    type: object
+  calc_result:
+    type: string
+  analysis_result:
+    type: string
+  llm_answer:
+    type: string
+
+graph:
+  mcps:
+    tools_server:
+      name: "tools_server"
+      connection_type: docker
+      image: "mcp-tools"
+      connection_settings:
+        port: 9500          # port inside the container
+        # host_port: 9500   # port on host (auto-assigned if omitted)
+        container_name: "flowgentra-mcp-tools"
+        timeout: 30
+
+  nodes:
+    - name: discover_tools
+      handler: discover_tools
+      mcps: [tools_server]
+
+    - name: solve_math
+      handler: solve_math
+      mcps: [tools_server]
+
+    - name: analyze_text
+      handler: analyze_text
+      mcps: [tools_server]
+
+    - name: answer_question
+      handler: answer_question
+      mcps: [tools_server]
+
+    - name: tool_coordinator
+      type: supervisor
+      config:
+        strategy: sequential
+        children: [discover_tools, solve_math, analyze_text, answer_question]
+        collect_stats: true
+
+  edges:
+    - from: START
+      to: tool_coordinator
+    - from: tool_coordinator
+      to: END
