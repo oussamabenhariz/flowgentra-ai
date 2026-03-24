@@ -6,7 +6,7 @@
 
 **Making AI agents simple, powerful, and fun to build.**
 
-FlowgentraAI is your toolkit for creating sophisticated AI agents that think, plan, and solve problems. Inspired by LangGraph but built for Rust's performance and safety.
+FlowgentraAI is your toolkit for creating sophisticated AI agents that think, plan, and solve problems.
 
 ## 💡 What Can You Build?
 

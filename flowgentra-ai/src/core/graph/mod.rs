@@ -85,7 +85,7 @@ pub struct Graph<T: State> {
 }
 
 impl<T: State> Graph<T> {
-    /// Create a new empty graph. Cycles are allowed by default (same behaviour as LangGraph).
+    /// Create a new empty graph. Cycles are allowed by default.
     /// Call `set_allow_cycles(false)` to enforce strict DAG mode.
     pub fn new() -> Self {
         Graph {

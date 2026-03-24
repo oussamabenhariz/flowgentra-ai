@@ -1,9 +1,9 @@
-//! State graph module - LangGraph-inspired graph execution engine
+//! State graph module - graph execution engine
 //!
 //! # Overview
 //!
 //! The state graph system provides a Rust-idiomatic way to build AI agent workflows
-//! inspired by LangGraph (Python). It supports:
+//! It supports:
 //!
 //! - **Typed state** flowing through a directed graph
 //! - **Nodes** as async functions that transform state

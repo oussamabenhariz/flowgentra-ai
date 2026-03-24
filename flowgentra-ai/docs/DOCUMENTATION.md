@@ -1,7 +1,7 @@
 ````markdown
 # FlowgentraAI Documentation Index
 
-Welcome to FlowgentraAI! This is a LangGraph-inspired Rust library for building AI agents with graph-based workflows.
+Welcome to FlowgentraAI! This is a Rust library for building AI agents with graph-based workflows.
 
 ## 📚 Documentation Guide
 

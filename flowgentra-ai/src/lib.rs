@@ -3,7 +3,7 @@
 //! - Enforce `cargo fmt` and `clippy` in CI.
 //! - Maintain a `CHANGELOG.md` for releases.
 //! - Keep `CONTRIBUTING.md` up to date.
-//! FlowgentraAI: A LangGraph-inspired Rust library for building AI agents with graphs
+//! FlowgentraAI: A Rust library for building AI agents with graphs
 //!
 //! Build AI agent workflows using a declarative graph structure with:
 //! - **Nodes**: Computational steps (handlers)

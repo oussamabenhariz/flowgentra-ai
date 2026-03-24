@@ -438,7 +438,7 @@ impl<T: State> AgentRuntime<T> {
         let max_plan_steps = self.config.graph.planner.max_plan_steps;
         let mut plan_steps: usize = 0;
 
-        // Recursion / step limit — prevents infinite loops in cyclic graphs (default 25, same as LangGraph)
+        // Recursion / step limit — prevents infinite loops in cyclic graphs.
         let recursion_limit = self.config.graph.recursion_limit;
         let mut total_steps: usize = 0;
 

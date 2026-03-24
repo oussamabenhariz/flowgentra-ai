@@ -2,7 +2,7 @@
 
 Welcome to the Flowgentra AI documentation. This is your starting point for building intelligent agents, multi-agent systems, and stateful workflows in Rust.
 
-Flowgentra AI is an agent framework inspired by LangGraph, designed to give you fine-grained control over graph-based execution, LLM orchestration, tool use, and state management -- all with the performance and safety guarantees of Rust.
+Flowgentra AI is an agent framework, designed to give you fine-grained control over graph-based execution, LLM orchestration, tool use, and state management -- all with the performance and safety guarantees of Rust.
 
 Whether you are wiring up your first chatbot or orchestrating a fleet of cooperating agents, this hub will point you to the right guide.
 

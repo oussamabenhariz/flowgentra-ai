@@ -524,10 +524,9 @@ impl Agent {
     // Memory Management API
     // ==============================================
 
-    /// Initialize message history in state for LangGraph-style memory
+    /// Initialize message history in state for memory
     ///
     /// Creates an empty message history that handlers can append to.
-    /// This is Pattern 1 & 2 in LangGraph (Persistent State + Message History)
     ///
     /// # Example (Code API)
     /// ```ignore

@@ -356,13 +356,13 @@ pub struct GraphConfig {
     #[serde(default)]
     pub parallel: Vec<Vec<String>>,
 
-    /// Allow cycles in the graph. Defaults to true (same as LangGraph).
+    /// Allow cycles in the graph. Defaults to true.
     /// Set to false to enforce strict DAG mode (cycles will be rejected at build time).
     #[serde(default = "eval_default_true")]
     pub allow_cycles: bool,
 
     /// Maximum number of execution steps before the runtime aborts with an error.
-    /// Prevents infinite loops in cyclic graphs. Defaults to 25 (same as LangGraph).
+    /// Prevents infinite loops in cyclic graphs. Defaults to 25.
     /// Raise this for long pipelines; lower it for tighter safety in production.
     #[serde(default = "default_recursion_limit")]
     pub recursion_limit: usize,

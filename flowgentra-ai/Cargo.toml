@@ -2,7 +2,7 @@
 name = "flowgentra-ai"
 version.workspace = true
 edition.workspace = true
-description = "A LangGraph-inspired Rust library for building AI agents with graphs"
+description = "A  Rust library for building AI agents with graphs"
 authors.workspace = true
 license.workspace = true
 repository = "https://github.com/oussamabenhariz/FlowgentraAI"

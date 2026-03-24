@@ -2,7 +2,7 @@
 
 ## Overview
 
-The StateGraph system is a **LangGraph-inspired, Rust-idiomatic graph execution engine** designed for building AI agent workflows. It prioritizes:
+The StateGraph system is a **Rust-idiomatic graph execution engine** designed for building AI agent workflows. It prioritizes:
 
 1. **Type Safety** -- State schema enforced at compile time via Rust generics
 2. **Async-First** -- All operations are async-compatible via `async_trait` and `tokio`
@@ -748,26 +748,6 @@ match graph.invoke(state).await {
 
 ---
 
-## Comparison with LangGraph (Python)
-
-| Feature | LangGraph | Flowgentra StateGraph |
-|---------|-----------|-------------------|
-| Type Safety | Runtime (Pydantic) | Compile-time (Rust generics) |
-| State | `StateGraph(MessageState)` | `StateGraph<S: State>` |
-| Nodes | `.add_node("name", func)` | `.add_node("name", Arc::new(node))` or `.add_fn("name", fn)` |
-| Proc Macro | N/A (Python decorators) | `#[node]` for zero-boilerplate node definitions |
-| Edges | `.add_edge("a", "b")` | `.add_edge("a", "b")` |
-| Conditional Routing | Dict of node -> router | Sync router fn or async router fn |
-| Async Routing | Built-in (Python async) | `AsyncConditional` edge variant |
-| Checkpointer | `MemorySaver`, `SqliteSaver` | `InMemoryCheckpointer`, `FileCheckpointer` |
-| Parallel Nodes | `parallelize=True` | `ParallelExecutor` with `JoinType` and `MergeStrategy` |
-| Subgraphs | `add_node("sub", subgraph)` | `add_subgraph("sub", compiled_graph)` |
-| Reducers | `Annotated[list, add]` | `JsonReducer` (Overwrite, Append, Sum, DeepMerge, Max, Min, AppendUnique) |
-| Human-in-the-Loop | `interrupt_before`, `interrupt_after` | `interrupt_before()`, `interrupt_after()`, `resume_with_state()` |
-| Visualization | `.get_graph().draw_mermaid()` | `to_mermaid()`, `to_dot()`, `to_json()` |
-| Scoped State | Channels | `ScopedState` namespaces |
-
----
 
 ## Testing Strategy
 
@@ -799,7 +779,7 @@ async fn test_graph_with_checkpointing() {
 
 ## Conclusion
 
-The StateGraph system combines **Rust's type safety** with **LangGraph's intuitive graph semantics**, enabling production-grade AI agents with compile-time guarantees and zero-cost execution.
+The StateGraph system enables production-grade AI agents with compile-time guarantees and zero-cost execution.
 
 Key capabilities:
 - **Generic state system** enforces schema at compile time

@@ -421,7 +421,7 @@ pub use shared::SharedState;
 pub mod scoped;
 pub use scoped::ScopedState;
 
-// LangGraph-style memory management
+// Memory management
 pub mod state_management;
 pub use state_management::{CompressionManager, CustomState, MessageHistory};
 

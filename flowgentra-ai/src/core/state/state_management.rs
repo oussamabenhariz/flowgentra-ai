@@ -1,6 +1,6 @@
-//! # State Management for LangGraph-style Memory
+//! # State Management for Memory
 //!
-//! Provides easy-to-use memory patterns inspired by LangGraph:
+//! Provides easy-to-use memory patterns:
 //! 1. **Persistent State** - Basic state that flows through graph
 //! 2. **Message History** - Automatic message list management
 //! 3. **Summary/Compression** - Summarize old messages to manage tokens
@@ -39,7 +39,7 @@ impl MessageHistory {
         }
     }
 
-    /// Load from state field `messages` (LangGraph-style)
+    /// Load from state field `messages` 
     pub fn from_state<T: State>(state: &T) -> Result<Self> {
         if let Some(messages_value) = state.get("messages") {
             if let Ok(messages) = serde_json::from_value::<Vec<MessageHistoryEntry>>(messages_value)
