@@ -1,6 +1,6 @@
 //! Unit tests for state validation and error handling
-use flowgentra_ai::prelude::*;
 use flowgentra_ai::core::state::SharedState;
+use flowgentra_ai::prelude::*;
 use serde_json::json;
 
 #[test]

@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 
-use crate::core::state::State;
-use crate::core::reducer::ReducerConfig;
 use super::error::Result;
+use crate::core::reducer::ReducerConfig;
+use crate::core::state::State;
 
 /// Represents a partial state update (only the fields that changed)
 /// Used when a node doesn't return the full state, just the diff
@@ -59,7 +59,9 @@ pub trait Node<S: State>: Send + Sync {
 /// A stateless node backed by an async function
 pub struct FunctionNode<S: State, F>
 where
-    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>> + Send + Sync,
+    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>>
+        + Send
+        + Sync,
 {
     name: String,
     func: F,
@@ -68,7 +70,9 @@ where
 
 impl<S: State, F> FunctionNode<S, F>
 where
-    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>> + Send + Sync,
+    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>>
+        + Send
+        + Sync,
 {
     pub fn new(name: impl Into<String>, func: F) -> Self {
         Self {
@@ -82,7 +86,10 @@ where
 #[async_trait]
 impl<S: State, F> Node<S> for FunctionNode<S, F>
 where
-    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>> + Send + Sync + Send,
+    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>>
+        + Send
+        + Sync
+        + Send,
 {
     async fn execute(&self, state: &S) -> Result<S> {
         (self.func)(state).await
@@ -98,7 +105,12 @@ where
 /// Supports per-field reducers via `ReducerConfig` and merge strategies.
 pub struct UpdateNode<S: State, F>
 where
-    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>> + Send + Sync,
+    F: Fn(
+            &S,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>>
+        + Send
+        + Sync,
 {
     name: String,
     func: F,
@@ -108,7 +120,12 @@ where
 
 impl<S: State, F> UpdateNode<S, F>
 where
-    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>> + Send + Sync,
+    F: Fn(
+            &S,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>>
+        + Send
+        + Sync,
 {
     pub fn new(name: impl Into<String>, func: F) -> Self {
         Self {
@@ -133,7 +150,13 @@ where
 #[async_trait]
 impl<S: State, F> Node<S> for UpdateNode<S, F>
 where
-    F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>> + Send + Sync + Send,
+    F: Fn(
+            &S,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>>
+        + Send
+        + Sync
+        + Send,
 {
     async fn execute(&self, state: &S) -> Result<S> {
         let update = (self.func)(state).await?;
@@ -153,12 +176,14 @@ where
                     crate::core::reducer::deep_merge_values(&current_value, &update_value)
                 } else {
                     // Apply per-field reducers (Default strategy)
-                    self.reducer_config.merge_values(&current_value, &update_value)
+                    self.reducer_config
+                        .merge_values(&current_value, &update_value)
                 };
 
                 S::from_json(merged_value).map_err(|e| {
                     super::error::StateGraphError::TypeError(format!(
-                        "Failed to deserialize merged state: {}", e
+                        "Failed to deserialize merged state: {}",
+                        e
                     ))
                 })
             }
@@ -200,8 +225,8 @@ impl<S: State> ConditionalEdge<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::core::state::PlainState;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_function_node() {

@@ -15,9 +15,9 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::core::state::State;
 use super::checkpoint::{Checkpoint, Checkpointer};
 use super::error::{Result, StateGraphError};
+use crate::core::state::State;
 
 /// File-based checkpointer that persists checkpoints as JSON files.
 pub struct FileCheckpointer {
@@ -196,8 +196,7 @@ mod tests {
 
         let state = PlainState::from_json(serde_json::json!({"key": "value"})).unwrap();
 
-        let checkpoint =
-            Checkpoint::new("thread1".to_string(), 0, "node1".to_string(), state);
+        let checkpoint = Checkpoint::new("thread1".to_string(), 0, "node1".to_string(), state);
         cp.save(&checkpoint).await.unwrap();
 
         let loaded: Checkpoint<PlainState> = cp.load("thread1", 0).await.unwrap().unwrap();
@@ -213,12 +212,8 @@ mod tests {
         for step in 0..3 {
             let mut state = PlainState::new();
             state.set("step", serde_json::json!(step));
-            let checkpoint = Checkpoint::new(
-                "thread1".to_string(),
-                step,
-                format!("node_{}", step),
-                state,
-            );
+            let checkpoint =
+                Checkpoint::new("thread1".to_string(), step, format!("node_{}", step), state);
             cp.save(&checkpoint).await.unwrap();
         }
 
@@ -235,7 +230,9 @@ mod tests {
         let checkpoint = Checkpoint::new("t1".to_string(), 0, "n1".to_string(), state);
         cp.save(&checkpoint).await.unwrap();
 
-        <FileCheckpointer as Checkpointer<PlainState>>::delete(&cp, "t1", 0).await.unwrap();
+        <FileCheckpointer as Checkpointer<PlainState>>::delete(&cp, "t1", 0)
+            .await
+            .unwrap();
         let deleted: Option<Checkpoint<PlainState>> = cp.load("t1", 0).await.unwrap();
         assert!(deleted.is_none());
     }

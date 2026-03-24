@@ -1,7 +1,7 @@
 /// NodeId type alias for node identification
 pub type NodeId = String;
-use crate::core::node::nodes_trait::PluggableNode;
 use crate::core::error::{FlowgentraError, Result};
+use crate::core::node::nodes_trait::PluggableNode;
 use crate::core::state::State;
 use std::sync::Arc;
 
@@ -20,11 +20,14 @@ pub fn create_node_from_config<T: State>(
     match node_type {
         // ── Supervisor (alias: orchestrator) ─────────────────────────────────
         "supervisor" | "orchestrator" => {
-            use crate::core::node::orchestrator_node::{SupervisorNodeConfig, SupervisorNode};
-            let cfg: SupervisorNodeConfig = serde_json::from_value(config.clone())
-                .map_err(|e| FlowgentraError::ConfigError(
-                    format!("Failed to parse supervisor node config: {}", e)
-                ))?;
+            use crate::core::node::orchestrator_node::{SupervisorNode, SupervisorNodeConfig};
+            let cfg: SupervisorNodeConfig =
+                serde_json::from_value(config.clone()).map_err(|e| {
+                    FlowgentraError::ConfigError(format!(
+                        "Failed to parse supervisor node config: {}",
+                        e
+                    ))
+                })?;
             let node_name = &cfg.name;
 
             let mut children: Vec<Arc<dyn PluggableNode<T>>> = Vec::new();
@@ -53,11 +56,10 @@ pub fn create_node_from_config<T: State>(
 
         // ── Subgraph (aliases: agent, agent_or_graph) ──────────────────────
         "subgraph" | "agent" | "agent_or_graph" => {
-            use crate::core::node::agent_or_graph_node::{SubgraphNodeConfig, SubgraphNode};
-            let cfg: SubgraphNodeConfig = serde_json::from_value(config.clone())
-                .map_err(|e| FlowgentraError::ConfigError(
-                    format!("Failed to parse subgraph node config: {}", e)
-                ))?;
+            use crate::core::node::agent_or_graph_node::{SubgraphNode, SubgraphNodeConfig};
+            let cfg: SubgraphNodeConfig = serde_json::from_value(config.clone()).map_err(|e| {
+                FlowgentraError::ConfigError(format!("Failed to parse subgraph node config: {}", e))
+            })?;
             let target_name = &cfg.path;
 
             // For the PluggableNode path, look up an already-compiled inner node
@@ -76,11 +78,14 @@ pub fn create_node_from_config<T: State>(
 
         // ── Evaluation ────────────────────────────────────────────────────────
         "evaluation" => {
-            use crate::core::node::evaluation_node::{EvaluationNodeConfig, EvaluationNode};
+            use crate::core::node::evaluation_node::{EvaluationNode, EvaluationNodeConfig};
             let eval_config: EvaluationNodeConfig = serde_json::from_value(config.clone())
-                .map_err(|e| FlowgentraError::ConfigError(
-                    format!("Failed to parse evaluation node config: {}", e)
-                ))?;
+                .map_err(|e| {
+                    FlowgentraError::ConfigError(format!(
+                        "Failed to parse evaluation node config: {}",
+                        e
+                    ))
+                })?;
             let handler_name = &eval_config.handler;
             match node_map.get(handler_name) {
                 Some(inner_node) => {
@@ -103,39 +108,40 @@ pub fn create_node_from_config<T: State>(
 }
 
 pub mod agent_or_graph_node;
-pub mod orchestrator_node;
 pub mod evaluation_node;
+pub mod orchestrator_node;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 // Supervisor (canonical) + backwards-compat aliases
 pub use orchestrator_node::{
-    SupervisorNodeConfig, SupervisorNode,
-    // aliases
-    OrchestratorNodeConfig, OrchestratorNode,
+    ChildExecutionStats,
     // supporting types
-    OrchestrationStrategy, ParallelAggregation, ParallelMergeStrategy, ChildExecutionStats,
+    OrchestrationStrategy,
+    OrchestratorNode,
+    // aliases
+    OrchestratorNodeConfig,
+    ParallelAggregation,
+    ParallelMergeStrategy,
+    SupervisorNode,
+    SupervisorNodeConfig,
 };
 
 // Subgraph (canonical) + backwards-compat aliases
 pub use agent_or_graph_node::{
-    SubgraphNodeConfig, SubgraphNode,
+    AgentOrGraphNode,
     // aliases
-    AgentOrGraphNodeConfig, AgentOrGraphNode,
+    AgentOrGraphNodeConfig,
     // kept for existing imports
     AgentOrGraphType,
+    SubgraphNode,
+    SubgraphNodeConfig,
 };
 
 pub use evaluation_node::{
-    EvaluationNodeConfig, EvaluationNode,
-    Attempt, ExitReason, EvaluationResult,
-    ScorerFn,
-    default_scorer,
-    scorer_from_sync,
-    scorer_from_node_scorer,
-    scorer_from_confidence,
-    scorer_from_llm_grader,
-    scorer_combine,
+    default_scorer, scorer_combine, scorer_from_confidence, scorer_from_llm_grader,
+    scorer_from_node_scorer, scorer_from_sync, Attempt, EvaluationNode, EvaluationNodeConfig,
+    EvaluationResult, ExitReason, ScorerFn,
 };
 // # Node Configuration and Execution
 //
@@ -176,7 +182,6 @@ pub use evaluation_node::{
 //   type: graph
 //   target: subgraph.yaml
 /// ```
-
 use crate::core::routing::Condition;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -346,9 +351,7 @@ impl NodeConfig {
 /// }
 /// ```
 pub type NodeFunction<T> = Box<
-    dyn Fn(T) -> futures::future::BoxFuture<'static, crate::core::error::Result<T>>
-        + Send
-        + Sync,
+    dyn Fn(T) -> futures::future::BoxFuture<'static, crate::core::error::Result<T>> + Send + Sync,
 >;
 
 // =============================================================================
@@ -580,7 +583,10 @@ impl<T: State> Edge<T> {
     }
 
     /// Set the type-safe routing condition for this edge
-    pub fn with_routing_condition(mut self, condition: crate::core::graph::routing::Condition<T>) -> Self {
+    pub fn with_routing_condition(
+        mut self,
+        condition: crate::core::graph::routing::Condition<T>,
+    ) -> Self {
         self.routing_condition = Some(condition);
         self
     }

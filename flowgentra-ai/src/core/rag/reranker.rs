@@ -9,11 +9,12 @@ use serde::{Deserialize, Serialize};
 use super::vector_db::SearchResult;
 
 /// Re-ranking strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum RerankStrategy {
     /// No re-ranking (pass-through)
     #[serde(rename = "none")]
+    #[default]
     None,
 
     /// Re-rank using an LLM to score query-document relevance
@@ -27,12 +28,6 @@ pub enum RerankStrategy {
     /// Reciprocal Rank Fusion — combine multiple result lists
     #[serde(rename = "rrf")]
     ReciprocalRankFusion { k: usize },
-}
-
-impl Default for RerankStrategy {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Trait for re-ranking search results
@@ -66,7 +61,11 @@ impl Reranker for NoopReranker {
 /// Requires a scoring function that wraps your LLM client.
 pub struct LLMReranker<F>
 where
-    F: Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<f32, String>> + Send>>
+    F: Fn(
+            String,
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<f32, String>> + Send>>
         + Send
         + Sync,
 {
@@ -75,7 +74,11 @@ where
 
 impl<F> LLMReranker<F>
 where
-    F: Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<f32, String>> + Send>>
+    F: Fn(
+            String,
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<f32, String>> + Send>>
         + Send
         + Sync,
 {
@@ -104,7 +107,11 @@ where
 #[async_trait]
 impl<F> Reranker for LLMReranker<F>
 where
-    F: Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<f32, String>> + Send>>
+    F: Fn(
+            String,
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<f32, String>> + Send>>
         + Send
         + Sync,
 {
@@ -224,10 +231,7 @@ mod tests {
             })
         });
 
-        let results = vec![
-            make_result("python", 0.8),
-            make_result("rust", 0.7),
-        ];
+        let results = vec![make_result("python", 0.8), make_result("rust", 0.7)];
 
         let mut results_with_text = results;
         results_with_text[0].text = "python is great".to_string();

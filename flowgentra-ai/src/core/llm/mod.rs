@@ -99,7 +99,9 @@ pub fn model_pricing(model: &str) -> Option<(f64, f64)> {
         s if s.starts_with("o1") => Some((15.00, 60.00)),
         s if s.starts_with("o3-mini") => Some((1.10, 4.40)),
         // Anthropic
-        s if s.contains("claude-3-5-sonnet") || s.contains("claude-sonnet-4") => Some((3.00, 15.00)),
+        s if s.contains("claude-3-5-sonnet") || s.contains("claude-sonnet-4") => {
+            Some((3.00, 15.00))
+        }
         s if s.contains("claude-3-5-haiku") || s.contains("claude-haiku-4") => Some((0.80, 4.00)),
         s if s.contains("claude-3-opus") || s.contains("claude-opus-4") => Some((15.00, 75.00)),
         s if s.contains("claude-3-sonnet") => Some((3.00, 15.00)),
@@ -119,19 +121,25 @@ pub fn model_pricing(model: &str) -> Option<(f64, f64)> {
 mod adapter;
 mod anthropic;
 mod azure;
+pub mod cache;
 mod factory;
+pub mod fallback;
 mod groq;
 mod huggingface;
 mod mistral;
 mod ollama;
 mod openai;
+pub mod output_parser;
+pub mod prompt_template;
 mod retry;
 pub mod token_counter;
 
 pub use adapter::{HttpLLMClient, ProviderAdapter};
 pub use anthropic::AnthropicClient;
 pub use azure::AzureOpenAIClient;
+pub use cache::CachedLLMClient;
 pub use factory::create_llm_client;
+pub use fallback::FallbackLLMClient;
 pub use groq::GroqClient;
 pub use huggingface::HuggingFaceClient;
 pub use mistral::MistralClient;
@@ -474,7 +482,10 @@ impl Message {
 
     /// Check if this message contains tool calls from the LLM
     pub fn has_tool_calls(&self) -> bool {
-        self.tool_calls.as_ref().map(|tc| !tc.is_empty()).unwrap_or(false)
+        self.tool_calls
+            .as_ref()
+            .map(|tc| !tc.is_empty())
+            .unwrap_or(false)
     }
 
     /// Whether this message is from the system (behavior prompt).

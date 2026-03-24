@@ -1,225 +1,182 @@
-# Predefined Agents Guide
+# Agents Guide
 
-Use ready-made agent types for common patterns instead of building from scratch.
+Use ready-made agent types for common patterns, or orchestrate multiple agents with a Supervisor.
 
-## Three Agent Types
+## Predefined Agent Types
 
-### 1. ZeroShotReAct - General Reasoning
+### ZeroShotReAct -- General Reasoning
 
-Best for thinking through problems and using tools as needed.
+Thinks through problems and uses tools as needed, without requiring examples.
 
 ```rust
+use flowgentra_ai::core::agents::{AgentBuilder, AgentType, ToolSpec};
+
+let search = ToolSpec::new("search", "Search the web")
+    .with_parameter("query", "string")
+    .required("query");
+
 let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
     .with_name("researcher")
-    .with_tool(search_tool)
+    .with_llm_config("gpt-4")
+    .with_tool(search)
     .build()?;
 
-let response = agent.process("Analyze this market trend", &state)?;
+let response = agent.process("What are the latest AI trends?", &state)?;
 ```
 
-How it works:
-1. Takes your question or task
-2. Thinks through the problem
-3. Decides what tools to use
-4. Uses them and reasons with the results
-5. Gives a final answer
+Best for: open-ended questions, research, analysis, problem-solving.
 
-Use when:
-- You need general problem-solving
-- The agent should decide what steps to take
-- You have tools available (search, calculator, etc.)
+### FewShotReAct -- Learning from Examples
 
-### 2. FewShotReAct - Learning from Examples
-
-Learns from examples you show it, then applies the pattern.
+Shows the LLM examples before asking it to solve new inputs.
 
 ```rust
 let agent = AgentBuilder::new(AgentType::FewShotReAct)
     .with_name("classifier")
-    .build()?;
-
-// Show examples
-agent.add_example(
-    "urgent bug report",
-    "Priority: HIGH - escalate_to_specialist"
-);
-
-agent.add_example(
-    "feature request",
-    "Priority: LOW - add_to_roadmap"
-);
-
-// Now classify new items like the examples
-let response = agent.process("User reports app crashes", &state)?;
-```
-
-How it works:
-1. You provide examples of input → output pairs
-2. Agent learns the pattern from examples
-3. Applies that pattern to new inputs
-4. Classifies or generates like the examples
-
-Use when:
-- You have specific patterns to match
-- Classification or structured responses needed
-- Examples exist for training the agent
-
-### 3. Conversational - Chat with Memory
-
-Remembers what was said in previous turns.
-
-```rust
-let agent = AgentBuilder::new(AgentType::Conversational)
-    .with_name("support_bot")
-    .with_memory_steps(20)  // Remember last 20 messages
-    .build()?;
-
-// Turn 1
-agent.process("Hi, my app is crashing", &state)?;
-// Agent stores this in memory
-
-// Turn 2 - agent remembers the context
-agent.process("How can you help?", &state)?;
-// Agent knows you were talking about the crash
-```
-
-How it works:
-1. Stores all messages in conversation history
-2. Includes recent history in every prompt
-3. Remembers context across turns
-4. Maintains specific memory window (e.g., last 20 messages)
-
-Use when:
-- Building chatbots or assistants
-- Multi-turn conversations needed
-- Context from previous messages matters
-
-## Choosing Your Agent
-
-| Need | Agent | Why |
-|------|-------|-----|
-| General problem-solving | ZeroShotReAct | Flexible, uses tools smartly |
-| Classification | FewShotReAct | Learns patterns from examples |
-| Chat or support | Conversational | Remembers conversation history |
-| Long workflows | ZeroShotReAct | Can make complex decisions |
-
-## Building Agents
-
-### Basic Setup
-
-Every agent needs at minimum:
-
-```rust
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_name("my_agent")
-    .build()?;
-```
-
-### Add Tools
-
-```rust
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_name("researcher")
-    .with_tool(search_tool)
-    .with_tool(math_tool)
-    .build()?;
-```
-
-### Add LLM Config
-
-```rust
-let agent = AgentBuilder::new(AgentType::Conversational)
     .with_llm_config("gpt-4")
     .build()?;
 
-// Or use environment variable
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_llm_provider("openai")
-    .build()?;
+agent.add_example("urgent bug report", "Priority: HIGH - escalate");
+agent.add_example("feature request", "Priority: LOW - add to roadmap");
+
+let response = agent.process("App crashes on login", &state)?;
 ```
 
-### Customize Behavior
+Best for: classification, pattern-matching, structured responses.
 
-```rust
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_temperature(0.7)
-    .with_max_tokens(2000)
-    .with_timeout_secs(30)
-    .build()?;
-```
+### Conversational -- Chat with Memory
 
-## Memory Settings
-
-For Conversational agents specifically:
-
-```rust
-let agent = AgentBuilder::new(AgentType::Conversational)
-    .with_memory_steps(20)      // Remember last 20 messages
-    .with_memory_tokens(10000)  // Or limit by token count
-    .build()?;
-```
-
-## Common Patterns
-
-### Research Agent
-
-```rust
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_name("researcher")
-    .with_tool(web_search)
-    .with_tool(data_fetch)
-    .with_temperature(0.7)
-    .build()?;
-
-agent.process("Research the latest AI trends and summarize", &state)?;
-```
-
-### Support Chatbot
+Remembers conversation history across turns.
 
 ```rust
 let agent = AgentBuilder::new(AgentType::Conversational)
     .with_name("support_bot")
-    .with_memory_steps(50)
-    .with_tool(knowledge_base)
+    .with_llm_config("gpt-4")
+    .with_memory_steps(20)  // Remember last 20 messages
     .build()?;
 
-// Handles multiple turns with context
+agent.process("Hi, my app is crashing", &state)?;
+agent.process("What version are you on?", &state)?;  // Remembers context
 ```
 
-### Document Classifier
+Best for: chatbots, customer support, assistants.
 
-```rust
-let agent = AgentBuilder::new(AgentType::FewShotReAct)
-    .with_name("classifier")
-    .build()?;
+## Choosing the Right Agent
 
-// Add training examples
-for (text, label) in training_data {
-    agent.add_example(text, label);
-}
-
-// Classify new documents
-```
-
-## When to Go Custom
-
-Predefined agents work well for most cases, but consider building a custom graph when:
-
-- You need very specific workflow steps
-- The order of operations is fixed
-- Multiple handlers need specific sequencing
-- Complex branching logic
-
-See [handlers/README.md](../handlers/README.md) to build custom handlers.
-
-## Best Practices
-
-1. Start simple with a predefined agent
-2. Add tools gradually to test behavior
-3. Tune temperature for your use case
-4. Monitor token usage for costs
-5. Use memory for continuity in chat scenarios
+| Need | Agent | Why |
+|------|-------|-----|
+| General problem-solving | ZeroShotReAct | Flexible, tool-aware |
+| Classification tasks | FewShotReAct | Learns from your examples |
+| Multi-turn chat | Conversational | Remembers history |
+| Complex multi-step | StateGraph | Full control over workflow |
 
 ---
 
-See [configuration/CONFIG_GUIDE.md](../configuration/CONFIG_GUIDE.md) for complete reference.
+## Supervisor (Multi-Agent Orchestration)
+
+The Supervisor pattern routes tasks to specialized sub-agents based on a routing function.
+
+### How It Works
+
+```
+User request
+     |
+     v
+  Supervisor
+     |-- Router decides which agent handles this
+     v
+  Agent A / Agent B / Agent C
+     |
+     v
+  Result merged back
+     |
+     v
+  Router decides next step (or finish)
+```
+
+### Usage
+
+```rust
+use flowgentra_ai::core::agents::Supervisor;
+use std::collections::HashMap;
+
+// Build specialized agent graphs
+let researcher = build_research_graph()?;   // Good at finding info
+let writer = build_writing_graph()?;        // Good at drafting text
+let reviewer = build_review_graph()?;       // Good at quality checks
+
+let mut agents = HashMap::new();
+agents.insert("researcher".to_string(), researcher);
+agents.insert("writer".to_string(), writer);
+agents.insert("reviewer".to_string(), reviewer);
+
+// Router function decides which agent handles each step
+let router = |state: &PlainState| -> Result<String> {
+    let phase = state.get("phase")
+        .and_then(|v| v.as_str())
+        .unwrap_or("research");
+    Ok(phase.to_string())
+};
+
+let supervisor = Supervisor::new(router, agents, 10); // max 10 rounds
+let result = supervisor.run(initial_state).await?;
+```
+
+### Key Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `router` | Function that inspects state and returns an agent name |
+| `agents` | Map of agent name to compiled StateGraph |
+| `max_rounds` | Maximum dispatch rounds to prevent infinite loops |
+
+### When to Use Supervisor vs StateGraph
+
+| Use Supervisor when... | Use StateGraph when... |
+|----------------------|---------------------|
+| Different sub-tasks need different "expert" agents | All steps share the same processing logic |
+| The number of steps is dynamic | The workflow is fixed or predictable |
+| Agents have different tool sets | All nodes share the same tools |
+
+---
+
+## Building Custom Agent Graphs
+
+When predefined agents aren't enough, build a custom workflow with the StateGraph API:
+
+```rust
+use flowgentra_ai::core::state_graph::StateGraphBuilder;
+
+let graph = StateGraphBuilder::new()
+    .add_fn("intake", intake_handler)
+    .add_fn("research", research_handler)
+    .add_fn("draft", draft_handler)
+    .add_fn("review", review_handler)
+    .set_entry_point("intake")
+    .add_edge("intake", "research")
+    .add_edge("research", "draft")
+    .add_conditional_edge("draft", |state| {
+        let quality = state.get("quality_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        if quality > 0.8 { Ok("__end__".into()) }
+        else { Ok("review".into()) }
+    })
+    .add_edge("review", "draft")  // Loop back for improvement
+    .compile()?;
+```
+
+---
+
+## Best Practices
+
+1. **Start with a predefined agent** -- only build custom graphs when needed
+2. **Use Supervisor for multi-agent systems** -- don't reinvent routing
+3. **Set max_rounds on Supervisor** -- prevent runaway loops
+4. **Keep router logic simple** -- complex routing belongs in a dedicated classification node
+5. **Monitor token usage** -- multi-agent systems can consume tokens quickly
+
+---
+
+See [graph/README.md](../graph/README.md) for StateGraph details.
+See [llm/README.md](../llm/README.md) for LLM provider setup.

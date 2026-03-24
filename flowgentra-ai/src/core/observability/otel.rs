@@ -34,7 +34,7 @@ pub struct OtelAttribute {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OtelStatus {
-    pub code: u32,  // 0=Unset, 1=Ok, 2=Error
+    pub code: u32, // 0=Unset, 1=Ok, 2=Error
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -50,10 +50,14 @@ pub fn trace_to_otel_spans(trace: &ExecutionTrace) -> Vec<OtelSpan> {
     let mut spans = Vec::new();
 
     // Root span
-    let first_start = trace.node_timings.first()
+    let first_start = trace
+        .node_timings
+        .first()
         .map(|t| t.start_time.timestamp_nanos_opt().unwrap_or(0) as u64)
         .unwrap_or(0);
-    let total_duration_ns: u64 = trace.node_timings.iter()
+    let total_duration_ns: u64 = trace
+        .node_timings
+        .iter()
         .map(|t| t.duration_ms * 1_000_000)
         .sum();
 
@@ -75,7 +79,10 @@ pub fn trace_to_otel_spans(trace: &ExecutionTrace) -> Vec<OtelSpan> {
             },
         ],
         status: match &trace.status {
-            super::trace::TraceStatus::Completed => OtelStatus { code: 1, message: None },
+            super::trace::TraceStatus::Completed => OtelStatus {
+                code: 1,
+                message: None,
+            },
             super::trace::TraceStatus::Failed { error, .. } => OtelStatus {
                 code: 2,
                 message: Some(error.clone()),
@@ -106,7 +113,10 @@ pub fn trace_to_otel_spans(trace: &ExecutionTrace) -> Vec<OtelSpan> {
                     value: serde_json::json!(timing.duration_ms),
                 },
             ],
-            status: OtelStatus { code: 1, message: None },
+            status: OtelStatus {
+                code: 1,
+                message: None,
+            },
         });
     }
 

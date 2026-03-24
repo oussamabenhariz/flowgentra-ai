@@ -10,6 +10,7 @@
 //! - Reducers should never panic; always handle errors gracefully.
 //! - If a reducer cannot merge, return a Result or log an error (future extension).
 //! - Use clear error messages for debugging.
+//!
 //! Reducer system for flowgentra
 
 /// Trait for merging state field updates
@@ -114,12 +115,20 @@ impl JsonReducer {
             JsonReducer::Max => {
                 let c = current.as_f64().unwrap_or(f64::NEG_INFINITY);
                 let u = update.as_f64().unwrap_or(f64::NEG_INFINITY);
-                if u >= c { update.clone() } else { current.clone() }
+                if u >= c {
+                    update.clone()
+                } else {
+                    current.clone()
+                }
             }
             JsonReducer::Min => {
                 let c = current.as_f64().unwrap_or(f64::INFINITY);
                 let u = update.as_f64().unwrap_or(f64::INFINITY);
-                if u <= c { update.clone() } else { current.clone() }
+                if u <= c {
+                    update.clone()
+                } else {
+                    current.clone()
+                }
             }
             JsonReducer::AppendUnique => {
                 let mut arr = match current {
@@ -225,10 +234,7 @@ mod tests {
     #[test]
     fn test_json_append() {
         let r = JsonReducer::Append;
-        assert_eq!(
-            r.apply(&json!([1, 2]), &json!([3, 4])),
-            json!([1, 2, 3, 4])
-        );
+        assert_eq!(r.apply(&json!([1, 2]), &json!([3, 4])), json!([1, 2, 3, 4]));
     }
 
     #[test]

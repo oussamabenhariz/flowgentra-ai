@@ -1,16 +1,18 @@
 # LLM Configuration Guide
 
-Set up any language model provider you prefer - OpenAI, Anthropic, Mistral, Groq, Azure, or even run Ollama locally.
+Set up any language model provider, add retries, track costs, and get structured output.
 
 ## Supported Providers
 
-- OpenAI (GPT-4, GPT-3.5-turbo)
-- Anthropic (Claude)
-- Mistral
-- Groq
-- Azure OpenAI
-- HuggingFace (cloud API & local TGI server)
-- Ollama (local models)
+| Provider | Auth | Streaming | Tool Calling | Local |
+|----------|------|-----------|--------------|-------|
+| **OpenAI** | Bearer token | SSE | Function calling | No |
+| **Anthropic** | x-api-key | SSE | input_schema | No |
+| **Mistral** | Bearer token | SSE | Function calling | No |
+| **Groq** | Bearer token | SSE | Function calling | No |
+| **Azure OpenAI** | api-key header | SSE | Function calling | No |
+| **HuggingFace** | Bearer token | Real SSE (TGI) | -- | Optional |
+| **Ollama** | None | NDJSON | -- | Yes |
 
 ## Quick Setup
 
@@ -25,11 +27,6 @@ llm:
   max_tokens: 2000
 ```
 
-Set environment variable:
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
 ### Anthropic (Claude)
 
 ```yaml
@@ -37,26 +34,15 @@ llm:
   provider: anthropic
   model: claude-3-opus-20240229
   api_key: ${ANTHROPIC_API_KEY}
-  temperature: 0.7
 ```
 
-### Mistral
+### Mistral / Groq
 
 ```yaml
 llm:
-  provider: mistral
-  model: mistral-large
+  provider: mistral  # or groq
+  model: mistral-large  # or mixtral-8x7b-32768
   api_key: ${MISTRAL_API_KEY}
-  temperature: 0.7
-```
-
-### Groq (Fast inference)
-
-```yaml
-llm:
-  provider: groq
-  model: mixtral-8x7b-32768
-  api_key: ${GROQ_API_KEY}
 ```
 
 ### Azure OpenAI
@@ -66,45 +52,21 @@ llm:
   provider: azure
   model: gpt-4
   api_key: ${AZURE_API_KEY}
-  endpoint: ${AZURE_ENDPOINT}
-  deployment: my-deployment
+  extra_params:
+    resource_name: "my-resource"
+    api_version: "2024-02-15-preview"
 ```
 
-### HuggingFace (Cloud API)
-
-Use any model from the HuggingFace Model Hub with the cloud API:
+### HuggingFace
 
 ```yaml
+# Cloud API
 llm:
   provider: huggingface
   model: mistralai/Mistral-7B-Instruct-v0.1
   api_key: ${HF_API_TOKEN}
-```
 
-Get your API token from [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens):
-
-```bash
-export HF_API_TOKEN="hf_..."
-```
-
-**Available models:**
-- Text generation: `mistralai/Mistral-7B-Instruct-v0.1`, `meta-llama/Llama-2-7b-chat`, etc.
-- Check [HuggingFace Model Hub](https://huggingface.co/models) for all available models
-
-### HuggingFace Local (Text Generation Inference)
-
-Deploy models locally using HuggingFace Text Generation Inference (TGI):
-
-```bash
-# Start TGI server with your model
-docker run --gpus all -p 80:80 -v /tmp/data:/data \
-    ghcr.io/huggingface/text-generation-inference:latest \
-    --model-id mistralai/Mistral-7B-Instruct-v0.1
-```
-
-Then configure:
-
-```yaml
+# Local TGI server
 llm:
   provider: huggingface
   model: mistralai/Mistral-7B-Instruct-v0.1
@@ -114,16 +76,7 @@ llm:
     endpoint: "http://localhost:80"
 ```
 
-**Benefits of local deployment:**
-- No API costs
-- Lower latency
-- Full privacy (data stays on your machine)
-- Use any HuggingFace model
-
-**System requirements:**
-- GPU (NVIDIA recommended with CUDA)
-- At least 12GB VRAM for 7B models
-- Docker installed
+HuggingFace streaming uses real SSE with TGI's `token.text` format and also supports OpenAI-compatible `choices[0].delta.content`.
 
 ### Ollama (Local)
 
@@ -134,9 +87,199 @@ llm:
   base_url: http://localhost:11434
 ```
 
-## Fallback Providers
+---
 
-Automatically try alternative providers if the main one fails:
+## RetryLLMClient
+
+Wrap any LLM client with automatic retry on transient failures:
+
+```rust
+use flowgentra_ai::core::llm::RetryLLMClient;
+use std::time::Duration;
+
+let retry_client = RetryLLMClient::new(inner_client)
+    .with_max_retries(3)
+    .with_initial_delay(Duration::from_millis(500));
+
+// Retries automatically on network errors, rate limits, etc.
+let response = retry_client.chat(messages).await?;
+```
+
+Uses exponential backoff between retries.
+
+---
+
+## Token Counting and Context Window
+
+### Estimate Tokens
+
+```rust
+use flowgentra_ai::core::llm::token_counter::estimate_tokens;
+
+let count = estimate_tokens("Hello, how are you today?");
+// Roughly text.len() / 3.5
+```
+
+### Check Context Window Limits
+
+```rust
+use flowgentra_ai::core::llm::token_counter::context_window;
+
+let max = context_window("gpt-4");          // Some(8192)
+let max = context_window("claude-3-opus");  // Some(200000)
+let max = context_window("mistral-large");  // Some(32768)
+```
+
+### Truncate Messages to Fit
+
+```rust
+use flowgentra_ai::core::llm::token_counter::ContextWindow;
+
+let ctx = ContextWindow {
+    max_tokens: 8192,
+    reserve_for_completion: 1024,
+};
+
+// Keeps system message + most recent messages that fit
+let trimmed = ctx.truncate(&messages);
+```
+
+---
+
+## Cost Tracking
+
+### Model Pricing
+
+```rust
+use flowgentra_ai::core::llm::model_pricing;
+
+// Returns (input_cost_per_million, output_cost_per_million) in USD
+let (input_price, output_price) = model_pricing("gpt-4").unwrap();
+// (30.0, 60.0) = $30/M input, $60/M output
+```
+
+### Estimate Cost Per Call
+
+```rust
+// After an LLM call with usage tracking:
+let (response, usage) = client.chat_with_usage(messages).await?;
+
+if let Some(usage) = usage {
+    println!("Input tokens: {}", usage.prompt_tokens);
+    println!("Output tokens: {}", usage.completion_tokens);
+
+    if let Some(cost) = usage.estimated_cost("gpt-4") {
+        println!("Estimated cost: ${:.4}", cost);
+    }
+}
+```
+
+---
+
+## Structured Output (ResponseFormat)
+
+Get deterministic JSON responses instead of free-form text:
+
+### JSON Mode
+
+Forces the LLM to output valid JSON:
+
+```rust
+use flowgentra_ai::core::llm::{LLMConfig, ResponseFormat};
+
+let config = LLMConfig::new(provider, model, key)
+    .with_response_format(ResponseFormat::Json);
+```
+
+For Anthropic, this appends a system instruction: "You must respond with valid JSON only."
+
+### JSON Schema Mode (OpenAI)
+
+Enforce a specific structure:
+
+```rust
+let config = LLMConfig::new(provider, model, key)
+    .with_response_format(ResponseFormat::JsonSchema {
+        name: "sentiment_analysis".into(),
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "sentiment": { "type": "string", "enum": ["positive", "negative", "neutral"] },
+                "confidence": { "type": "number" }
+            },
+            "required": ["sentiment", "confidence"]
+        }),
+    });
+```
+
+---
+
+## Anthropic Tool Calling
+
+Anthropic uses a different format than OpenAI for tool definitions and responses:
+
+```rust
+// Tool definitions use `input_schema` (not `parameters`)
+// {
+//   "name": "search",
+//   "description": "Search the web",
+//   "input_schema": { "type": "object", ... }
+// }
+
+// Response tool calls come as `tool_use` content blocks:
+// { "type": "tool_use", "id": "...", "name": "search", "input": {...} }
+
+// All handled automatically by the adapter:
+let response = client.chat_with_tools(messages, &tools).await?;
+if let Some(tool_calls) = response.tool_calls {
+    for call in tool_calls {
+        println!("Tool: {}, Args: {}", call.name, call.arguments);
+    }
+}
+```
+
+---
+
+## CachedLLMClient
+
+Cache LLM responses to avoid redundant API calls. Uses hash-based caching on message role and content:
+
+```rust
+use flowgentra_ai::prelude::*;
+use std::sync::Arc;
+
+let cached = CachedLLMClient::new(inner_client)
+    .with_max_entries(1000);
+
+let response = cached.chat(messages.clone()).await?;
+let again = cached.chat(messages).await?; // cache hit, no API call
+
+println!("Cache entries: {}", cached.cache_size());
+cached.clear_cache();
+```
+
+Note: Tool calls and streaming are **not** cached (they have side effects).
+
+---
+
+## FallbackLLMClient
+
+Try multiple LLM providers in sequence until one succeeds:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let client = FallbackLLMClient::new(primary_client)
+    .with_fallback(secondary_client)
+    .with_fallback(tertiary_client);
+
+// Tries primary → secondary → tertiary
+let response = client.chat(messages).await?;
+```
+
+Implements the full `LLMClient` trait (chat, chat_with_usage, chat_with_tools, chat_stream). Failed providers are logged via `tracing::warn!`.
+
+### Config-Based Fallback
 
 ```yaml
 llm:
@@ -147,212 +290,153 @@ llm:
     - provider: anthropic
       model: claude-3-opus-20240229
       api_key: ${ANTHROPIC_API_KEY}
-    - provider: mistral
-      model: mistral-large
-      api_key: ${MISTRAL_API_KEY}
-    - provider: huggingface
-      model: mistralai/Mistral-7B-Instruct-v0.1
-      api_key: ${HF_API_TOKEN}
-```
-
-Flow:
-1. Try OpenAI GPT-4
-2. If fails → try Claude
-3. If fails → try Mistral
-4. If fails → try HuggingFace
-5. If all fail → error
-
-**Example: Cost-optimized fallback chain**
-```yaml
-llm:
-  provider: groq              # Free tier, very fast
-  model: mixtral-8x7b-32768
-  api_key: ${GROQ_API_KEY}
-  fallbacks:
-    - provider: huggingface   # Free cloud API
-      model: mistralai/Mistral-7B-Instruct-v0.1
-      api_key: ${HF_API_TOKEN}
-    - provider: ollama        # Free local (if available)
+    - provider: ollama
       model: mistral
       base_url: http://localhost:11434
 ```
 
-## Parameters Explained
+---
 
-**temperature** - Controls randomness in responses
-- 0.0: Deterministic (always the same answer)
-- 0.7: Balanced (recommended)
-- 1.0: Creative (lots of variation)
+## PromptTemplate
 
-**max_tokens** - Maximum response length (default: 2000)
-
-**timeout** - Request timeout in seconds (default: 30)
-
-**top_p** - Nucleus sampling (0.0 - 1.0)
-
-## Provider Comparison
-
-| Provider | Cost | Speed | Quality | Setup | Best For |
-|----------|------|-------|---------|-------|----------|
-| **OpenAI** | Paid | Fast | Excellent | 5 min | Production, high quality |
-| **Anthropic** | Paid | Medium | Excellent | 5 min | Long context, safeguard |
-| **Mistral** | Paid | Fast | Good | 5 min | Cost-effective production |
-| **Groq** | Free tier | Very Fast | Good | 5 min | Fast inference, prototyping |
-| **HuggingFace Cloud** | Free | Medium | Good | 5 min | Prototyping, open models |
-| **HuggingFace Local** | Free | Fast | Good | 30 min | Privacy, no costs, custom models |
-| **Ollama** | Free | Medium | Good | 15 min | Local development |
-| **Azure** | Paid | Fast | Excellent | 10 min | Enterprise, private |
-
-### When to Use Each Provider
-
-**OpenAI (GPT-4)**
-- When: You need the best possible quality
-- Cost: ~$0.03-0.06 per 1K tokens
-- Use case: Customer-facing applications, complex reasoning
-
-**HuggingFace (Cloud API)**
-- When: Free tier, prototyping, open-source models
-- Cost: Free (rate-limited)
-- Use case: Early development, testing, open models
-- Best models: Mistral, Llama, Zephyr
-
-**HuggingFace (Local TGI)**
-- When: Need privacy, zero cost, full control
-- Cost: $0 (just GPU/compute)
-- Use case: Private deployments, custom models, no-internet
-- Requirement: Must have a GPU
-
-**Groq**
-- When: Need speed and free tier
-- Cost: Free tier + paid
-- Use case: Fast inference, real-time applications
-- Best for: Latency-critical applications
-
-**Ollama**
-- When: Laptop/development environment
-- Cost: $0
-- Use case: Local development, testing
-- Limitation: CPU-only or limited VRAM
-
-## Usage in Code
+Template strings with `{variable}` interpolation and auto-extraction of variable names:
 
 ```rust
-let llm = state.get_llm_client()?;
-let response = llm.chat(messages).await?;
+use flowgentra_ai::core::llm::prompt_template::PromptTemplate;
+
+let template = PromptTemplate::new("Translate '{text}' to {language}");
+
+// Check required variables
+assert_eq!(template.variables(), &["language", "text"]);
+
+// Format with all variables
+let result = template.format(&[
+    ("text", "Hello"),
+    ("language", "French"),
+])?;
+// "Translate 'Hello' to French"
+
+// Partial formatting (fill some variables, leave others)
+let partial = template.partial(&[("language", "Spanish")])?;
+let result = partial.format(&[("text", "Goodbye")])?;
 ```
 
-## HuggingFace Advanced Configuration
+### ChatPromptTemplate
 
-### Cloud API with Custom Parameters
+Build multi-message prompts:
 
-```yaml
-llm:
-  provider: huggingface
-  model: mistralai/Mistral-7B-Instruct-v0.1
-  api_key: ${HF_API_TOKEN}
-  temperature: 0.7
-  max_tokens: 1024
-  top_p: 0.95
+```rust
+use flowgentra_ai::core::llm::prompt_template::ChatPromptTemplate;
+
+let prompt = ChatPromptTemplate::new()
+    .system("You are a {domain} expert.")
+    .user("Explain {concept} in simple terms.");
+
+let messages = prompt.format_messages(&[
+    ("domain", "Rust"),
+    ("concept", "lifetimes"),
+])?;
+// [Message::system("You are a Rust expert."), Message::user("Explain lifetimes in simple terms.")]
 ```
 
-### Multiple Models (via fallbacks)
+### FewShotPromptTemplate
 
-```yaml
-llm:
-  provider: huggingface
-  model: mistralai/Mistral-7B-Large      # Larger, slower
-  api_key: ${HF_API_TOKEN}
-  fallbacks:
-    - provider: huggingface
-      model: mistralai/Mistral-7B        # Smaller, faster fallback
-      api_key: ${HF_API_TOKEN}
+Build prompts with examples:
+
+```rust
+use flowgentra_ai::core::llm::prompt_template::FewShotPromptTemplate;
+
+let template = FewShotPromptTemplate::new(
+    "Classify the sentiment:",
+    "Input: {input}\nSentiment: {output}",
+    "Input: {input}\nSentiment:",
+);
+
+let examples = vec![
+    vec![("input", "I love it"), ("output", "positive")],
+    vec![("input", "Terrible"), ("output", "negative")],
+];
+
+let prompt = template.format(&examples, &[("input", "Pretty good")])?;
 ```
-
-### Local TGI with Custom Endpoint
-
-```yaml
-llm:
-  provider: huggingface
-  model: meta-llama/Llama-2-7b-chat
-  api_key: ""
-  extra_params:
-    mode: "local"
-    endpoint: "http://your-server.com:8080"
-```
-
-### Deploying Your Own TGI Server
-
-```bash
-# With GPU (CUDA)
-docker run --gpus all -p 8080:80 \
-  ghcr.io/huggingface/text-generation-inference:latest \
-  --model-id meta-llama/Llama-2-7b-chat
-
-# With specific GPU memory
-docker run --gpus all -e CUDA_VISIBLE_DEVICES=0 -p 8080:80 \
-  ghcr.io/huggingface/text-generation-inference:latest \
-  --model-id meta-llama/Llama-2-7b-chat \
-  --max-total-tokens 2048
-
-# On CPU (slower)
-docker run -p 8080:80 \
-  ghcr.io/huggingface/text-generation-inference:latest \
-  --model-id mistralai/Mistral-7B-Instruct-v0.1
-```
-
-### Recommended Models for Different Use Cases
-
-**Fast & Efficient (7B parameters)**
-- `mistralai/Mistral-7B-Instruct-v0.1` - Best balance
-- `meta-llama/Llama-2-7b-chat` - Good alternative
-
-**High Quality (13B+ parameters)**
-- `mistralai/Mistral-7B-Instruct-v0.2` - Latest version
-- `meta-llama/Llama-2-13b-chat` - Larger model
-
-**Specialized Models**
-- Code: `codellama/CodeLlama-7b-Instruct-hf`
-- Multilingual: `allenai/Llama-2-7b-hf`
-- Long context: `mistralai/Mistral-7B-Instruct-v0.1` (can handle 32k)
-
-## Best Practices
-
-1. **Always use environment variables for API keys**
-   ```bash
-   export OPENAI_API_KEY="sk-..."
-   export HF_API_TOKEN="hf_..."
-   ```
-
-2. **Pick the right temperature for your task**
-   - Factual: 0.0-0.3
-   - Balanced: 0.5-0.7
-   - Creative: 0.8-1.0
-
-3. **Add fallback providers for reliability**
-   ```yaml
-   provider: openai
-   fallbacks:
-     - provider: anthropic
-     - provider: huggingface
-   ```
-
-4. **Monitor token usage and costs**
-   - Use HuggingFace cloud for free prototyping
-   - Use local TGI for production to avoid API costs
-   - Set reasonable max_tokens limits
-
-5. **HuggingFace-specific tips**
-   - **Cloud API**: Great for free/testing, rate-limited, good for small projects
-   - **Local TGI**: Perfect for private/sensitive data, zero cost, full control
-   - **Choose models wisely**: Smaller models (7B) are faster, larger (13B+) are smarter
-   - **Stream responses**: For better UX (available in later versions)
-   - **Use fallbacks**: Combine cloud and local for robustness
-
-6. **Test locally first**
-   - Develop with Ollama (easy setup)
-   - Test with HuggingFace cloud (free)
-   - Deploy with HuggingFace local TGI (production-ready)
 
 ---
 
-See [configuration/CONFIG_GUIDE.md](../configuration/CONFIG_GUIDE.md) for complete reference.
+## OutputParser
+
+Parse structured data from LLM text responses. All parsers implement the `OutputParser` trait with `parse()` and `format_instructions()`.
+
+### JsonOutputParser
+
+Extracts JSON from freeform text, including markdown code fences:
+
+```rust
+use flowgentra_ai::core::llm::output_parser::JsonOutputParser;
+
+let parser = JsonOutputParser::new();
+
+// Handles markdown fences
+let value = parser.parse("Here's the result:\n```json\n{\"score\": 95}\n```")?;
+
+// Handles raw JSON in text
+let value = parser.parse("The answer is {\"name\": \"Alice\", \"age\": 30}")?;
+```
+
+### ListOutputParser
+
+Parse lists from various formats:
+
+```rust
+use flowgentra_ai::core::llm::output_parser::ListOutputParser;
+
+let parser = ListOutputParser::comma_separated();
+let items = parser.parse("apples, oranges, bananas")?;
+
+let parser = ListOutputParser::newline_separated();
+let items = parser.parse("first\nsecond\nthird")?;
+
+let parser = ListOutputParser::numbered();
+let items = parser.parse("1. alpha\n2. beta\n3. gamma")?;
+```
+
+### StructuredOutputParser
+
+Validate required fields in JSON output:
+
+```rust
+use flowgentra_ai::core::llm::output_parser::{StructuredOutputParser, FieldSpec};
+
+let parser = StructuredOutputParser::new(vec![
+    FieldSpec { name: "name".into(), field_type: "string".into(), description: "The name".into() },
+    FieldSpec { name: "score".into(), field_type: "number".into(), description: "Quality score".into() },
+]);
+
+// Validates that "name" and "score" are present
+let value = parser.parse("{\"name\": \"test\", \"score\": 42}")?;
+```
+
+---
+
+## Provider Comparison
+
+| Provider | Cost | Speed | Quality | Best For |
+|----------|------|-------|---------|----------|
+| **OpenAI** | Paid | Fast | Excellent | Production, high quality |
+| **Anthropic** | Paid | Medium | Excellent | Long context, safety |
+| **Groq** | Free tier | Very fast | Good | Low-latency, prototyping |
+| **HuggingFace** | Free/Paid | Medium | Good | Open models, privacy (local TGI) |
+| **Ollama** | Free | Medium | Good | Local development |
+| **Azure** | Paid | Fast | Excellent | Enterprise |
+
+## Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `temperature` | Randomness (0.0 = deterministic, 1.0 = creative) | 0.7 |
+| `max_tokens` | Maximum response length | 2048 |
+| `top_p` | Nucleus sampling threshold | 1.0 |
+| `timeout` | Request timeout in seconds | 30 |
+
+---
+
+See [FEATURES.md](../FEATURES.md) for the complete feature list.

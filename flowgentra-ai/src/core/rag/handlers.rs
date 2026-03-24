@@ -52,7 +52,7 @@ impl RAGHandlers {
            + Sync
            + Clone
            + 'static {
-            move |state: T| {
+        move |state: T| {
             let store = Arc::clone(&vector_store);
             let emb = Arc::clone(&embeddings);
 
@@ -79,22 +79,15 @@ impl RAGHandlers {
                         let mut doc = Document::new(&doc_id, &doc_text);
                         doc.embedding = Some(embedding);
 
-                        match store.config().store_type {
-                            _ => {
-                                // Use the backend directly to pass the embedding
-                                match store.index_document(&doc_id, &doc_text, json!({})).await {
-                                    Ok(_) => {
-                                        state.set("indexed", json!(true));
-                                        state.set("doc_id", json!(&doc_id));
-                                        state.set("embedding_dim", json!(dim));
-                                    }
-                                    Err(e) => {
-                                        state.set(
-                                            "error",
-                                            json!(format!("Indexing failed: {}", e)),
-                                        );
-                                    }
-                                }
+                        match store.index_document(&doc_id, &doc_text, json!({})).await {
+                            Ok(_) => {
+                                state.set("indexed", json!(true));
+                                state.set("doc_id", json!(&doc_id));
+                                state.set("embedding_dim", json!(dim));
+                            }
+                            Err(e) => {
+                                state
+                                    .set("error", json!(format!("Indexing failed: {}", e)));
                             }
                         }
                     }
@@ -118,7 +111,7 @@ impl RAGHandlers {
            + Sync
            + Clone
            + 'static {
-            move |state: T| {
+        move |state: T| {
             let store = Arc::clone(&vector_store);
             let emb = Arc::clone(&embeddings);
             let cfg = config.clone();
@@ -169,10 +162,17 @@ impl RAGHandlers {
 
                                 for (i, r) in filtered.iter().enumerate() {
                                     // Source attribution header
-                                    let source = r.metadata.get("source")
+                                    let source = r
+                                        .metadata
+                                        .get("source")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or(&r.id);
-                                    let header = format!("[Source {}: {} (score: {:.2})]", i + 1, source, r.score);
+                                    let header = format!(
+                                        "[Source {}: {} (score: {:.2})]",
+                                        i + 1,
+                                        source,
+                                        r.score
+                                    );
 
                                     let chunk = format!("{}\n{}", header, r.text);
 
@@ -195,10 +195,7 @@ impl RAGHandlers {
                                 state.set(&cfg.context_key, json!(context));
                             }
                             Err(e) => {
-                                state.set(
-                                    "error",
-                                    json!(format!("Retrieval failed: {}", e)),
-                                );
+                                state.set("error", json!(format!("Retrieval failed: {}", e)));
                             }
                         }
                     }

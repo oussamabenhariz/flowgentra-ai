@@ -37,26 +37,26 @@
 //! }
 //! ```
 
+pub mod events;
+pub mod graph_visualizer;
 mod middleware;
+pub mod otel;
 mod replay;
 mod trace;
 mod types;
-pub mod visualization;
-pub mod graph_visualizer;
 pub mod ui;
-pub mod events;
-pub mod otel;
+pub mod visualization;
 
+pub use events::{EventBroadcaster, ExecutionEvent};
+pub use graph_visualizer::{
+    ExecutionStatistics, NodeExecutionStatus, NodeStatistics, NodeType, StateGraphEdge,
+    StateGraphNode, StateGraphVisualization, StateGraphVisualizer,
+};
 pub use middleware::{ObservabilityMiddleware, TOKEN_USAGE_STATE_KEY};
 pub use replay::ReplayMode;
 pub use trace::ExecutionTrace;
 pub use types::{FailureSnapshot, NodeTiming, PathSegment};
 pub use visualization::{ExecutionTracer, GraphVisualizer, LayoutAlgorithm};
-pub use graph_visualizer::{
-    StateGraphVisualizer, StateGraphVisualization, StateGraphNode, StateGraphEdge,
-    NodeType, NodeExecutionStatus, ExecutionStatistics, NodeStatistics,
-};
-pub use events::{EventBroadcaster, ExecutionEvent};
 
 use crate::core::llm::TokenUsage;
 use crate::core::state::State;

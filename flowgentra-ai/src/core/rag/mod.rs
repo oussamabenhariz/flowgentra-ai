@@ -38,11 +38,13 @@
 
 pub mod cache;
 pub mod chroma;
+pub mod cross_encoder;
 pub mod dedup;
 pub mod document_loader;
 pub mod embeddings;
 pub mod evaluation;
 pub mod handlers;
+pub mod huggingface_embeddings;
 pub mod hybrid;
 pub mod ingestion;
 pub mod mistral_embeddings;
@@ -51,22 +53,38 @@ pub mod openai_embeddings;
 pub mod pdf;
 pub mod persistence;
 pub mod reranker;
+pub mod retriever;
 pub mod retrievers;
+pub mod text_splitter;
 pub mod vector_db;
 
 pub use cache::CachedEmbeddings;
 pub use chroma::ChromaStore;
+pub use cross_encoder::CrossEncoderReranker;
 pub use dedup::{dedup_by_id, dedup_by_similarity};
 pub use document_loader::{load_directory, load_document, FileType, LoadedDocument};
-pub use embeddings::{EmbeddingError, EmbeddingModel, Embeddings};
+pub use embeddings::{
+    EmbeddingError, EmbeddingModel, Embeddings, EmbeddingsProvider, MockEmbeddings,
+};
 pub use evaluation::{evaluate, hit_rate, mean_ndcg, mrr, EvalQuery, EvalResults, QueryResult};
 pub use handlers::{RAGHandlers, RAGNodeConfig};
+pub use huggingface_embeddings::HuggingFaceEmbeddings;
 pub use hybrid::{bm25_score, hybrid_merge};
 pub use ingestion::{IngestionPipeline, IngestionStats};
 pub use mistral_embeddings::MistralEmbeddings;
 pub use ollama_embeddings::OllamaEmbeddings;
 pub use openai_embeddings::OpenAIEmbeddings;
-pub use pdf::{chunk_text, chunk_text_by_tokens, estimate_tokens, extract_and_chunk, extract_text, PdfDocument};
+pub use pdf::{
+    chunk_text, chunk_text_by_tokens, estimate_tokens, extract_and_chunk, extract_text, PdfDocument,
+};
 pub use reranker::{LLMReranker, NoopReranker, RRFReranker, RerankStrategy, Reranker};
+pub use retriever::Retriever;
 pub use retrievers::{QueryExpander, RetrievalConfig, RetrieverStrategy};
-pub use vector_db::{Document, InMemoryVectorStore, MetadataFilter, RAGConfig, SearchResult, VectorStore, VectorStoreError, VectorStoreType};
+pub use text_splitter::{
+    ChunkMetadata, CodeTextSplitter, HTMLTextSplitter, Language, MarkdownTextSplitter,
+    RecursiveCharacterTextSplitter, TextChunk, TextSplitter, TokenTextSplitter,
+};
+pub use vector_db::{
+    Document, InMemoryVectorStore, MetadataFilter, RAGConfig, SearchResult, VectorStore,
+    VectorStoreBackend, VectorStoreError, VectorStoreType,
+};

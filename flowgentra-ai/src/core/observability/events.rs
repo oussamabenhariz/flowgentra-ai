@@ -12,14 +12,9 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExecutionEvent {
     /// Graph execution started.
-    GraphStarted {
-        graph_id: String,
-    },
+    GraphStarted { graph_id: String },
     /// A node is about to execute.
-    NodeStarted {
-        node_name: String,
-        step: usize,
-    },
+    NodeStarted { node_name: String, step: usize },
     /// A node finished execution.
     NodeCompleted {
         node_name: String,

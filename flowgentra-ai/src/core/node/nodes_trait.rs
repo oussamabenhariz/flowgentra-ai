@@ -450,20 +450,32 @@ fn default_max_backoff_ms() -> u64 {
 impl RetryNodeConfig {
     /// Build a RetryNodeConfig from a NodeConfig (YAML deserialization target).
     /// Fields are read from `node.config` map.
-    pub fn from_node_config(node: &crate::core::node::NodeConfig) -> crate::core::error::Result<Self> {
-        let max_retries = node.config.get("max_retries")
+    pub fn from_node_config(
+        node: &crate::core::node::NodeConfig,
+    ) -> crate::core::error::Result<Self> {
+        let max_retries = node
+            .config
+            .get("max_retries")
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as usize;
-        let backoff_ms = node.config.get("backoff_ms")
+        let backoff_ms = node
+            .config
+            .get("backoff_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
-        let backoff_multiplier = node.config.get("backoff_multiplier")
+        let backoff_multiplier = node
+            .config
+            .get("backoff_multiplier")
             .and_then(|v| v.as_f64())
             .unwrap_or(2.0) as f32;
-        let max_backoff_ms = node.config.get("max_backoff_ms")
+        let max_backoff_ms = node
+            .config
+            .get("max_backoff_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(30000);
-        let retry_condition = node.config.get("retry_condition")
+        let retry_condition = node
+            .config
+            .get("retry_condition")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         Ok(RetryNodeConfig {
@@ -544,11 +556,17 @@ fn default_timeout_action() -> String {
 impl TimeoutNodeConfig {
     /// Build a TimeoutNodeConfig from a NodeConfig (YAML deserialization target).
     /// Fields are read from `node.config` map.
-    pub fn from_node_config(node: &crate::core::node::NodeConfig) -> crate::core::error::Result<Self> {
-        let timeout_ms = node.config.get("timeout_ms")
+    pub fn from_node_config(
+        node: &crate::core::node::NodeConfig,
+    ) -> crate::core::error::Result<Self> {
+        let timeout_ms = node
+            .config
+            .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(30_000);
-        let on_timeout = node.config.get("on_timeout")
+        let on_timeout = node
+            .config
+            .get("on_timeout")
             .and_then(|v| v.as_str())
             .unwrap_or("error")
             .to_string();
@@ -615,20 +633,31 @@ pub struct HumanInTheLoopConfig {
 impl HumanInTheLoopConfig {
     /// Build a HumanInTheLoopConfig from a NodeConfig (YAML deserialization target).
     /// Fields are read from `node.config` map.
-    pub fn from_node_config(node: &crate::core::node::NodeConfig) -> crate::core::error::Result<Self> {
-        let prompt = node.config.get("prompt")
+    pub fn from_node_config(
+        node: &crate::core::node::NodeConfig,
+    ) -> crate::core::error::Result<Self> {
+        let prompt = node
+            .config
+            .get("prompt")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let require_approval = node.config.get("require_approval")
+        let require_approval = node
+            .config
+            .get("require_approval")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
-        let editable_fields: Vec<String> = node.config.get("editable_fields")
+        let editable_fields: Vec<String> = node
+            .config
+            .get("editable_fields")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
-        let timeout_ms = node.config.get("timeout_ms")
-            .and_then(|v| v.as_u64());
+        let timeout_ms = node.config.get("timeout_ms").and_then(|v| v.as_u64());
         Ok(HumanInTheLoopConfig {
             name: node.name.clone(),
             prompt,

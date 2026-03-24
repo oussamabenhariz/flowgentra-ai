@@ -25,7 +25,6 @@
 //! edge.with_condition(condition);
 //! ```
 
-
 use serde_json::Value;
 
 /// Unified routing condition that supports both DSL and function-based conditions.
@@ -66,7 +65,8 @@ pub enum RoutingCondition<T: crate::core::state::State> {
     Function(FunctionCondition<T>),
 }
 
-pub type FunctionCondition<T> = std::sync::Arc<dyn Fn(&T) -> crate::core::error::Result<Option<String>> + Send + Sync>;
+pub type FunctionCondition<T> =
+    std::sync::Arc<dyn Fn(&T) -> crate::core::error::Result<Option<String>> + Send + Sync>;
 
 impl<T: crate::core::state::State> RoutingCondition<T> {
     /// Create a DSL-based condition (preferred method)
@@ -358,9 +358,13 @@ impl<T: crate::core::state::State> Condition<T> {
                 None => false,
             },
 
-            Condition::And(conditions) => conditions.iter().all(|c: &Condition<T>| c.evaluate(state)),
+            Condition::And(conditions) => {
+                conditions.iter().all(|c: &Condition<T>| c.evaluate(state))
+            }
 
-            Condition::Or(conditions) => conditions.iter().any(|c: &Condition<T>| c.evaluate(state)),
+            Condition::Or(conditions) => {
+                conditions.iter().any(|c: &Condition<T>| c.evaluate(state))
+            }
 
             Condition::Not(condition) => !condition.evaluate(state),
 
@@ -526,7 +530,10 @@ impl<T: crate::core::state::State> ConditionBuilder<T> {
         if self.conditions.is_empty() {
             Condition::and(vec![]) // No conditions = always true for AND
         } else if self.conditions.len() == 1 {
-            self.conditions.into_iter().next().expect("Already checked len == 1")
+            self.conditions
+                .into_iter()
+                .next()
+                .expect("Already checked len == 1")
         } else {
             match self.mode {
                 ConditionMode::And => Condition::and(self.conditions),
@@ -555,7 +562,8 @@ mod tests {
         let state = SharedState::new(Default::default());
         state.set("confidence", json!(0.9));
 
-        let condition: Condition<SharedState> = Condition::compare("confidence", ComparisonOp::GreaterThan, 0.8);
+        let condition: Condition<SharedState> =
+            Condition::compare("confidence", ComparisonOp::GreaterThan, 0.8);
         assert!(condition.evaluate(&state));
     }
 
@@ -613,7 +621,8 @@ mod tests {
         let state = SharedState::new(Default::default());
         state.set("a", json!(true));
 
-        let condition: Condition<SharedState> = Condition::Not(Box::new(Condition::field_exists("missing")));
+        let condition: Condition<SharedState> =
+            Condition::Not(Box::new(Condition::field_exists("missing")));
         assert!(condition.evaluate(&state));
     }
 
@@ -650,13 +659,16 @@ mod tests {
         state.set("name", json!("Alice"));
         state.set("age", json!(30));
 
-        let string_check: Condition<SharedState> = Condition::field_type("name", FieldTypeCheck::String);
+        let string_check: Condition<SharedState> =
+            Condition::field_type("name", FieldTypeCheck::String);
         assert!(string_check.evaluate(&state));
 
-        let number_check: Condition<SharedState> = Condition::field_type("age", FieldTypeCheck::Number);
+        let number_check: Condition<SharedState> =
+            Condition::field_type("age", FieldTypeCheck::Number);
         assert!(number_check.evaluate(&state));
 
-        let wrong_check: Condition<SharedState> = Condition::field_type("name", FieldTypeCheck::Number);
+        let wrong_check: Condition<SharedState> =
+            Condition::field_type("name", FieldTypeCheck::Number);
         assert!(!wrong_check.evaluate(&state));
     }
 }

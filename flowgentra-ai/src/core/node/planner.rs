@@ -43,9 +43,7 @@ pub fn create_planner_handler<T: State>(
         let client = Arc::clone(&llm_client);
         let template = prompt_template.clone();
         Box::pin(async move {
-            let _current = state
-                .get_str("_current_node")
-                .unwrap_or_else(|| "unknown");
+            let _current = state.get_str("_current_node").unwrap_or("unknown");
             let reachable: Vec<String> = state
                 .get("_reachable_nodes")
                 .and_then(|v: serde_json::Value| serde_json::from_value(v.clone()).ok())
@@ -90,10 +88,9 @@ pub fn create_planner_handler<T: State>(
 
             let messages = vec![Message::system(system_prompt), Message::user(&user_prompt)];
 
-            let response = client
-                .chat(messages)
-                .await
-                .map_err(|e| FlowgentraError::LLMError(format!("Planner LLM call failed: {}", e)))?;
+            let response = client.chat(messages).await.map_err(|e| {
+                FlowgentraError::LLMError(format!("Planner LLM call failed: {}", e))
+            })?;
 
             let chosen = parse_next_node(&response.content, &reachable);
             tracing::debug!(raw_response = %response.content, chosen = %chosen, "Planner LLM response");

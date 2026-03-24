@@ -45,6 +45,7 @@ struct ChromaQueryResponse {
     #[serde(default)]
     distances: Option<Vec<Vec<f32>>>,
     #[serde(default)]
+    #[allow(clippy::type_complexity)]
     metadatas: Option<Vec<Vec<Option<HashMap<String, serde_json::Value>>>>>,
 }
 
@@ -86,18 +87,14 @@ impl ChromaStore {
         let url = format!("{}/api/v1/collections", self.base_url);
 
         // Try to get existing collection
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| VectorStoreError::ConnectionError(format!("ChromaDB unreachable: {}", e)))?;
+        let resp = self.client.get(&url).send().await.map_err(|e| {
+            VectorStoreError::ConnectionError(format!("ChromaDB unreachable: {}", e))
+        })?;
 
         if resp.status().is_success() {
-            let collections: Vec<ChromaCollection> = resp
-                .json()
-                .await
-                .map_err(|e| VectorStoreError::ApiError(format!("Failed to parse collections: {}", e)))?;
+            let collections: Vec<ChromaCollection> = resp.json().await.map_err(|e| {
+                VectorStoreError::ApiError(format!("Failed to parse collections: {}", e))
+            })?;
 
             if let Some(col) = collections.iter().find(|c| c.name == self.collection_name) {
                 self.collection_id = Some(col.id.clone());
@@ -118,7 +115,9 @@ impl ChromaStore {
             .json(&body)
             .send()
             .await
-            .map_err(|e| VectorStoreError::ConnectionError(format!("Failed to create collection: {}", e)))?;
+            .map_err(|e| {
+                VectorStoreError::ConnectionError(format!("Failed to create collection: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -129,20 +128,18 @@ impl ChromaStore {
             )));
         }
 
-        let col: ChromaCollection = resp
-            .json()
-            .await
-            .map_err(|e| VectorStoreError::ApiError(format!("Failed to parse created collection: {}", e)))?;
+        let col: ChromaCollection = resp.json().await.map_err(|e| {
+            VectorStoreError::ApiError(format!("Failed to parse created collection: {}", e))
+        })?;
 
         self.collection_id = Some(col.id);
         Ok(())
     }
 
     fn collection_url(&self) -> Result<String, VectorStoreError> {
-        let id = self
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| VectorStoreError::ConfigError("Collection not initialized".to_string()))?;
+        let id = self.collection_id.as_ref().ok_or_else(|| {
+            VectorStoreError::ConfigError("Collection not initialized".to_string())
+        })?;
         Ok(format!("{}/api/v1/collections/{}", self.base_url, id))
     }
 }
@@ -173,7 +170,10 @@ impl VectorStoreBackend for ChromaStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Index failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Index failed: {}",
+                text
+            )));
         }
 
         Ok(())
@@ -213,10 +213,9 @@ impl VectorStoreBackend for ChromaStore {
             return Err(VectorStoreError::ApiError(format!("Search failed: {text}")));
         }
 
-        let result: ChromaQueryResponse = resp
-            .json()
-            .await
-            .map_err(|e| VectorStoreError::ApiError(format!("Parse search results failed: {}", e)))?;
+        let result: ChromaQueryResponse = resp.json().await.map_err(|e| {
+            VectorStoreError::ApiError(format!("Parse search results failed: {}", e))
+        })?;
 
         let mut results = Vec::new();
 
@@ -267,7 +266,10 @@ impl VectorStoreBackend for ChromaStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Delete failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Delete failed: {}",
+                text
+            )));
         }
 
         Ok(())
@@ -292,7 +294,10 @@ impl VectorStoreBackend for ChromaStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Update failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Update failed: {}",
+                text
+            )));
         }
 
         Ok(())
@@ -429,7 +434,10 @@ impl VectorStoreBackend for ChromaStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Clear failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Clear failed: {}",
+                text
+            )));
         }
 
         Ok(())

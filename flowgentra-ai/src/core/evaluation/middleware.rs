@@ -2,14 +2,14 @@
 //!
 //! Middleware that automatically evaluates node outputs and triggers retries when needed.
 
-use crate::core::state::State;
 use crate::core::evaluation::{
-    ConfidenceConfig, ConfidenceScorer, LegacyEvaluationPolicy, LegacyEvaluationResultBuilder, 
+    ConfidenceConfig, ConfidenceScorer, LegacyEvaluationPolicy, LegacyEvaluationResultBuilder,
     NodeScorer, RetryConfig, RetryPolicy, ScoringCriteria,
 };
 use crate::core::middleware::{
     ExecutionContext as MiddlewareContext, Middleware, MiddlewareResult,
 };
+use crate::core::state::State;
 
 /// Auto-evaluation middleware that assesses and corrects node outputs
 pub struct AutoEvaluationMiddleware {
@@ -172,7 +172,8 @@ impl<T: State> Middleware<T> for AutoEvaluationMiddleware {
         // 4. Store evaluation in state
         if self.policy.store_evaluation_history {
             let meta_key = format!("__eval_meta__{}", node_name);
-            ctx.state.set(&meta_key, serde_json::to_value(&eval).unwrap_or_default());
+            ctx.state
+                .set(&meta_key, serde_json::to_value(&eval).unwrap_or_default());
         }
 
         // 5. Automatic Retry Decision

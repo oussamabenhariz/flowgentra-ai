@@ -31,7 +31,6 @@
 //!     .with_join_type(JoinType::WaitAll);
 //! ```
 
-
 use serde::{Deserialize, Serialize};
 
 /// Configuration for a loop node that repeats execution
@@ -76,14 +75,22 @@ pub struct LoopNodeConfig {
 impl LoopNodeConfig {
     /// Build a LoopNodeConfig from a NodeConfig (YAML deserialization target).
     /// Fields are read from `node.config` map; `handler` from `node.handler`.
-    pub fn from_node_config(node: &crate::core::node::NodeConfig) -> crate::core::error::Result<Self> {
-        let max_iterations = node.config.get("max_iterations")
+    pub fn from_node_config(
+        node: &crate::core::node::NodeConfig,
+    ) -> crate::core::error::Result<Self> {
+        let max_iterations = node
+            .config
+            .get("max_iterations")
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as usize;
-        let break_condition = node.config.get("break_condition")
+        let break_condition = node
+            .config
+            .get("break_condition")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let accumulate_results = node.config.get("accumulate_results")
+        let accumulate_results = node
+            .config
+            .get("accumulate_results")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         Ok(LoopNodeConfig {

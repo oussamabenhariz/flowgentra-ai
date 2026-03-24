@@ -55,11 +55,13 @@ impl ObservabilityMiddleware {
     }
 
     fn extract_token_usage<T: State>(state: &T) -> Option<TokenUsage> {
-        state.get(TOKEN_USAGE_STATE_KEY).and_then(|v: serde_json::Value| {
-            let prompt = v.get("prompt_tokens")?.as_u64()?;
-            let completion = v.get("completion_tokens")?.as_u64()?;
-            Some(TokenUsage::new(prompt, completion))
-        })
+        state
+            .get(TOKEN_USAGE_STATE_KEY)
+            .and_then(|v: serde_json::Value| {
+                let prompt = v.get("prompt_tokens")?.as_u64()?;
+                let completion = v.get("completion_tokens")?.as_u64()?;
+                Some(TokenUsage::new(prompt, completion))
+            })
     }
 
     fn state_to_snapshot<T: State>(state: &T, max_size: usize) -> Option<String> {

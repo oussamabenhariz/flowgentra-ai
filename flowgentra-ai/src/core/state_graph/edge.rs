@@ -1,7 +1,7 @@
 //! Edge definitions for state graph connectivity
 
-use crate::core::state::State;
 use super::error::Result;
+use crate::core::state::State;
 use std::fmt;
 
 /// A fixed edge always routes to a specific node
@@ -32,6 +32,7 @@ pub type AsyncRouterFn<S> = Box<
 >;
 
 /// Edge definition in the graph
+#[allow(clippy::type_complexity)]
 pub enum Edge<S: State> {
     /// Fixed edge that always takes the same path
     Fixed(FixedEdge),
@@ -53,18 +54,16 @@ impl<S: State> fmt::Debug for Edge<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Edge::Fixed(e) => f.debug_tuple("Edge::Fixed").field(e).finish(),
-            Edge::Conditional { from, .. } => {
-                f.debug_struct("Edge::Conditional")
-                    .field("from", from)
-                    .field("router", &"<router_fn>")
-                    .finish()
-            }
-            Edge::AsyncConditional { from, .. } => {
-                f.debug_struct("Edge::AsyncConditional")
-                    .field("from", from)
-                    .field("router", &"<async_router_fn>")
-                    .finish()
-            }
+            Edge::Conditional { from, .. } => f
+                .debug_struct("Edge::Conditional")
+                .field("from", from)
+                .field("router", &"<router_fn>")
+                .finish(),
+            Edge::AsyncConditional { from, .. } => f
+                .debug_struct("Edge::AsyncConditional")
+                .field("from", from)
+                .field("router", &"<async_router_fn>")
+                .finish(),
         }
     }
 }
@@ -74,6 +73,7 @@ impl<S: State> Edge<S> {
         Edge::Fixed(FixedEdge::new(from, to))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn conditional(
         from: impl Into<String>,
         router: Box<dyn Fn(&S) -> Result<String> + Send + Sync>,
@@ -84,10 +84,7 @@ impl<S: State> Edge<S> {
         }
     }
 
-    pub fn async_conditional(
-        from: impl Into<String>,
-        router: AsyncRouterFn<S>,
-    ) -> Self {
+    pub fn async_conditional(from: impl Into<String>, router: AsyncRouterFn<S>) -> Self {
         Edge::AsyncConditional {
             from: from.into(),
             router,

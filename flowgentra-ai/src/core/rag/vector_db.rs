@@ -66,7 +66,11 @@ impl RAGConfig {
         })
     }
 
-    pub fn qdrant(endpoint: &str, collection: &str, embedding_dim: usize) -> Result<Self, VectorStoreError> {
+    pub fn qdrant(
+        endpoint: &str,
+        collection: &str,
+        embedding_dim: usize,
+    ) -> Result<Self, VectorStoreError> {
         Ok(Self {
             store_type: VectorStoreType::Qdrant,
             api_key: None,
@@ -317,9 +321,9 @@ impl InMemoryVectorStore {
 
     /// Check if a document's metadata matches the filter
     fn matches_filter(metadata: &HashMap<String, Value>, filter: &MetadataFilter) -> bool {
-        filter.iter().all(|(key, expected)| {
-            metadata.get(key).map_or(false, |actual| actual == expected)
-        })
+        filter
+            .iter()
+            .all(|(key, expected)| metadata.get(key) == Some(expected))
     }
 }
 
@@ -442,7 +446,10 @@ impl PineconeStore {
     }
 
     fn base_url(&self) -> &str {
-        self.config.endpoint.as_deref().unwrap_or("https://api.pinecone.io")
+        self.config
+            .endpoint
+            .as_deref()
+            .unwrap_or("https://api.pinecone.io")
     }
 }
 
@@ -465,7 +472,8 @@ impl VectorStoreBackend for PineconeStore {
             "namespace": self.config.index_name,
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/vectors/upsert", self.base_url()))
             .header("Api-Key", self.api_key())
             .json(&payload)
@@ -475,7 +483,10 @@ impl VectorStoreBackend for PineconeStore {
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Pinecone upsert failed: {}", body)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Pinecone upsert failed: {}",
+                body
+            )));
         }
         Ok(())
     }
@@ -497,7 +508,8 @@ impl VectorStoreBackend for PineconeStore {
             payload["filter"] = serde_json::json!(f);
         }
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/query", self.base_url()))
             .header("Api-Key", self.api_key())
             .json(&payload)
@@ -507,27 +519,46 @@ impl VectorStoreBackend for PineconeStore {
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Pinecone query failed: {}", body)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Pinecone query failed: {}",
+                body
+            )));
         }
 
-        let data: serde_json::Value = resp.json().await
+        let data: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
         let empty_vec = Vec::new();
-        let matches = data.get("matches").and_then(|m| m.as_array())
+        let matches = data
+            .get("matches")
+            .and_then(|m| m.as_array())
             .unwrap_or(&empty_vec);
 
-        let results = matches.iter().filter_map(|m| {
-            let id = m.get("id")?.as_str()?.to_string();
-            let score = m.get("score")?.as_f64()? as f32;
-            let metadata = m.get("metadata").cloned().unwrap_or(serde_json::json!({}));
-            let text = metadata.get("text").and_then(|t| t.as_str())
-                .unwrap_or("").to_string();
-            let meta_map: HashMap<String, Value> = metadata.get("_meta")
-                .and_then(|m| serde_json::from_value(m.clone()).ok())
-                .unwrap_or_default();
-            Some(SearchResult { id, text, score, metadata: meta_map })
-        }).collect();
+        let results = matches
+            .iter()
+            .filter_map(|m| {
+                let id = m.get("id")?.as_str()?.to_string();
+                let score = m.get("score")?.as_f64()? as f32;
+                let metadata = m.get("metadata").cloned().unwrap_or(serde_json::json!({}));
+                let text = metadata
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let meta_map: HashMap<String, Value> = metadata
+                    .get("_meta")
+                    .and_then(|m| serde_json::from_value(m.clone()).ok())
+                    .unwrap_or_default();
+                Some(SearchResult {
+                    id,
+                    text,
+                    score,
+                    metadata: meta_map,
+                })
+            })
+            .collect();
 
         Ok(results)
     }
@@ -538,7 +569,8 @@ impl VectorStoreBackend for PineconeStore {
             "namespace": self.config.index_name,
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/vectors/delete", self.base_url()))
             .header("Api-Key", self.api_key())
             .json(&payload)
@@ -548,7 +580,10 @@ impl VectorStoreBackend for PineconeStore {
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Pinecone delete failed: {}", body)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Pinecone delete failed: {}",
+                body
+            )));
         }
         Ok(())
     }
@@ -564,7 +599,8 @@ impl VectorStoreBackend for PineconeStore {
             "namespace": self.config.index_name,
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .get(format!("{}/vectors/fetch", self.base_url()))
             .header("Api-Key", self.api_key())
             .query(&[("ids", doc_id), ("namespace", &self.config.index_name)])
@@ -574,35 +610,57 @@ impl VectorStoreBackend for PineconeStore {
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Pinecone fetch failed: {}", body)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Pinecone fetch failed: {}",
+                body
+            )));
         }
 
-        let data: serde_json::Value = resp.json().await
+        let data: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
-        let vectors = data.get("vectors").and_then(|v| v.as_object())
+        let vectors = data
+            .get("vectors")
+            .and_then(|v| v.as_object())
             .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
 
-        let vec_data = vectors.get(doc_id)
+        let vec_data = vectors
+            .get(doc_id)
             .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
 
-        let metadata = vec_data.get("metadata").cloned().unwrap_or(serde_json::json!({}));
-        let text = metadata.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-        let embedding = vec_data.get("values")
+        let metadata = vec_data
+            .get("metadata")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+        let text = metadata
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let embedding = vec_data
+            .get("values")
             .and_then(|v| serde_json::from_value::<Vec<f32>>(v.clone()).ok());
-        let meta_map: HashMap<String, Value> = metadata.get("_meta")
+        let meta_map: HashMap<String, Value> = metadata
+            .get("_meta")
             .and_then(|m| serde_json::from_value(m.clone()).ok())
             .unwrap_or_default();
 
         let _ = payload; // suppress unused warning
-        Ok(Document { id: doc_id.to_string(), text, embedding, metadata: meta_map })
+        Ok(Document {
+            id: doc_id.to_string(),
+            text,
+            embedding,
+            metadata: meta_map,
+        })
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         // Pinecone doesn't have a list-all endpoint in the standard API.
         // Users should track document IDs externally.
         Err(VectorStoreError::NotImplemented(
-            "Pinecone does not support listing all documents. Track IDs externally.".into()
+            "Pinecone does not support listing all documents. Track IDs externally.".into(),
         ))
     }
 
@@ -612,7 +670,8 @@ impl VectorStoreBackend for PineconeStore {
             "namespace": self.config.index_name,
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/vectors/delete", self.base_url()))
             .header("Api-Key", self.api_key())
             .json(&payload)
@@ -622,7 +681,10 @@ impl VectorStoreBackend for PineconeStore {
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Pinecone clear failed: {}", body)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Pinecone clear failed: {}",
+                body
+            )));
         }
         Ok(())
     }
@@ -659,7 +721,10 @@ impl QdrantStore {
     }
 
     fn base_url(&self) -> &str {
-        self.config.endpoint.as_deref().unwrap_or("http://localhost:6333")
+        self.config
+            .endpoint
+            .as_deref()
+            .unwrap_or("http://localhost:6333")
     }
 
     fn collection(&self) -> &str {
@@ -678,7 +743,8 @@ impl VectorStoreBackend for QdrantStore {
         payload_map.insert("text".to_string(), serde_json::json!(doc.text));
 
         // Qdrant uses numeric or UUID point IDs. Use a hash of doc.id for numeric ID.
-        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc.id.as_bytes()).to_string();
+        let point_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc.id.as_bytes()).to_string();
 
         let body = serde_json::json!({
             "points": [{
@@ -688,8 +754,13 @@ impl VectorStoreBackend for QdrantStore {
             }]
         });
 
-        let resp = self.client
-            .put(format!("{}/collections/{}/points", self.base_url(), self.collection()))
+        let resp = self
+            .client
+            .put(format!(
+                "{}/collections/{}/points",
+                self.base_url(),
+                self.collection()
+            ))
             .json(&body)
             .send()
             .await
@@ -697,7 +768,10 @@ impl VectorStoreBackend for QdrantStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Qdrant upsert failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Qdrant upsert failed: {}",
+                text
+            )));
         }
         Ok(())
     }
@@ -716,17 +790,25 @@ impl VectorStoreBackend for QdrantStore {
 
         if let Some(f) = filter {
             // Convert simple key-value filter to Qdrant filter format
-            let must: Vec<serde_json::Value> = f.iter().map(|(k, v)| {
-                serde_json::json!({
-                    "key": k,
-                    "match": { "value": v }
+            let must: Vec<serde_json::Value> = f
+                .iter()
+                .map(|(k, v)| {
+                    serde_json::json!({
+                        "key": k,
+                        "match": { "value": v }
+                    })
                 })
-            }).collect();
+                .collect();
             body["filter"] = serde_json::json!({ "must": must });
         }
 
-        let resp = self.client
-            .post(format!("{}/collections/{}/points/search", self.base_url(), self.collection()))
+        let resp = self
+            .client
+            .post(format!(
+                "{}/collections/{}/points/search",
+                self.base_url(),
+                self.collection()
+            ))
             .json(&body)
             .send()
             .await
@@ -734,37 +816,63 @@ impl VectorStoreBackend for QdrantStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Qdrant search failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Qdrant search failed: {}",
+                text
+            )));
         }
 
-        let data: serde_json::Value = resp.json().await
+        let data: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
         let empty_vec2 = Vec::new();
-        let results_arr = data.get("result").and_then(|r| r.as_array())
+        let results_arr = data
+            .get("result")
+            .and_then(|r| r.as_array())
             .unwrap_or(&empty_vec2);
 
-        let results = results_arr.iter().filter_map(|r| {
-            let id = r.get("id")?.to_string().trim_matches('"').to_string();
-            let score = r.get("score")?.as_f64()? as f32;
-            let payload = r.get("payload").cloned().unwrap_or(serde_json::json!({}));
-            let text = payload.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            let mut meta: HashMap<String, Value> = serde_json::from_value(payload.clone()).unwrap_or_default();
-            meta.remove("text");
-            Some(SearchResult { id, text, score, metadata: meta })
-        }).collect();
+        let results = results_arr
+            .iter()
+            .filter_map(|r| {
+                let id = r.get("id")?.to_string().trim_matches('"').to_string();
+                let score = r.get("score")?.as_f64()? as f32;
+                let payload = r.get("payload").cloned().unwrap_or(serde_json::json!({}));
+                let text = payload
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut meta: HashMap<String, Value> =
+                    serde_json::from_value(payload.clone()).unwrap_or_default();
+                meta.remove("text");
+                Some(SearchResult {
+                    id,
+                    text,
+                    score,
+                    metadata: meta,
+                })
+            })
+            .collect();
 
         Ok(results)
     }
 
     async fn delete(&self, doc_id: &str) -> Result<(), VectorStoreError> {
-        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc_id.as_bytes()).to_string();
+        let point_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc_id.as_bytes()).to_string();
         let body = serde_json::json!({
             "points": [point_id],
         });
 
-        let resp = self.client
-            .post(format!("{}/collections/{}/points/delete", self.base_url(), self.collection()))
+        let resp = self
+            .client
+            .post(format!(
+                "{}/collections/{}/points/delete",
+                self.base_url(),
+                self.collection()
+            ))
             .json(&body)
             .send()
             .await
@@ -772,7 +880,10 @@ impl VectorStoreBackend for QdrantStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Qdrant delete failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Qdrant delete failed: {}",
+                text
+            )));
         }
         Ok(())
     }
@@ -782,15 +893,21 @@ impl VectorStoreBackend for QdrantStore {
     }
 
     async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
-        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc_id.as_bytes()).to_string();
+        let point_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc_id.as_bytes()).to_string();
         let body = serde_json::json!({
             "ids": [point_id],
             "with_payload": true,
             "with_vector": true,
         });
 
-        let resp = self.client
-            .post(format!("{}/collections/{}/points", self.base_url(), self.collection()))
+        let resp = self
+            .client
+            .post(format!(
+                "{}/collections/{}/points",
+                self.base_url(),
+                self.collection()
+            ))
             .json(&body)
             .send()
             .await
@@ -800,32 +917,55 @@ impl VectorStoreBackend for QdrantStore {
             return Err(VectorStoreError::NotFound(doc_id.to_string()));
         }
 
-        let data: serde_json::Value = resp.json().await
+        let data: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
-        let point = data.get("result").and_then(|r| r.as_array()).and_then(|a| a.first())
+        let point = data
+            .get("result")
+            .and_then(|r| r.as_array())
+            .and_then(|a| a.first())
             .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
 
-        let payload = point.get("payload").cloned().unwrap_or(serde_json::json!({}));
-        let text = payload.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-        let embedding = point.get("vector")
+        let payload = point
+            .get("payload")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+        let text = payload
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let embedding = point
+            .get("vector")
             .and_then(|v| serde_json::from_value::<Vec<f32>>(v.clone()).ok());
         let mut meta: HashMap<String, Value> = serde_json::from_value(payload).unwrap_or_default();
         meta.remove("text");
 
-        Ok(Document { id: doc_id.to_string(), text, embedding, metadata: meta })
+        Ok(Document {
+            id: doc_id.to_string(),
+            text,
+            embedding,
+            metadata: meta,
+        })
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         Err(VectorStoreError::NotImplemented(
-            "Qdrant list-all requires scroll API. Use search with empty filter instead.".into()
+            "Qdrant list-all requires scroll API. Use search with empty filter instead.".into(),
         ))
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
         // Delete and recreate the collection
-        let _ = self.client
-            .delete(format!("{}/collections/{}", self.base_url(), self.collection()))
+        let _ = self
+            .client
+            .delete(format!(
+                "{}/collections/{}",
+                self.base_url(),
+                self.collection()
+            ))
             .send()
             .await;
 
@@ -836,8 +976,13 @@ impl VectorStoreBackend for QdrantStore {
             }
         });
 
-        let resp = self.client
-            .put(format!("{}/collections/{}", self.base_url(), self.collection()))
+        let resp = self
+            .client
+            .put(format!(
+                "{}/collections/{}",
+                self.base_url(),
+                self.collection()
+            ))
             .json(&body)
             .send()
             .await
@@ -845,7 +990,10 @@ impl VectorStoreBackend for QdrantStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("Qdrant clear failed: {}", text)));
+            return Err(VectorStoreError::ApiError(format!(
+                "Qdrant clear failed: {}",
+                text
+            )));
         }
         Ok(())
     }

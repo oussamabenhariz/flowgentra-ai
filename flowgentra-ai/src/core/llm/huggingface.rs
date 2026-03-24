@@ -282,9 +282,10 @@ impl LLMClient for HuggingFaceClient {
             request = request.header("Authorization", format!("Bearer {}", self.config.api_key));
         }
 
-        let response = request.json(&payload).send().await.map_err(|e| {
-            FlowgentraError::LLMError(format!("HuggingFace request failed: {}", e))
-        })?;
+        let response =
+            request.json(&payload).send().await.map_err(|e| {
+                FlowgentraError::LLMError(format!("HuggingFace request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -359,7 +360,8 @@ impl LLMClient for HuggingFaceClient {
                 .header("Content-Type", "application/json");
 
             if !client.config.api_key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", client.config.api_key));
+                request =
+                    request.header("Authorization", format!("Bearer {}", client.config.api_key));
             }
 
             let response = match request.json(&payload).send().await {
@@ -396,7 +398,8 @@ impl LLMClient for HuggingFaceClient {
                                 if data == "[DONE]" {
                                     return;
                                 }
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+                                {
                                     // TGI SSE format: {"token": {"text": "..."}}
                                     // Inference API format: {"generated_text": "..."} or choices-based
                                     let token_text = parsed

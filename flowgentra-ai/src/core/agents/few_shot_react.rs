@@ -179,7 +179,10 @@ impl Agent for FewShotReActAgent {
         AgentType::FewShotReAct
     }
 
-    fn initialize(&mut self, state: &mut crate::core::state::SharedState) -> Result<(), FlowgentraError> {
+    fn initialize(
+        &mut self,
+        state: &mut crate::core::state::SharedState,
+    ) -> Result<(), FlowgentraError> {
         // Store agent metadata
         state.set(
             "__agent_name",
@@ -201,7 +204,11 @@ impl Agent for FewShotReActAgent {
         Ok(())
     }
 
-    fn process(&self, input: &str, _state: &crate::core::state::SharedState) -> Result<String, FlowgentraError> {
+    fn process(
+        &self,
+        input: &str,
+        _state: &crate::core::state::SharedState,
+    ) -> Result<String, FlowgentraError> {
         let reasoning = self.generate_reasoning_chain(input);
 
         Ok(format!(

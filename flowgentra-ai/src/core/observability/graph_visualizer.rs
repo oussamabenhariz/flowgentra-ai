@@ -150,15 +150,13 @@ impl StateGraphVisualizer {
                     status: NodeExecutionStatus::Pending,
                 },
             ],
-            edges: vec![
-                StateGraphEdge {
-                    from: "START".to_string(),
-                    to: "END".to_string(),
-                    condition: None,
-                    executions: 0,
-                    avg_duration_ms: 0.0,
-                },
-            ],
+            edges: vec![StateGraphEdge {
+                from: "START".to_string(),
+                to: "END".to_string(),
+                condition: None,
+                executions: 0,
+                avg_duration_ms: 0.0,
+            }],
             metadata: GraphMetadata {
                 node_count: 2,
                 edge_count: 1,
@@ -307,16 +305,14 @@ mod tests {
         let viz = StateGraphVisualization {
             id: "test".to_string(),
             name: "Test Graph".to_string(),
-            nodes: vec![
-                StateGraphNode {
-                    id: "START".to_string(),
-                    name: "Start".to_string(),
-                    node_type: NodeType::Start,
-                    description: None,
-                    position: Some((0.0, 0.0)),
-                    status: NodeExecutionStatus::Pending,
-                },
-            ],
+            nodes: vec![StateGraphNode {
+                id: "START".to_string(),
+                name: "Start".to_string(),
+                node_type: NodeType::Start,
+                description: None,
+                position: Some((0.0, 0.0)),
+                status: NodeExecutionStatus::Pending,
+            }],
             edges: vec![],
             metadata: GraphMetadata {
                 node_count: 1,

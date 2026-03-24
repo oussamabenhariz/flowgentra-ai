@@ -116,13 +116,11 @@ impl StdioConnection {
             cmd.env(key, value);
         }
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| {
-                let err_msg = format!("Failed to start subprocess: {}", e);
-                tracing::error!(error = %e, command = %self.command, "Subprocess start failed");
-                FlowgentraError::MCPError(err_msg)
-            })?;
+        let mut child = cmd.spawn().map_err(|e| {
+            let err_msg = format!("Failed to start subprocess: {}", e);
+            tracing::error!(error = %e, command = %self.command, "Subprocess start failed");
+            FlowgentraError::MCPError(err_msg)
+        })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
             FlowgentraError::MCPError("Failed to capture subprocess stdout".into())
@@ -153,26 +151,32 @@ impl StdioConnection {
 
         let read_response = async {
             let mut process = self.process.lock().await;
-            let proc = process.as_mut().ok_or_else(|| {
-                FlowgentraError::MCPError("Process not started".into())
-            })?;
+            let proc = process
+                .as_mut()
+                .ok_or_else(|| FlowgentraError::MCPError("Process not started".into()))?;
 
             // Write request to stdin
-            let stdin = proc.child.stdin.as_mut().ok_or_else(|| {
-                FlowgentraError::MCPError("Failed to get stdin".into())
-            })?;
+            let stdin = proc
+                .child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| FlowgentraError::MCPError("Failed to get stdin".into()))?;
 
-            stdin.write_all(request_json.as_bytes()).await.map_err(|e| {
-                let err_msg = format!("Failed to write to stdin: {}", e);
-                tracing::error!(error = %e, "stdin write failed");
-                FlowgentraError::MCPError(err_msg)
-            })?;
+            stdin
+                .write_all(request_json.as_bytes())
+                .await
+                .map_err(|e| {
+                    let err_msg = format!("Failed to write to stdin: {}", e);
+                    tracing::error!(error = %e, "stdin write failed");
+                    FlowgentraError::MCPError(err_msg)
+                })?;
             stdin.write_all(b"\n").await.map_err(|e| {
                 FlowgentraError::MCPError(format!("Failed to write newline: {}", e))
             })?;
-            stdin.flush().await.map_err(|e| {
-                FlowgentraError::MCPError(format!("Failed to flush stdin: {}", e))
-            })?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| FlowgentraError::MCPError(format!("Failed to flush stdin: {}", e)))?;
 
             // Read response from the persistent BufReader (no take/restore needed)
             let mut line = String::new();

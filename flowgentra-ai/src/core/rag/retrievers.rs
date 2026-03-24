@@ -151,7 +151,12 @@ impl QueryExpander {
             for sep in &[" and ", " or ", "; "] {
                 let parts: Vec<&str> = query.split(sep).collect();
                 if parts.len() > 1 {
-                    queries.extend(parts.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+                    queries.extend(
+                        parts
+                            .iter()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty()),
+                    );
                 }
             }
         }

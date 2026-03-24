@@ -63,15 +63,13 @@ impl Tool for CalculatorTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| FlowgentraError::ToolError("Missing 'operation' field".to_string()))?;
 
-        let a = input
-            .get("a")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| FlowgentraError::ToolError("Missing or invalid 'a' field".to_string()))?;
+        let a = input.get("a").and_then(|v| v.as_f64()).ok_or_else(|| {
+            FlowgentraError::ToolError("Missing or invalid 'a' field".to_string())
+        })?;
 
-        let b = input
-            .get("b")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| FlowgentraError::ToolError("Missing or invalid 'b' field".to_string()))?;
+        let b = input.get("b").and_then(|v| v.as_f64()).ok_or_else(|| {
+            FlowgentraError::ToolError("Missing or invalid 'b' field".to_string())
+        })?;
 
         let result = self.evaluate(operation, a, b)?;
 
@@ -366,10 +364,9 @@ impl Tool for FilesTool {
 
         match operation {
             "read" => {
-                let path = input
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| FlowgentraError::ToolError("Missing 'path' field".to_string()))?;
+                let path = input.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    FlowgentraError::ToolError("Missing 'path' field".to_string())
+                })?;
 
                 let content = self.read_file(path).await?;
                 Ok(serde_json::json!({
@@ -379,10 +376,9 @@ impl Tool for FilesTool {
                 }))
             }
             "write" => {
-                let path = input
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| FlowgentraError::ToolError("Missing 'path' field".to_string()))?;
+                let path = input.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    FlowgentraError::ToolError("Missing 'path' field".to_string())
+                })?;
 
                 let content = input
                     .get("content")

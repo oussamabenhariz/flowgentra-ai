@@ -327,7 +327,9 @@ impl JsonSchema {
             }
             "array" => {
                 if !value.is_array() {
-                    return Err(FlowgentraError::ValidationError("Expected array".to_string()));
+                    return Err(FlowgentraError::ValidationError(
+                        "Expected array".to_string(),
+                    ));
                 }
                 if let Some(items_schema) = &self.items {
                     for item in value.as_array().unwrap() {

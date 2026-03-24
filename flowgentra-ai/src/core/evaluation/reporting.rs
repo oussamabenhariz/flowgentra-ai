@@ -2,12 +2,12 @@
 //!
 //! Generate readable evaluation reports and summaries from execution data.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::fs;
 use crate::core::error::Result;
 use crate::core::state::SharedState;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::fs;
 
 /// Result for a single node
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -44,20 +44,14 @@ impl EvaluationReport {
                 let node_name = key.replace("__eval_meta__", "");
 
                 if let Some(meta) = state.get(&key) {
-                    let score = meta
-                        .get("score")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5);
+                    let score = meta.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5);
 
                     let confidence = meta
                         .get("confidence")
                         .and_then(|v| v.as_f64())
                         .unwrap_or(score);
 
-                    let retries = meta
-                        .get("retries")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
+                    let retries = meta.get("retries").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
                     let issues: Vec<String> = meta
                         .get("issues")
@@ -123,7 +117,11 @@ impl EvaluationReport {
         );
         println!(
             "║ Status:            {}                   ║",
-            if self.passed { "✅ PASS     " } else { "❌ NEEDS WORK" }
+            if self.passed {
+                "✅ PASS     "
+            } else {
+                "❌ NEEDS WORK"
+            }
         );
         println!(
             "║ Total Retries:     {}                    ║",

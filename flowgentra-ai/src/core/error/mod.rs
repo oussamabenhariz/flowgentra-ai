@@ -151,7 +151,10 @@ pub enum FlowgentraError {
 impl FlowgentraError {
     /// Returns true if this is a transport-level error safe to retry.
     pub fn is_retryable(&self) -> bool {
-        matches!(self, FlowgentraError::MCPTransportError(_) | FlowgentraError::TimeoutError)
+        matches!(
+            self,
+            FlowgentraError::MCPTransportError(_) | FlowgentraError::TimeoutError
+        )
     }
 }
 

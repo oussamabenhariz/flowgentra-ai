@@ -19,7 +19,13 @@ pub fn context_window(model: &str) -> Option<usize> {
         s if s.starts_with("gpt-3.5-turbo") => Some(4_096),
         s if s.starts_with("o1") || s.starts_with("o3") || s.starts_with("o4") => Some(200_000),
         // Anthropic
-        s if s.contains("claude-3") || s.contains("claude-opus") || s.contains("claude-sonnet") || s.contains("claude-haiku") => Some(200_000),
+        s if s.contains("claude-3")
+            || s.contains("claude-opus")
+            || s.contains("claude-sonnet")
+            || s.contains("claude-haiku") =>
+        {
+            Some(200_000)
+        }
         s if s.contains("claude-2") => Some(100_000),
         s if s.contains("claude") => Some(200_000),
         // Mistral
@@ -173,14 +179,18 @@ mod tests {
             .map(|i| Message {
                 role: MessageRole::User,
                 content: format!("Message number {} with some content", i),
-                tool_calls: None, tool_call_id: None,
+                tool_calls: None,
+                tool_call_id: None,
             })
             .collect();
 
         let truncated = cw.truncate(&messages);
         assert!(estimate_messages_tokens(&truncated) <= cw.available_tokens());
         // Last message should be preserved
-        assert_eq!(truncated.last().unwrap().content, messages.last().unwrap().content);
+        assert_eq!(
+            truncated.last().unwrap().content,
+            messages.last().unwrap().content
+        );
     }
 
     #[test]

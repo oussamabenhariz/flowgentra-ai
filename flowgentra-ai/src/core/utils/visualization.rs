@@ -39,7 +39,9 @@ struct Node {
 }
 
 /// Calculate node position and determine layout using topological sort
-fn compute_layout<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>) -> (Vec<Node>, f32, f32) {
+fn compute_layout<T: crate::core::state::State>(
+    graph: &crate::core::graph::Graph<T>,
+) -> (Vec<Node>, f32, f32) {
     let nodes = graph.nodes();
     let edges = graph.edges();
 
@@ -166,7 +168,10 @@ fn calculate_node_radius(label: &str) -> f32 {
 }
 
 /// Generate SVG visualization of agent graph with crisp, scalable text
-pub fn visualize_graph<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>, config: VisualizationConfig) -> Result<()> {
+pub fn visualize_graph<T: crate::core::state::State>(
+    graph: &crate::core::graph::Graph<T>,
+    config: VisualizationConfig,
+) -> Result<()> {
     visualize_graph_inner(graph, &config, None)
 }
 
@@ -338,8 +343,9 @@ fn visualize_graph_inner<T: crate::core::state::State>(
     }
 
     // Save SVG to file
-    svg::save(&config.output_path, &document)
-        .map_err(|_| crate::core::error::FlowgentraError::GraphError("Failed to save SVG".into()))?;
+    svg::save(&config.output_path, &document).map_err(|_| {
+        crate::core::error::FlowgentraError::GraphError("Failed to save SVG".into())
+    })?;
 
     tracing::info!(output_path = %config.output_path, "Graph visualization generated ({}x{})", canvas_width, canvas_height);
     Ok(())

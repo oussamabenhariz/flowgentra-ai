@@ -36,7 +36,9 @@ use serde_json::json;
 ///     config:
 ///       role: user
 /// ```
-pub async fn append_message_handler(state: crate::core::state::SharedState) -> Result<crate::core::state::SharedState> {
+pub async fn append_message_handler(
+    state: crate::core::state::SharedState,
+) -> Result<crate::core::state::SharedState> {
     let role = state
         .get_typed::<String>("role")
         .unwrap_or_else(|_| "user".to_string());
@@ -59,10 +61,9 @@ pub async fn append_message_handler(state: crate::core::state::SharedState) -> R
         "assistant" => history.add_assistant_message(content),
         "system" => history.add_system_message(content),
         _ => {
-            return Err(crate::core::error::FlowgentraError::ValidationError(format!(
-                "Invalid role: {}",
-                role
-            )))
+            return Err(crate::core::error::FlowgentraError::ValidationError(
+                format!("Invalid role: {}", role),
+            ))
         }
     }
 
@@ -82,7 +83,9 @@ pub async fn append_message_handler(state: crate::core::state::SharedState) -> R
 ///     config:
 ///       max_recent_messages: 10
 /// ```
-pub async fn compress_history_handler(state: crate::core::state::SharedState) -> Result<crate::core::state::SharedState> {
+pub async fn compress_history_handler(
+    state: crate::core::state::SharedState,
+) -> Result<crate::core::state::SharedState> {
     let max_recent = state
         .get_typed::<usize>("max_recent_messages")
         .unwrap_or(10);

@@ -3,6 +3,7 @@
 //! - Enforce `cargo fmt` and `clippy` in CI.
 //! - Maintain a `CHANGELOG.md` for releases.
 //! - Keep `CONTRIBUTING.md` up to date.
+//!
 //! FlowgentraAI: A Rust library for building AI agents with graphs
 //!
 //! Build AI agent workflows using a declarative graph structure with:
@@ -78,38 +79,101 @@ pub mod prelude {
     pub use crate::core::agent::from_config_path;
     pub use crate::core::agent::{Agent, ArcHandler, Handler, HandlerEntry, HandlerRegistry};
     pub use crate::core::{
-        config::{AgentConfig, StateField, RAGGraphConfig, VectorStoreConfig, EmbeddingsConfig, RetrievalSettings, PdfSettings},
+        config::{
+            AgentConfig, EmbeddingsConfig, PdfSettings, RAGGraphConfig, RetrievalSettings,
+            StateField, VectorStoreConfig,
+        },
         error::{FlowgentraError, Result},
         graph::{
             routing::{ComparisonOp, Condition, RoutingCondition},
             Graph, GraphBuilder,
         },
-        llm::{LLMConfig, LLMProvider, Message, MessageRole, ResponseFormat, ToolCall, ToolDefinition},
+        llm::{
+            CachedLLMClient, FallbackLLMClient, LLMConfig, LLMProvider, Message, MessageRole,
+            ResponseFormat, ToolCall, ToolDefinition,
+        },
         mcp::MCPConfig,
         memory::{
             BufferWindowConfig, Checkpoint, CheckpointMetadata, Checkpointer, ConversationMemory,
             ConversationMemoryConfig, InMemoryConversationMemory, MemoryCheckpointer, MemoryConfig,
+            SummaryConfig, SummaryMemory, TokenBufferMemory,
         },
         node::{Node, NodeFunction},
         runtime::{AgentRuntime, CloneStats, OptimizedState},
         state::{PlainState, SharedState, StateExt, TypedState},
+        state_graph::{create_tool_node, store_tool_calls, tools_condition, MessageGraphBuilder},
         State,
     };
 
     pub use crate::core::rag::{
-        // Core types
-        ChromaStore, Document, EmbeddingError, EmbeddingModel, Embeddings, InMemoryVectorStore,
-        MetadataFilter, MistralEmbeddings, OllamaEmbeddings, OpenAIEmbeddings, PdfDocument,
-        QueryExpander, RAGConfig, RAGHandlers, RAGNodeConfig, RetrievalConfig, RetrieverStrategy,
-        SearchResult, VectorStore, VectorStoreError, VectorStoreType,
+        bm25_score,
         // PDF utilities
-        chunk_text, chunk_text_by_tokens, estimate_tokens, extract_and_chunk, extract_text,
-        // New features
-        CachedEmbeddings, dedup_by_id, dedup_by_similarity, FileType, LoadedDocument,
-        load_document, load_directory, IngestionPipeline, IngestionStats,
-        LLMReranker, NoopReranker, RRFReranker, RerankStrategy, Reranker,
-        hybrid_merge, bm25_score,
-        EvalQuery, EvalResults, QueryResult as EvalQueryResult, evaluate, hit_rate, mean_ndcg, mrr,
+        chunk_text,
+        chunk_text_by_tokens,
+        dedup_by_id,
+        dedup_by_similarity,
+        estimate_tokens,
+        evaluate,
+        extract_and_chunk,
+        extract_text,
+        hit_rate,
+        hybrid_merge,
+        load_directory,
+        load_document,
+        mean_ndcg,
+        mrr,
+        // Search & retrieval
+        CachedEmbeddings,
+        // Core types
+        ChromaStore,
+        // Text splitters
+        ChunkMetadata,
+        CodeTextSplitter,
+        CrossEncoderReranker,
+        Document,
+        EmbeddingError,
+        EmbeddingModel,
+        Embeddings,
+        EmbeddingsProvider,
+        EvalQuery,
+        EvalResults,
+        FileType,
+        HTMLTextSplitter,
+        HuggingFaceEmbeddings,
+        InMemoryVectorStore,
+        IngestionPipeline,
+        IngestionStats,
+        LLMReranker,
+        Language,
+        LoadedDocument,
+        MarkdownTextSplitter,
+        MetadataFilter,
+        MistralEmbeddings,
+        MockEmbeddings,
+        NoopReranker,
+        OllamaEmbeddings,
+        OpenAIEmbeddings,
+        PdfDocument,
+        QueryExpander,
+        QueryResult as EvalQueryResult,
+        RAGConfig,
+        RAGHandlers,
+        RAGNodeConfig,
+        RRFReranker,
+        RecursiveCharacterTextSplitter,
+        RerankStrategy,
+        Reranker,
+        RetrievalConfig,
+        Retriever,
+        RetrieverStrategy,
+        SearchResult,
+        TextChunk,
+        TextSplitter,
+        TokenTextSplitter,
+        VectorStore,
+        VectorStoreBackend,
+        VectorStoreError,
+        VectorStoreType,
     };
 
     pub use crate::register_handler;

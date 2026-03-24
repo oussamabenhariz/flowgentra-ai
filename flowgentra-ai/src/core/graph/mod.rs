@@ -149,14 +149,14 @@ impl<T: State> Graph<T> {
     pub fn add_edge(&mut self, edge: Edge<T>) {
         // Get the index where this edge will be stored
         let edge_index = self.edges.len();
-        
+
         // Store the edge
         self.edges.push(edge.clone());
-        
+
         // Update adjacency list: map from -> [edge indices]
         self.adjacency_list
             .entry(edge.from.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(edge_index);
     }
 
@@ -431,7 +431,9 @@ impl<T: State> Graph<T> {
         // externally (e.g. as a supervisor child) or terminates naturally. Only nodes that
         // participate in the graph's own routing can create unbounded cycles.
         if self.allow_cycles {
-            let unreachable: Vec<String> = self.nodes.keys()
+            let unreachable: Vec<String> = self
+                .nodes
+                .keys()
                 .filter(|name| {
                     let has_outgoing = self.edges.iter().any(|e| &e.from == *name);
                     has_outgoing && !self.can_reach_end(name)
@@ -513,7 +515,7 @@ impl<T: State> Graph<T> {
     /// - White (not in visited): Unvisited
     /// - Gray (in rec_stack): Currently being explored
     /// - Black (visited, not in rec_stack): Fully explored
-    /// A back edge (to node in rec_stack) indicates a cycle.
+    ///   A back edge (to node in rec_stack) indicates a cycle.
     fn has_cycle_util(
         &self,
         node: &str,
@@ -528,7 +530,7 @@ impl<T: State> Graph<T> {
             for &idx in indices {
                 if let Some(edge) = self.edges.get(idx) {
                     let neighbor = &edge.to;
-                    
+
                     // Skip virtual END node
                     if neighbor == "END" {
                         continue;
@@ -748,11 +750,7 @@ impl<T: State> GraphBuilder<T> {
     ///
     /// This is useful for building linear or simple graphs where you want
     /// to create nodes and edges together.
-    pub fn add_step(
-        mut self,
-        from: impl Into<String>,
-        to_node: Node<T>,
-    ) -> Self {
+    pub fn add_step(mut self, from: impl Into<String>, to_node: Node<T>) -> Self {
         let from_str = from.into();
         let to_str = to_node.name.clone();
 

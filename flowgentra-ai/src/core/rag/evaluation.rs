@@ -198,10 +198,7 @@ mod tests {
                 relevant_doc_ids: vec!["b".into()],
             },
         ];
-        let retrieved = vec![
-            vec!["x".into(), "a".into()],
-            vec!["b".into(), "y".into()],
-        ];
+        let retrieved = vec![vec!["x".into(), "a".into()], vec!["b".into(), "y".into()]];
         assert!((hit_rate(&queries, &retrieved) - 1.0).abs() < f64::EPSILON);
     }
 
@@ -217,10 +214,7 @@ mod tests {
                 relevant_doc_ids: vec!["z".into()],
             },
         ];
-        let retrieved = vec![
-            vec!["a".into(), "b".into()],
-            vec!["c".into(), "d".into()],
-        ];
+        let retrieved = vec![vec!["a".into(), "b".into()], vec!["c".into(), "d".into()]];
         assert!((hit_rate(&queries, &retrieved) - 0.5).abs() < f64::EPSILON);
     }
 
@@ -238,10 +232,7 @@ mod tests {
         ];
         // "a" is at rank 2 (index 1) → RR = 1/2
         // "b" is at rank 1 (index 0) → RR = 1/1
-        let retrieved = vec![
-            vec!["x".into(), "a".into()],
-            vec!["b".into(), "y".into()],
-        ];
+        let retrieved = vec![vec!["x".into(), "a".into()], vec!["b".into(), "y".into()]];
         let result = mrr(&queries, &retrieved);
         assert!((result - 0.75).abs() < f64::EPSILON);
     }
@@ -260,12 +251,10 @@ mod tests {
 
     #[test]
     fn test_evaluate_full() {
-        let queries = vec![
-            EvalQuery {
-                query: "test".into(),
-                relevant_doc_ids: vec!["a".into()],
-            },
-        ];
+        let queries = vec![EvalQuery {
+            query: "test".into(),
+            relevant_doc_ids: vec!["a".into()],
+        }];
         let retrieved = vec![vec!["a".into(), "b".into()]];
 
         let results = evaluate(&queries, &retrieved);

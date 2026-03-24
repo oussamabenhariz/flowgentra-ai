@@ -64,7 +64,9 @@ impl GraphAnalyzer {
     ///     println!("Branch path: {:?}", branch);
     /// }
     /// ```
-    pub fn analyze<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>) -> Result<BranchAnalysis> {
+    pub fn analyze<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+    ) -> Result<BranchAnalysis> {
         // Step 1: Find the sequential head (linear path until first branch point)
         let sequential_head = Self::find_sequential_head(graph)?;
 
@@ -107,7 +109,9 @@ impl GraphAnalyzer {
     }
 
     /// Find the linear sequential path at the start of the graph
-    fn find_sequential_head<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>) -> Result<Vec<NodeId>> {
+    fn find_sequential_head<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+    ) -> Result<Vec<NodeId>> {
         let mut sequential = vec![];
         let mut current = Some("START".to_string());
 
@@ -138,7 +142,9 @@ impl GraphAnalyzer {
     }
 
     /// Find all nodes with multiple outgoing edges (branch points)
-    fn find_branch_points<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>) -> Vec<NodeId> {
+    fn find_branch_points<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+    ) -> Vec<NodeId> {
         let mut branch_points = vec![];
         for node_id in graph.nodes().keys() {
             let outgoing = graph.get_next_nodes(node_id);
@@ -150,7 +156,10 @@ impl GraphAnalyzer {
     }
 
     /// Trace all branches emanating from a branch point
-    fn trace_branches<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>, branch_point: &str) -> Result<Vec<Vec<NodeId>>> {
+    fn trace_branches<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+        branch_point: &str,
+    ) -> Result<Vec<Vec<NodeId>>> {
         let outgoing = graph.get_next_nodes(branch_point);
         let mut branches = vec![];
 
@@ -197,7 +206,10 @@ impl GraphAnalyzer {
     }
 
     /// Find the sequential tail (nodes after all branches converge)
-    fn find_sequential_tail<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>, branches: &[Vec<NodeId>]) -> Result<Vec<NodeId>> {
+    fn find_sequential_tail<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+        branches: &[Vec<NodeId>],
+    ) -> Result<Vec<NodeId>> {
         let mut sequential = vec![];
 
         // Find the common join point (node reachable from all branches)
@@ -223,7 +235,10 @@ impl GraphAnalyzer {
     }
 
     /// Find the join point where branches converge
-    fn find_join_point<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>, branches: &[Vec<NodeId>]) -> Result<Option<NodeId>> {
+    fn find_join_point<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+        branches: &[Vec<NodeId>],
+    ) -> Result<Option<NodeId>> {
         if branches.is_empty() {
             return Ok(None);
         }
@@ -254,7 +269,11 @@ impl GraphAnalyzer {
     }
 
     /// Check if target is reachable from start node
-    fn is_reachable_from<T: crate::core::state::State>(graph: &crate::core::graph::Graph<T>, start: Option<&NodeId>, target: &str) -> Result<bool> {
+    fn is_reachable_from<T: crate::core::state::State>(
+        graph: &crate::core::graph::Graph<T>,
+        start: Option<&NodeId>,
+        target: &str,
+    ) -> Result<bool> {
         let Some(start_id) = start else {
             return Ok(false);
         };

@@ -2,29 +2,28 @@
 //!
 //! This module has been integrated into the node system.
 //! For new code, use: use flowgentra_ai::core::node::evaluation_node::*;
-//! 
+//!
 //! Legacy imports are maintained for backward compatibility.
 
 // Re-export from the consolidated evaluation_node module
 pub use crate::core::node::evaluation_node::{
-    EvaluationNode, EvaluationNodeConfig,
-    Attempt, ExitReason, EvaluationResult,
+    Attempt, EvaluationNode, EvaluationNodeConfig, EvaluationResult, ExitReason,
 };
 
 pub mod confidence;
 pub mod grader;
 pub mod middleware;
+pub mod reporting;
 pub mod retry;
 pub mod scorer;
-pub mod reporting;
 pub mod smart_fallback;
 
 pub use confidence::{ConfidenceConfig, ConfidenceLevel, ConfidenceScore, ConfidenceScorer};
 pub use grader::{GradeResult, LLMGrader};
 pub use middleware::AutoEvaluationMiddleware;
+pub use reporting::EvaluationReport;
 pub use retry::{RetryConfig, RetryPolicy, RetryResult};
 pub use scorer::{NodeScore, NodeScorer, ScoringCriteria};
-pub use reporting::EvaluationReport;
 pub use smart_fallback::{FallbackLevel, SmartFallback};
 
 // Legacy types for backward compatibility

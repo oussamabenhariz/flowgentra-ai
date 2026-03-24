@@ -62,7 +62,8 @@ pub fn bm25_score(query: &str, documents: &[&str]) -> Vec<f32> {
                 let idf = ((n - doc_freq + 0.5) / (doc_freq + 0.5) + 1.0).ln();
 
                 // TF component
-                let tf_component = (tf * (BM25_K1 + 1.0)) / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avg_dl));
+                let tf_component =
+                    (tf * (BM25_K1 + 1.0)) / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avg_dl));
 
                 score += idf * tf_component;
             }

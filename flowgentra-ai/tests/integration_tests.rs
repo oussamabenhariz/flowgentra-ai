@@ -8,8 +8,8 @@
 //! - LLM provider integration
 //! - Tool execution
 
-use flowgentra_ai::prelude::*;
 use flowgentra_ai::core::state::SharedState;
+use flowgentra_ai::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -235,7 +235,10 @@ fn test_handler_entry_creation() {
     use std::sync::Arc;
 
     let handler: Arc<
-        dyn Fn(SharedState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SharedState>> + Send>>
+        dyn Fn(
+                SharedState,
+            )
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SharedState>> + Send>>
             + Send
             + Sync,
     > = Arc::new(|state| Box::pin(async move { Ok(state) }));

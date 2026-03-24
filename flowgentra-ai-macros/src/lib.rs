@@ -1,5 +1,5 @@
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, DeriveInput, Data, Fields};
+use syn::{parse_macro_input, Data, DeriveInput, Fields};
 // use syn::parse::Parse;
 use convert_case::Casing;
 
@@ -35,7 +35,10 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                     if meta.path.is_ident("reducer") {
                         if let Ok(buf) = meta.value() {
                             if let Ok(litstr) = buf.parse::<syn::LitStr>() {
-                                let reducer_ident = format_ident!("{}", litstr.value().to_case(convert_case::Case::UpperCamel));
+                                let reducer_ident = format_ident!(
+                                    "{}",
+                                    litstr.value().to_case(convert_case::Case::UpperCamel)
+                                );
                                 reducer = quote! { ::flowgentra_ai::core::reducer::#reducer_ident };
                             }
                         }

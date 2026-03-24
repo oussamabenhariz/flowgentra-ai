@@ -1,24 +1,37 @@
-# Evaluation Guide
+# Evaluation and Self-Correction Guide
 
-Let your agent check its own work - score the output, detect low quality, and retry automatically when needed.
+Automatically grade agent output and retry when quality is low.
 
-## What Happens
+## How It Works
 
-With evaluation enabled:
-1. Agent generates a response
-2. System scores it automatically
-3. If the score is high enough, return it
-4. If not, retry with feedback (up to max_retries)
-5. Return the best result
+```
+Agent generates response
+  |
+  v
+System scores the output (0.0 - 1.0)
+  |
+  v
+Score >= threshold? --YES--> Return response
+  |
+  NO
+  v
+Retries left? --YES--> Retry with feedback ("improve your answer")
+  |
+  NO
+  v
+Return best attempt so far
+```
+
+---
 
 ## Setup
 
-### Basic Setup
+### Basic
 
 ```yaml
 evaluation:
   enabled: true
-  min_confidence: 0.8      # Retry if < 80%
+  min_confidence: 0.8    # Retry if score < 80%
   max_retries: 3
 ```
 
@@ -27,97 +40,85 @@ evaluation:
 ```yaml
 evaluation:
   enabled: true
-  
-  # Quality threshold
+
   min_confidence: 0.8
   max_retries: 3
-  
-  # What to measure
+
   scoring:
     metrics: [relevance, completeness, accuracy]
-    weights: [0.5, 0.3, 0.2]   # Sum = 1.0
-  
-  # How to grade
+    weights: [0.5, 0.3, 0.2]    # Must sum to 1.0
+
   grading:
     enabled: true
-    rubric: "Is the answer correct and helpful?"
-  
-  # Retry strategy
-  retry_policy: "exponential"   # or "linear", "fixed"
+    rubric: "Is the answer correct, complete, and well-written?"
+
+  retry_policy: exponential    # or linear, fixed
   retry_delay_ms: 500
-```
-
-## Metrics
-
-Pick what matters for your task:
-
-| Metric | Use For |
-|--------|----------|
-| relevance | Does answer match the question? |
-| completeness | Is it thorough and complete? |
-| accuracy | Is it factually correct? |
-| clarity | Is it well-written? |
-| safety | Is it safe and appropriate? |
-
-## How It Works
-
-```
-Agent generates response
-    ↓
-System scores response
-    ↓
-Is score >= min_confidence?
-    ├─ YES → Return response ✓
-    ├─ NO  → Retries < max_retries?
-    │           ├─ YES → Try again with feedback
-    │           └─ NO  → Return best attempt
-```
-
-## In Code
-
-Evaluation happens automatically:
-
-```rust
-pub async fn generate_response(mut state: State) -> Result<State> {
-    // Your logic
-    let response = llm.generate("...").await?;
-    state.set("response", json!(response));
-    
-    // Evaluation middleware:
-    // 1. Scores automatically
-    // 2. Retries if needed
-    // 3. Returns confident response
-    
-    Ok(state)
-}
-```
-
-## Configuration Tips
-
-1. **Different thresholds by task**:
-   - Q&A: 0.80 confidence
-   - Content: 0.85 confidence
-   - Critical: 0.95 confidence
-
-2. **Adjust weights for priorities**:
-   - Relevance-heavy: [0.7, 0.2, 0.1]
-   - Balanced: [0.5, 0.3, 0.2]
-   - Accuracy-heavy: [0.2, 0.2, 0.6]
-
-3. **Control retries**:
-   - Fast response: max_retries: 1
-   - Balanced: max_retries: 3
-   - High quality: max_retries: 5
-
-## Monitoring
-
-```rust
-// Check evaluation metrics
-let metrics = agent.get_evaluation_metrics()?;
-println!("Avg confidence: {}", metrics.avg_confidence);
-println!("Total retries: {}", metrics.total_retries);
 ```
 
 ---
 
-See [configuration/CONFIG_GUIDE.md](../configuration/CONFIG_GUIDE.md) for complete reference.
+## Scoring Metrics
+
+| Metric | Measures | Use For |
+|--------|----------|---------|
+| `relevance` | Does the answer match the question? | Q&A, search |
+| `completeness` | Is the answer thorough? | Reports, analysis |
+| `accuracy` | Is it factually correct? | Knowledge tasks |
+| `clarity` | Is it well-written and clear? | Content generation |
+| `safety` | Is it appropriate? | Public-facing output |
+
+### Weight Profiles
+
+| Profile | Weights | Best For |
+|---------|---------|----------|
+| Relevance-focused | `[0.7, 0.2, 0.1]` | Search, Q&A |
+| Balanced | `[0.4, 0.3, 0.3]` | General purpose |
+| Accuracy-focused | `[0.2, 0.2, 0.6]` | Factual tasks |
+
+---
+
+## Threshold Guidelines
+
+| Use Case | Suggested Threshold |
+|----------|-------------------|
+| Quick answers | 0.6 |
+| Customer-facing Q&A | 0.8 |
+| Content generation | 0.85 |
+| Critical/compliance | 0.95 |
+
+Higher thresholds mean more retries and better quality, but higher latency and cost.
+
+---
+
+## How Evaluation Integrates
+
+Evaluation runs as middleware -- it wraps your handler output transparently:
+
+```rust
+pub async fn generate_answer(mut state: State) -> Result<State> {
+    let answer = llm.generate("...").await?;
+    state.set("answer", json!(answer));
+    Ok(state)
+    // Evaluation middleware automatically:
+    // 1. Scores the output
+    // 2. Retries if below threshold
+    // 3. Returns only when confident (or max retries reached)
+}
+```
+
+You don't need to write scoring logic yourself. The middleware handles it based on your YAML config.
+
+---
+
+## Best Practices
+
+1. **Start with a moderate threshold** -- 0.8 is a good default
+2. **Keep max_retries reasonable** -- 3 retries balances quality vs cost
+3. **Tune weights for your task** -- relevance matters most for Q&A, accuracy for factual tasks
+4. **Monitor retry rates** -- high retry rates mean your prompts need improvement
+5. **Use exponential retry delay** -- avoids hammering the LLM on rate limits
+
+---
+
+See [FEATURES.md](../FEATURES.md) for the complete feature list.

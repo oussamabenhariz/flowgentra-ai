@@ -84,12 +84,12 @@ pub struct NodeScorer;
 
 impl NodeScorer {
     /// Score an output value
-        pub fn score<T: State>(
-            output: &Value,
-            criteria: &ScoringCriteria,
-            state: &T,
-            node_name: &str,
-        ) -> NodeScore {
+    pub fn score<T: State>(
+        output: &Value,
+        criteria: &ScoringCriteria,
+        state: &T,
+        node_name: &str,
+    ) -> NodeScore {
         let mut scores = Vec::new();
         let mut explanation = String::new();
 

@@ -6,7 +6,10 @@
 //! This eliminates code duplication across provider files — each provider only
 //! needs to implement the adapter trait with its specific differences.
 
-use super::{LLMClient, LLMConfig, Message, MessageRole, ResponseFormat, ToolCall, ToolDefinition, TokenUsage};
+use super::{
+    LLMClient, LLMConfig, Message, MessageRole, ResponseFormat, TokenUsage, ToolCall,
+    ToolDefinition,
+};
 use crate::core::error::FlowgentraError;
 use serde_json::{json, Value};
 
@@ -116,10 +119,9 @@ impl LLMClient for HttpLLMClient {
             request = request.header(header_name, header_value);
         }
 
-        let response =
-            request.json(&payload).send().await.map_err(|e| {
-                FlowgentraError::LLMError(format!("{} API request failed: {}", name, e))
-            })?;
+        let response = request.json(&payload).send().await.map_err(|e| {
+            FlowgentraError::LLMError(format!("{} API request failed: {}", name, e))
+        })?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
@@ -146,7 +148,9 @@ impl LLMClient for HttpLLMClient {
     ) -> crate::core::error::Result<Message> {
         let name = self.adapter.provider_name();
         let endpoint = self.adapter.endpoint(&self.config);
-        let payload = self.adapter.build_payload_with_tools(&self.config, &messages, tools);
+        let payload = self
+            .adapter
+            .build_payload_with_tools(&self.config, &messages, tools);
 
         let mut request = self
             .client
@@ -257,7 +261,9 @@ impl LLMClient for HttpLLMClient {
 
                                     if let Ok(json) = serde_json::from_str::<Value>(data) {
                                         if let Some(content) = adapter.parse_stream_chunk(&json) {
-                                            if !content.is_empty() && tx.send(content).await.is_err() {
+                                            if !content.is_empty()
+                                                && tx.send(content).await.is_err()
+                                            {
                                                 return; // Receiver dropped, stop streaming
                                             }
                                         }
@@ -266,7 +272,9 @@ impl LLMClient for HttpLLMClient {
                                     // Handle NDJSON streams (e.g. Ollama)
                                     if let Ok(json) = serde_json::from_str::<Value>(&line) {
                                         if let Some(content) = adapter.parse_stream_chunk(&json) {
-                                            if !content.is_empty() && tx.send(content).await.is_err() {
+                                            if !content.is_empty()
+                                                && tx.send(content).await.is_err()
+                                            {
                                                 return;
                                             }
                                         }
@@ -356,7 +364,8 @@ pub fn openai_messages_with_tools_payload(messages: &[Message]) -> Vec<Value> {
                             let args_str = if tc.arguments.is_string() {
                                 tc.arguments.as_str().unwrap_or("{}").to_string()
                             } else {
-                                serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".to_string())
+                                serde_json::to_string(&tc.arguments)
+                                    .unwrap_or_else(|_| "{}".to_string())
                             };
                             json!({
                                 "id": tc.id,
@@ -413,11 +422,19 @@ pub fn openai_parse_tool_calls(body: &Value) -> Option<Vec<ToolCall>> {
             let name = func.get("name")?.as_str()?.to_string();
             let args_str = func.get("arguments")?.as_str().unwrap_or("{}");
             let arguments = serde_json::from_str(args_str).unwrap_or(json!({}));
-            Some(ToolCall { id, name, arguments })
+            Some(ToolCall {
+                id,
+                name,
+                arguments,
+            })
         })
         .collect();
 
-    if calls.is_empty() { None } else { Some(calls) }
+    if calls.is_empty() {
+        None
+    } else {
+        Some(calls)
+    }
 }
 
 /// Parse assistant content from OpenAI-compatible `choices[0].message.content`.
@@ -608,7 +625,9 @@ impl ProviderAdapter for AnthropicAdapter {
         let content = body
             .get("content")
             .and_then(|c| c.as_array())
-            .ok_or_else(|| FlowgentraError::LLMError("Invalid Anthropic response format".to_string()))?;
+            .ok_or_else(|| {
+                FlowgentraError::LLMError("Invalid Anthropic response format".to_string())
+            })?;
 
         for block in content {
             if block.get("type").and_then(|t| t.as_str()) == Some("text") {
@@ -625,10 +644,22 @@ impl ProviderAdapter for AnthropicAdapter {
     fn parse_usage(&self, body: &Value) -> Option<TokenUsage> {
         let usage = body.get("usage")?;
         Some(TokenUsage {
-            prompt_tokens: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            completion_tokens: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            total_tokens: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
-                + usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            prompt_tokens: usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            completion_tokens: usage
+                .get("output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            total_tokens: usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                + usage
+                    .get("output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
         })
     }
 
@@ -644,11 +675,19 @@ impl ProviderAdapter for AnthropicAdapter {
                 let id = block.get("id")?.as_str()?.to_string();
                 let name = block.get("name")?.as_str()?.to_string();
                 let arguments = block.get("input").cloned().unwrap_or(json!({}));
-                Some(ToolCall { id, name, arguments })
+                Some(ToolCall {
+                    id,
+                    name,
+                    arguments,
+                })
             })
             .collect();
 
-        if calls.is_empty() { None } else { Some(calls) }
+        if calls.is_empty() {
+            None
+        } else {
+            Some(calls)
+        }
     }
 
     fn parse_stream_chunk(&self, chunk: &Value) -> Option<String> {
@@ -781,9 +820,12 @@ impl ProviderAdapter for OllamaAdapter {
     fn parse_usage(&self, body: &Value) -> Option<TokenUsage> {
         // Ollama returns eval_count and prompt_eval_count in final response
         let completion_tokens = body.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        let prompt_tokens = body.get("prompt_eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let prompt_tokens = body
+            .get("prompt_eval_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let total_tokens = prompt_tokens + completion_tokens;
-        
+
         if total_tokens > 0 {
             Some(TokenUsage {
                 prompt_tokens,

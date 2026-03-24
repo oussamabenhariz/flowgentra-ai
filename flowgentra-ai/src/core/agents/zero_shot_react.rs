@@ -107,7 +107,10 @@ impl Agent for ZeroShotReActAgent {
         AgentType::ZeroShotReAct
     }
 
-    fn initialize(&mut self, state: &mut crate::core::state::SharedState) -> Result<(), FlowgentraError> {
+    fn initialize(
+        &mut self,
+        state: &mut crate::core::state::SharedState,
+    ) -> Result<(), FlowgentraError> {
         // Store agent metadata in state
         state.set(
             "__agent_name",
@@ -125,7 +128,11 @@ impl Agent for ZeroShotReActAgent {
         Ok(())
     }
 
-    fn process(&self, input: &str, _state: &crate::core::state::SharedState) -> Result<String, FlowgentraError> {
+    fn process(
+        &self,
+        input: &str,
+        _state: &crate::core::state::SharedState,
+    ) -> Result<String, FlowgentraError> {
         // For production, this would integrate with actual LLM
         // For now, return structured thinking process
 

@@ -109,10 +109,18 @@ impl ParallelExecutor {
     /// returns a named `BranchResult`. All branches run concurrently;
     /// results are collected per the join strategy and merged per the
     /// merge strategy.
+    #[allow(clippy::type_complexity)]
     pub async fn execute<T: State + Default + Send + Sync + 'static>(
         &self,
         initial_state: T,
-        branches: Vec<(String, Box<dyn Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>> + Send + Sync>)>,
+        branches: Vec<(
+            String,
+            Box<
+                dyn Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>
+                    + Send
+                    + Sync,
+            >,
+        )>,
     ) -> Result<T> {
         let mut join_set: JoinSet<BranchResult<T>> = JoinSet::new();
 
@@ -144,9 +152,11 @@ impl ParallelExecutor {
 
         if !self.continue_on_error {
             if let Some(failed) = results.iter().find(|r| !r.success) {
-                return Err(FlowgentraError::ExecutionError(
-                    format!("Branch '{}' failed: {}", failed.branch_name, failed.error.as_deref().unwrap_or("unknown"))
-                ));
+                return Err(FlowgentraError::ExecutionError(format!(
+                    "Branch '{}' failed: {}",
+                    failed.branch_name,
+                    failed.error.as_deref().unwrap_or("unknown")
+                )));
             }
         }
 
@@ -253,7 +263,11 @@ impl ParallelExecutor {
     }
 
     /// Merge results from branches into a single state
-    fn merge_results<T: crate::core::state::State>(&self, initial_state: &T, results: &[BranchResult<T>]) -> Result<T> {
+    fn merge_results<T: crate::core::state::State>(
+        &self,
+        initial_state: &T,
+        results: &[BranchResult<T>],
+    ) -> Result<T> {
         let merged = initial_state.clone();
 
         match self.merge_strategy {

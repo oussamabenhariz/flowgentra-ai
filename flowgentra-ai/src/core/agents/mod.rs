@@ -27,18 +27,18 @@
 mod builders;
 mod conversational;
 mod few_shot_react;
-mod prompts;
-mod zero_shot_react;
 pub mod graph_nodes;
+mod prompts;
 pub mod supervisor;
+mod zero_shot_react;
 
 pub use builders::{AgentBuilder, AgentConfig};
 pub use conversational::ConversationalAgent;
 pub use few_shot_react::FewShotReActAgent;
+pub use graph_nodes::{reasoning_router, AgentReasoningNode, ConversationalNode, ToolExecutorNode};
 pub use prompts::{PromptTemplates, SystemPrompts};
-pub use zero_shot_react::ZeroShotReActAgent;
-pub use graph_nodes::{AgentReasoningNode, ToolExecutorNode, ConversationalNode, reasoning_router};
 pub use supervisor::Supervisor;
+pub use zero_shot_react::ZeroShotReActAgent;
 
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
@@ -73,10 +73,17 @@ pub trait Agent: Send + Sync {
     fn agent_type(&self) -> AgentType;
 
     /// Initialize agent with state
-    fn initialize(&mut self, state: &mut crate::core::state::SharedState) -> Result<(), FlowgentraError>;
+    fn initialize(
+        &mut self,
+        state: &mut crate::core::state::SharedState,
+    ) -> Result<(), FlowgentraError>;
 
     /// Process user input and generate response
-    fn process(&self, input: &str, state: &crate::core::state::SharedState) -> Result<String, FlowgentraError>;
+    fn process(
+        &self,
+        input: &str,
+        state: &crate::core::state::SharedState,
+    ) -> Result<String, FlowgentraError>;
 
     /// Get agent configuration
     fn config(&self) -> &AgentConfig;

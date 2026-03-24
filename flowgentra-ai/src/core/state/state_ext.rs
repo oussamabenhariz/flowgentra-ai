@@ -47,7 +47,10 @@ impl StateExtMethods for SharedState {
         self.get(key)
             .and_then(|v| v.as_str().map(|s| s.to_string()))
             .ok_or_else(|| {
-                FlowgentraError::ValidationError(format!("Required string field '{}' not found", key))
+                FlowgentraError::ValidationError(format!(
+                    "Required string field '{}' not found",
+                    key
+                ))
             })
     }
 
@@ -58,26 +61,17 @@ impl StateExtMethods for SharedState {
     }
 
     fn get_float(&self, key: &str, default: f64) -> f64 {
-        self.get(key)
-            .and_then(|v| v.as_f64())
-            .unwrap_or(default)
+        self.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
     }
 
     fn get_bool(&self, key: &str, default: bool) -> bool {
-        self.get(key)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default)
+        self.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }
 
     fn require_number(&self, key: &str) -> Result<f64> {
-        self.get(key)
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| {
-                FlowgentraError::ValidationError(format!(
-                    "Required numeric field '{}' not found",
-                    key
-                ))
-            })
+        self.get(key).and_then(|v| v.as_f64()).ok_or_else(|| {
+            FlowgentraError::ValidationError(format!("Required numeric field '{}' not found", key))
+        })
     }
 
     fn has(&self, key: &str) -> bool {

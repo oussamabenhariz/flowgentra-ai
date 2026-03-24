@@ -110,10 +110,10 @@ pub struct ConfidenceScorer;
 
 impl ConfidenceScorer {
     /// Score confidence in an output
-        pub fn score<T: State>(
-            output: &Value,
-            task: Option<&str>,
-            state: &T,
+    pub fn score<T: State>(
+        output: &Value,
+        task: Option<&str>,
+        state: &T,
         node_name: &str,
         config: &ConfidenceConfig,
     ) -> ConfidenceScore {
@@ -203,7 +203,7 @@ impl ConfidenceScorer {
                     indicators.push("Empty object".into());
                     return 0.3;
                 }
-                
+
                 // Try to find a string value to evaluate its text
                 // Usually the main content is the longest string in the object
                 let mut longest_str = "";
@@ -214,7 +214,7 @@ impl ConfidenceScorer {
                         }
                     }
                 }
-                
+
                 if !longest_str.is_empty() {
                     // Evaluate the text found inside the object
                     Self::score_clarity(&Value::String(longest_str.to_string()), indicators)
@@ -241,10 +241,10 @@ impl ConfidenceScorer {
     }
 
     /// Score relevance to task  
-        fn score_relevance<T: State>(
-            output: &Value,
-            task: Option<&str>,
-            _state: &T,
+    fn score_relevance<T: State>(
+        output: &Value,
+        task: Option<&str>,
+        _state: &T,
         _node_name: &str,
         indicators: &mut Vec<String>,
     ) -> f64 {
@@ -268,9 +268,10 @@ impl ConfidenceScorer {
                         longest_str
                     }
                 }
-                _ => output.to_string()
-            }.to_lowercase();
-            
+                _ => output.to_string(),
+            }
+            .to_lowercase();
+
             let task_str = task_desc.to_lowercase();
 
             // Simple keyword matching
@@ -298,9 +299,9 @@ impl ConfidenceScorer {
     }
 
     /// Score completeness of output
-        fn score_completeness<T: State>(
-            output: &Value,
-            _state: &T,
+    fn score_completeness<T: State>(
+        output: &Value,
+        _state: &T,
         _node_name: &str,
         indicators: &mut Vec<String>,
     ) -> f64 {
@@ -312,7 +313,7 @@ impl ConfidenceScorer {
                 if o.is_empty() {
                     return 0.3;
                 }
-                
+
                 // Track if it has common expected API response fields
                 let common_fields = ["result", "output", "response", "data", "items", "status"];
                 let has_common = common_fields.iter().any(|f: &&str| o.contains_key(*f));
@@ -326,10 +327,15 @@ impl ConfidenceScorer {
                         }
                     }
                 }
-                
+
                 if !longest_str.is_empty() {
                     // Score the actual text content found
-                    let mut text_score = Self::score_completeness(&Value::String(longest_str.to_string()), _state, _node_name, indicators);
+                    let mut text_score = Self::score_completeness(
+                        &Value::String(longest_str.to_string()),
+                        _state,
+                        _node_name,
+                        indicators,
+                    );
                     if has_common {
                         text_score += 0.1; // Bonus for good structure
                     }

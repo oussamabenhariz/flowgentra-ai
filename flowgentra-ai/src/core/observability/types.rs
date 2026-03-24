@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 pub type TokenUsage = LlmTokenUsage;
 
-
 /// Node timing metric with optional state snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeTiming {

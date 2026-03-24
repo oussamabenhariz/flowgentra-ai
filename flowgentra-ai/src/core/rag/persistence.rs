@@ -21,9 +21,8 @@ impl InMemoryVectorStore {
             let json = serde_json::to_string_pretty(&docs).map_err(|e| {
                 VectorStoreError::SerializationError(format!("Failed to serialize: {}", e))
             })?;
-            std::fs::write(&path, json).map_err(|e| {
-                VectorStoreError::Unknown(format!("Failed to write file: {}", e))
-            })?;
+            std::fs::write(&path, json)
+                .map_err(|e| VectorStoreError::Unknown(format!("Failed to write file: {}", e)))?;
             Ok(())
         })
         .await
@@ -36,9 +35,8 @@ impl InMemoryVectorStore {
     pub async fn load_from_file(&self, path: impl AsRef<Path>) -> Result<usize, VectorStoreError> {
         let path = path.as_ref().to_path_buf();
         let docs: Vec<Document> = tokio::task::spawn_blocking(move || {
-            let json = std::fs::read_to_string(&path).map_err(|e| {
-                VectorStoreError::Unknown(format!("Failed to read file: {}", e))
-            })?;
+            let json = std::fs::read_to_string(&path)
+                .map_err(|e| VectorStoreError::Unknown(format!("Failed to read file: {}", e)))?;
             let docs: Vec<Document> = serde_json::from_str(&json).map_err(|e| {
                 VectorStoreError::SerializationError(format!("Failed to deserialize: {}", e))
             })?;

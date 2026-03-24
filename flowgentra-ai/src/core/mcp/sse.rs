@@ -225,9 +225,8 @@ fn parse_sse_event(event_data: &str) -> Result<SSEMessage> {
             event_type = event_line.trim().to_string();
         } else if let Some(data_line) = line.strip_prefix("data:") {
             let json_str = data_line.trim();
-            data = serde_json::from_str(json_str).unwrap_or(serde_json::Value::String(
-                json_str.to_string(),
-            ));
+            data = serde_json::from_str(json_str)
+                .unwrap_or(serde_json::Value::String(json_str.to_string()));
         }
     }
 

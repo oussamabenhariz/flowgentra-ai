@@ -1,11 +1,10 @@
-````markdown
-# FlowgentraAI Quick Start - Get Running in 5 Minutes
+# FlowgentraAI Quick Start
 
-Let's build a working agent **right now**. No theory, just results.
+Get a working agent running in 5 minutes. No theory, just results.
 
 ## What You'll Build
 
-A simple agent that can answer questions. No complex setup needed.
+A simple agent that answers questions, then a graph-based workflow with state management.
 
 ## Step 1: Create a Project
 
@@ -15,8 +14,6 @@ cd my_agent
 ```
 
 ## Step 2: Add Dependencies
-
-Edit `Cargo.toml`:
 
 ```toml
 [package]
@@ -30,36 +27,79 @@ tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 ```
 
-Run: `cargo build` (this might take a minute the first time)
+Run `cargo build` (takes a minute the first time).
 
 ## Step 3: Create Your Agent
 
-Edit `src/main.rs`:
+### Option A: Predefined Agent (Simplest)
 
 ```rust
 use flowgentra_ai::core::agents::{AgentBuilder, AgentType};
-use flowgentra_ai::core::state::State;
+use flowgentra_ai::core::state::SharedState;
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a simple reasoning agent
     let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
         .with_name("my_assistant")
         .with_llm_config("gpt-4")
         .build()?;
 
-    // Prepare state
-    let mut state = State::new();
+    let state = SharedState::new();
     state.set("input", json!("What is Rust?"));
 
-    // Initialize agent
     let mut agent = agent;
-    agent.initialize(&mut state)?;
+    agent.initialize(&mut state.clone())?;
 
-    // Run it!
     let response = agent.process("What is Rust?", &state)?;
     println!("Agent says: {}", response);
+
+    Ok(())
+}
+```
+
+### Option B: StateGraph (Recommended for Custom Workflows)
+
+The `StateGraph` API gives you full control over nodes, edges, and state flow:
+
+```rust
+use flowgentra_ai::core::state_graph::StateGraphBuilder;
+use flowgentra_ai::core::state::PlainState;
+use flowgentra_ai::core::error::Result;
+
+// Define node functions
+async fn greet(mut state: PlainState) -> Result<PlainState> {
+    let name = state.get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("World");
+    state.set("greeting", serde_json::json!(format!("Hello, {}!", name)));
+    Ok(state)
+}
+
+async fn format_output(mut state: PlainState) -> Result<PlainState> {
+    let greeting = state.get("greeting")
+        .and_then(|v| v.as_str())
+        .unwrap_or("???");
+    state.set("output", serde_json::json!(format!("[{}]", greeting)));
+    Ok(state)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let graph = StateGraphBuilder::new()
+        .add_fn("greet", greet)
+        .add_fn("format", format_output)
+        .set_entry_point("greet")
+        .add_edge("greet", "format")
+        .add_edge("format", "__end__")
+        .compile()?;
+
+    let mut state = PlainState::new();
+    state.set("name", serde_json::json!("Alice"));
+
+    let result = graph.run(state).await?;
+    println!("{}", result.get("output").unwrap());
+    // Prints: ["Hello, Alice!"]
 
     Ok(())
 }
@@ -71,432 +111,128 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 export OPENAI_API_KEY="sk-your-actual-key-here"
 ```
 
-## Step 5: Run It!
+## Step 5: Run It
 
 ```bash
 cargo run
 ```
 
-**That's it!** 🎉 You now have a working agent.
+---
+
+## Three Agent Types
+
+| Type | Best For | Key Feature |
+|------|----------|-------------|
+| **ZeroShotReAct** | General reasoning, open-ended questions | Thinks + acts without examples |
+| **FewShotReAct** | Classification, pattern-based tasks | Learns from examples you provide |
+| **Conversational** | Chatbots, multi-turn dialogue | Remembers conversation history |
+
+```rust
+// ZeroShotReAct
+AgentBuilder::new(AgentType::ZeroShotReAct)
+
+// FewShotReAct
+AgentBuilder::new(AgentType::FewShotReAct)
+
+// Conversational (with memory)
+AgentBuilder::new(AgentType::Conversational)
+    .with_memory_steps(20)
+```
 
 ---
 
-## What Just Happened?
+## Next Steps by Complexity
 
-1. ✅ Created a `ZeroShotReAct` agent (a reasoning agent template)
-2. ✅ Configured it to use GPT-4
-3. ✅ Passed it a question
-4. ✅ It generated a thoughtful answer
-
-## Next Steps
-
-### Add Memory (Conversations)
+### Add Conditional Routing
 
 ```rust
-let agent = AgentBuilder::new(AgentType::Conversational)
-    .with_name("chat_bot")
-    .with_llm_config("gpt-4")
-    .with_memory_steps(20)  // Remember last 20 messages!
-    .build()?;
+let graph = StateGraphBuilder::new()
+    .add_fn("classify", classify_input)
+    .add_fn("simple", handle_simple)
+    .add_fn("complex", handle_complex)
+    .set_entry_point("classify")
+    .add_conditional_edge("classify", |state| {
+        let score = state.get("complexity")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if score > 5 { Ok("complex".into()) } else { Ok("simple".into()) }
+    })
+    .add_edge("simple", "__end__")
+    .add_edge("complex", "__end__")
+    .compile()?;
+```
 
-// First turn
-agent.process("Hi, I'm Alice", &state)?;
+### Add State Reducers
 
-// Second turn - agent remembers you're Alice!
-agent.process("What's my name?", &state)?;
+Control how state fields merge when updated by multiple nodes:
+
+```rust
+use flowgentra_ai::core::reducer::{ReducerConfig, JsonReducer};
+
+let reducers = ReducerConfig::default()
+    .field("messages", JsonReducer::Append)      // Append to list
+    .field("score", JsonReducer::Sum)             // Sum values
+    .field("config", JsonReducer::DeepMerge);     // Deep merge objects
 ```
 
 ### Add Tools
 
 ```rust
+use flowgentra_ai::core::agents::ToolSpec;
+
 let calculator = ToolSpec::new("calculator", "Do math")
     .with_parameter("expression", "string")
     .required("expression");
 
 let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_name("math_tutor")
-    .with_llm_config("gpt-4")
     .with_tool(calculator)
     .build()?;
-
-// Now agent can use the calculator!
-agent.process("What is 123 + 456?", &state)?;
 ```
 
-### Add External Services
+### Add Checkpointing
 
 ```rust
-let web_search = MCPConfig::builder()
-    .name("web_search")
-    .sse("http://localhost:8000")
-    .timeout_secs(30)
-    .build()?;
+use flowgentra_ai::core::state_graph::FileCheckpointer;
 
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_llm_config("gpt-4")
-    .with_mcp(web_search)
-    .build()?;
-
-// Agent can now search the web!
-agent.process("What's trending on Twitter?", &state)?;
+// File-based checkpoints for durable recovery
+let checkpointer = FileCheckpointer::new("./checkpoints");
 ```
 
-### Add Auto-Evaluation
-
-Self-correcting agents:
+### Get Structured JSON Output
 
 ```rust
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_llm_config("gpt-4")
-    // ... other config ...
-    .build()?;
+use flowgentra_ai::core::llm::{LLMConfig, ResponseFormat};
 
-// With evaluation enabled in config:
-// - Agent grades its answer automatically
-// - If quality is low, it retries with "improve your answer"
-// - Returns only when confident
-```
-
-### Enable Checkpointing
-
-Resume workflows:
-
-```yaml
-# In your config.yaml
-memory:
-  checkpointer:
-    enabled: true
-    checkpoint_dir: "./checkpoints"
-```
-
-Then in code:
-
-```rust
-// Save progress
-let checkpoint = agent.save_checkpoint("workflow_123")?;
-
-// Later, resume
-agent.load_checkpoint("workflow_123")?;
-agent.run(state).await?;
-```
-
----
-
-## Three Agent Types Available
-
-### ZeroShotReAct (Simplest)
-- General reasoning and problem-solving
-- Works without examples
-- Best for: Open-ended questions
-
-```rust
-AgentBuilder::new(AgentType::ZeroShotReAct)
-```
-
-### FewShotReAct (Smarter)
-- Works better with examples
-- Shows the LLM how you want it to behave
-- Best for: Tasks where examples help
-
-```rust
-AgentBuilder::new(AgentType::FewShotReAct)
- // .add_example(...)
-```
-
-### Conversational (Most Human)
-- Remembers chat history
-- Multi-turn conversations
-- Best for: Chatbots and assistants
-
-```rust
-AgentBuilder::new(AgentType::Conversational)
-    .with_memory_steps(10)
+let config = LLMConfig::new(provider, model, api_key)
+    .with_response_format(ResponseFormat::Json);
 ```
 
 ---
 
 ## Common Issues
 
-**Error: "Invalid API key"**
+**"Invalid API key"**
 ```bash
-# Check it's set
-echo $OPENAI_API_KEY
-
-# Set it if needed
-export OPENAI_API_KEY="sk-..."
+echo $OPENAI_API_KEY    # Check it's set
+export OPENAI_API_KEY="sk-..."  # Set it
 ```
 
-**Error: "Handler not found"**
-- Check you're using a predefined agent (no handlers needed for quick start)
+**"Handler not found"**
+- Make sure handlers are decorated with `#[register_handler]`
+- Ensure the module is imported in `main.rs`
 
-**Slow on first run?**
-- First compilation takes time (1-2 min)
-- Subsequent runs are fast
+**Slow first build?**
+- Normal. First compile takes 1-2 min. Subsequent runs are fast.
 
 ---
 
-## Learn More
+## Where to Go Next
 
-- **Understanding all features**: [FEATURES.md](FEATURES.md)
-- **Advanced: Memory, Evaluation, Planner**: [CONFIG_GUIDE.md](CONFIG_GUIDE.md)
-- **Building custom logic**: [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)
-- **Adding tools and integrations**: [examples/MCP_AGENTS_GUIDE.md](flowgentra-ai/examples/MCP_AGENTS_GUIDE.md)
-
----
-
-## You're Ready! 🚀
-
-You've got a working agent. Now:
-1. Try different agent types
-2. Add tools
-3. Export your results
-4. Build something awesome!
-
-Happy coding!
-
-
----
-
-## Next Steps
-
-### Add More Nodes
-
-Extend your workflow by adding more nodes to `config.yaml`:
-
-```yaml
-graph:
-  nodes:
-    - name: validate
-      handler: handlers::validate_input
-    
-    - name: search
-      handler: handlers::search_documents
-      uses_rag: true
-    
-    - name: analyze
-      handler: handlers::analyze
-    
-    - name: respond
-      handler: handlers::generate_response
-
-  edges:
-    - from: START
-      to: validate
-    - from: validate
-      to: search
-    - from: search
-      to: analyze
-    - from: analyze
-      to: respond
-    - from: respond
-      to: END
-```
-
-### Add Conditions
-
-Create branching logic:
-
-```yaml
-edges:
-  - from: validate
-    to: complex_handler
-    condition: is_complex
-
-  - from: validate
-    to: simple_handler
-    condition: is_simple
-
-  - from: complex_handler
-    to: respond
-
-  - from: simple_handler
-    to: respond
-```
-
-Add condition functions in handlers:
-
-```rust
-pub fn is_complex(state: &State) -> bool {
-    state.get("complexity_score")
-        .and_then(|v| v.as_i64())
-        .map(|s| s > 70)
-        .unwrap_or(false)
-}
-
-pub fn is_simple(state: &State) -> bool {
-    !is_complex(state)
-}
-```
-
-### Add Retrieval-Augmented Generation (RAG)
-
-Enable semantic search:
-
-```yaml
-rag:
-  enabled: true
-  vector_store:
-    type: pinecone
-    index_name: "my-docs"
-    environment: "us-west-2-aws"
-    api_key: ${PINECONE_API_KEY}
-  embedding_model: openai
-  embedding_dimension: 1536
-  top_k: 5
-```
-
-Use in handler:
-
-```rust
-pub async fn search_documents(mut state: State) -> Result<State> {
-    let query = state.get("input")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    
-    // Retrieve from vector store
-    let docs = rag_client.retrieve(query, 5).await?;
-    
-    state.set("retrieved_docs", json!(docs));
-    Ok(state)
-}
-```
-
-### Add External Tools (MCP)
-
-```yaml
-mcp:
-  enabled: true
-  tools:
-    - name: web_search
-      description: "Search the web"
-      type: external
-      endpoint: "http://localhost:3000/search"
-
-    - name: calculator
-      description: "Do math"
-      type: builtin
-```
-
-Use in handler:
-
-```rust
-pub async fn search_info(mut state: State) -> Result<State> {
-    let query = state.get("input")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    
-    let results = mcp_client.execute_tool(
-        "web_search",
-        json!({"query": query})
-    ).await?;
-    
-    state.set("search_results", results);
-    Ok(state)
-}
-```
-
----
-
-## Common Tasks
-
-### Change LLM Provider
-
-**To Anthropic:**
-
-```yaml
-llm:
-  provider: anthropic
-  model: claude-3-opus-20240229
-  api_key: ${ANTHROPIC_API_KEY}
-```
-
-**To Mistral:**
-
-```yaml
-llm:
-  provider: mistral
-  model: mistral-large
-  api_key: ${MISTRAL_API_KEY}
-```
-
-**To Local Ollama:**
-
-```yaml
-llm:
-  provider: ollama
-  model: mistral
-  base_url: "http://localhost:11434"
-```
-
-### Add Logging
-
-```yaml
-middleware:
-  - name: logging
-    enabled: true
-    level: debug
-```
-
-### Cache Responses
-
-```yaml
-middleware:
-  - name: cache
-    enabled: true
-    ttl: 3600  # 1 hour
-```
-
-### Limit Request Rate
-
-```yaml
-middleware:
-  - name: rate_limiting
-    enabled: true
-    rpm: 60  # 60 requests per minute
-```
-
-### Monitor Health
-
-```yaml
-health:
-  enabled: true
-  check_interval: 30
-  checks:
-    - llm_connectivity
-    - memory_usage
-```
-
-### Enable Debug Traces
-
-```yaml
-observability:
-  tracing_enabled: true
-  trace_level: debug
-```
-
----
-
-## Troubleshooting
-
-**Error: `Failed to load config`**
-- Ensure `config.yaml` exists in project root
-- Check YAML syntax (no hard tabs, proper indentation)
-
-**Error: `Handler 'handlers::process_input' not found`**
-- Verify function name matches exactly
-- Ensure function is `pub async fn`
-- Make sure handler is in `src/handlers.rs`
-
-**Error: `Invalid API key`**
-- Check: `echo $OPENAI_API_KEY`
-- Set key: `export OPENAI_API_KEY="sk-..."`
-- Or create `.env` file with `OPENAI_API_KEY=sk-...`
-
-**Error: `Timeout` or "Request failed"**
-- Check internet connection
-- Verify API key is valid
-- Check provider status page
-
----
-
-````
+| Goal | Guide |
+|------|-------|
+| See every feature | [FEATURES.md](FEATURES.md) |
+| Build graph workflows | [graph/README.md](graph/README.md) |
+| Set up LLM providers | [llm/README.md](llm/README.md) |
+| Manage state with reducers | [state/README.md](state/README.md) |
+| Add vector search (RAG) | [rag/README.md](rag/README.md) |
+| Advanced patterns | [development/DEVELOPER_GUIDE.md](development/DEVELOPER_GUIDE.md) |

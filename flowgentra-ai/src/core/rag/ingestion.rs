@@ -26,11 +26,7 @@ pub struct IngestionPipeline {
 }
 
 impl IngestionPipeline {
-    pub fn new(
-        store: Arc<VectorStore>,
-        embeddings: Arc<Embeddings>,
-        batch_size: usize,
-    ) -> Self {
+    pub fn new(store: Arc<VectorStore>, embeddings: Arc<Embeddings>, batch_size: usize) -> Self {
         Self {
             store,
             embeddings,
@@ -113,7 +109,10 @@ impl IngestionPipeline {
                                 map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                         }
 
-                        match self.store.index_document(&doc.id, &doc.text, metadata.clone()).await
+                        match self
+                            .store
+                            .index_document(&doc.id, &doc.text, metadata.clone())
+                            .await
                         {
                             Ok(_) => stats.chunks_indexed += 1,
                             Err(e) => stats
@@ -126,8 +125,7 @@ impl IngestionPipeline {
                     let wait = retry_after_ms.unwrap_or(1000);
                     tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
                     // Re-try this batch
-                    let texts: Vec<&str> =
-                        batch.iter().map(|(_, text, _)| text.as_str()).collect();
+                    let texts: Vec<&str> = batch.iter().map(|(_, text, _)| text.as_str()).collect();
                     if let Ok(embeddings) = self.embeddings.embed_batch(texts).await {
                         for ((id, text, metadata), embedding) in batch.iter().zip(embeddings) {
                             let mut doc = Document::new(id.as_str(), text.as_str());

@@ -1,502 +1,968 @@
-````markdown
 # FlowgentraAI Features Guide
 
-A practical guide to all the amazing features that make FlowgentraAI powerful.
-
-## 🎯 Quick Feature Overview
-
-### Core Features (You'll Use These First)
-
-| Feature | What It Does | When to Use |
-|---------|-------------|-----------|
-| **Predefined Agents** | Ready-to-use agent templates (ZeroShotReAct, FewShotReAct, Conversational) | When you want to get started quickly without building custom graphs |
-| **Memory & Checkpointing** | Save conversation history and agent state | For multi-turn conversations or resumable workflows |
-| **Auto-Evaluation** | LLM grades outputs, retries if quality is low | When you need high-quality results from your agent |
-| **Dynamic Planning** | LLM decides what to do next | For complex workflows that need flexibility |
-| **Tools & MCP** | Connect external services and APIs | When you need to access databases, search engines, etc. |
-| **RAG** | Semantic search over your documents | When you need context from your own knowledge base |
+Everything FlowgentraAI can do, organized by category with practical examples.
 
 ---
 
-## 🤖 Predefined Agents
+## Graph Engine
 
-**What's This?**  
-Instead of building a graph from scratch, FlowgentraAI provides ready-made agent types for common patterns. Think of them as templates.
+The graph engine is the core of FlowgentraAI. Build workflows as directed graphs with nodes (processing steps) and edges (transitions).
 
-**Three Built-In Types:**
+### StateGraph Builder
 
-### 1. ZeroShotReAct Agent
-- **Best for:** General-purpose reasoning tasks
-- **How it works:** "Think through this problem, use tools as needed, give answer"
-- **Example use case:** Research, analysis, problem-solving
+Build workflows programmatically with type-safe state:
 
 ```rust
+use flowgentra_ai::core::state_graph::StateGraphBuilder;
+use flowgentra_ai::core::state::PlainState;
+
+let graph = StateGraphBuilder::new()
+    .add_fn("step1", process_input)
+    .add_fn("step2", generate_output)
+    .set_entry_point("step1")
+    .add_edge("step1", "step2")
+    .add_edge("step2", "__end__")
+    .compile()?;
+
+let result = graph.run(initial_state).await?;
+```
+
+### Conditional Routing
+
+Route execution based on state at runtime:
+
+```rust
+builder.add_conditional_edge("classify", |state| {
+    let category = state.get("category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    Ok(category.to_string())
+})
+```
+
+### Async Conditional Edges
+
+For routing decisions that need async operations (API calls, DB lookups):
+
+```rust
+builder.add_async_conditional_edge("check", Box::new(|state| {
+    Box::pin(async move {
+        let result = call_external_api(&state).await?;
+        Ok(result.next_step)
+    })
+}))
+```
+
+### Subgraph Composition
+
+Nest entire graphs as single nodes inside a parent graph:
+
+```rust
+let inner_graph = StateGraphBuilder::new()
+    .add_fn("a", step_a)
+    .add_fn("b", step_b)
+    .set_entry_point("a")
+    .add_edge("a", "b")
+    .add_edge("b", "__end__")
+    .compile()?;
+
+let outer = StateGraphBuilder::new()
+    .add_subgraph("inner", inner_graph)
+    .add_fn("final", finalize)
+    .set_entry_point("inner")
+    .add_edge("inner", "final")
+    .add_edge("final", "__end__")
+    .compile()?;
+```
+
+### Parallel Execution
+
+Run branches concurrently and merge results:
+
+```rust
+use flowgentra_ai::core::runtime::parallel::{ParallelExecutor, JoinType};
+
+let executor = ParallelExecutor::new()
+    .with_join_type(JoinType::WaitAll)
+    .with_timeout(Duration::from_secs(30))
+    .with_continue_on_error(true);
+
+let result = executor.execute(branches, state).await?;
+```
+
+Join strategies: `WaitAll`, `WaitAny`, `WaitCount(n)`, `WaitTimeout`.
+
+### Graph Export
+
+Visualize your graph in multiple formats:
+
+```rust
+let graph = builder.compile()?;
+
+// Graphviz DOT
+let dot = graph.to_dot();
+
+// Mermaid (for Markdown docs)
+let mermaid = graph.to_mermaid();
+
+// JSON (for custom tooling)
+let json = graph.to_json();
+```
+
+### Human-in-the-Loop
+
+Pause execution for human review, then resume with modified state:
+
+```rust
+let graph = StateGraphBuilder::new()
+    .add_fn("draft", draft_response)
+    .add_fn("send", send_response)
+    .set_entry_point("draft")
+    .interrupt_before("send")  // Pause here for approval
+    .add_edge("draft", "send")
+    .add_edge("send", "__end__")
+    .compile()?;
+
+// Later, resume with edits
+let result = graph.resume_with_state("thread-1", updated_state).await?;
+```
+
+### MessageGraphBuilder
+
+A convenience wrapper for chat-focused workflows with automatic message accumulation:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let graph = MessageGraphBuilder::new()
+    .add_fn("echo", |state: &PlainState| {
+        let messages = MessageGraphBuilder::get_messages(state);
+        let last = messages.last().map(|m| m.content.clone()).unwrap_or_default();
+        let mut s = state.clone();
+        s = MessageGraphBuilder::add_message(s, Message::assistant(format!("Echo: {}", last)));
+        Box::pin(async move { Ok(s) })
+    })
+    .set_entry_point("echo")
+    .add_edge("echo", "__end__")
+    .compile()?;
+
+let state = MessageGraphBuilder::initial_state(vec![Message::user("Hello")]);
+let result = graph.invoke(state).await?;
+```
+
+### ToolNode
+
+Prebuilt node that automatically executes tool calls from LLM responses:
+
+```rust
+use flowgentra_ai::prelude::*;
+use std::sync::Arc;
+
+// Create a tool executor
+let tool_node = create_tool_node(Arc::new(|name, args| {
+    Box::pin(async move {
+        match name.as_str() {
+            "calculator" => Ok(format!("Result: {}", args)),
+            _ => Err(format!("Unknown tool: {}", name)),
+        }
+    })
+}));
+
+// Route based on whether tool calls exist
+builder.add_conditional_edge("agent", tools_condition("tools"));
+// Routes to "tools" if tool_calls present, "__end__" otherwise
+
+// Store tool calls from LLM response into state
+let state = store_tool_calls(state, &llm_response);
+```
+
+---
+
+## State Management
+
+### PlainState and SharedState
+
+Two state containers for different needs:
+
+```rust
+// Owned state (single-threaded, fast)
+let mut state = PlainState::new();
+state.set("key", json!("value"));
+
+// Thread-safe state (concurrent access)
+let state = SharedState::new();
+state.set("key", json!("value"));
+```
+
+### ScopedState
+
+Namespaced state isolation prevents key collisions between nodes:
+
+```rust
+use flowgentra_ai::core::state::ScopedState;
+
+let scoped = ScopedState::new(shared_state.clone(), "my_node");
+scoped.set("counter", json!(1));
+// Actually stored as "my_node.counter"
+```
+
+### JsonReducer and ReducerConfig
+
+Control how state fields merge when multiple nodes update them:
+
+```rust
+use flowgentra_ai::core::reducer::{ReducerConfig, JsonReducer};
+
+let config = ReducerConfig::default()
+    .field("messages", JsonReducer::Append)        // Append arrays
+    .field("total_cost", JsonReducer::Sum)          // Sum numbers
+    .field("settings", JsonReducer::DeepMerge)      // Deep merge objects
+    .field("best_score", JsonReducer::Max)           // Keep maximum
+    .field("unique_tags", JsonReducer::AppendUnique); // Append without duplicates
+```
+
+Available reducers: `Overwrite`, `Append`, `Sum`, `DeepMerge`, `Max`, `Min`, `AppendUnique`.
+
+---
+
+## Agents
+
+### Predefined Agent Types
+
+| Agent | Pattern | Best For |
+|-------|---------|----------|
+| **ZeroShotReAct** | Think + act without examples | General problem-solving |
+| **FewShotReAct** | Learn from provided examples | Classification, structured output |
+| **Conversational** | Multi-turn with memory | Chatbots, assistants |
+
+```rust
+use flowgentra_ai::core::agents::{AgentBuilder, AgentType};
+
 let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
     .with_name("researcher")
     .with_llm_config("gpt-4")
     .with_tool(search_tool)
-    .with_mcp(web_search_mcp)
     .build()?;
-
-let response = agent.process("What are the latest AI breakthroughs?", &state)?;
 ```
 
-### 2. FewShotReAct Agent
-- **Best for:** Tasks where examples help
-- **How it works:** Shows the LLM examples before asking it to solve
-- **Example use case:** Classification, pattern-based tasks
+### Supervisor (Multi-Agent Orchestration)
+
+Route tasks to specialized sub-agents:
 
 ```rust
-let agent = AgentBuilder::new(AgentType::FewShotReAct)
-    .with_name("classifier")
-    .with_llm_config("gpt-4")
-    .build()?;
+use flowgentra_ai::core::agents::Supervisor;
 
-// Add examples showing what you want
-agent.add_example(
-    "urgent bug",
-    "This should go to priority support",
-    "Actions: escalate_to_priority_support"
+let supervisor = Supervisor::new(
+    router_fn,          // Decides which agent handles each task
+    named_agent_graphs, // Map of agent name -> compiled StateGraph
+    max_rounds,         // Prevent infinite loops
 );
+
+let result = supervisor.run(initial_state).await?;
 ```
 
-### 3. Conversational Agent
-- **Best for:** Chat-like interactions with memory
-- **How it works:** Remembers conversation history across turns
-- **Example use case:** Chatbots, customer support, assistants
+The router function inspects the state and returns the name of the agent that should handle the current step.
+
+---
+
+## LLM Integration
+
+### Supported Providers
+
+| Provider | Auth | Streaming | Tool Calling |
+|----------|------|-----------|--------------|
+| OpenAI | Bearer token | SSE | Function calling |
+| Anthropic | x-api-key | SSE | input_schema format |
+| Mistral | Bearer token | SSE | Function calling |
+| Groq | Bearer token | SSE | Function calling |
+| Azure OpenAI | api-key | SSE | Function calling |
+| HuggingFace | Bearer token | Real SSE (TGI) | -- |
+| Ollama | None (local) | NDJSON | -- |
+
+### RetryLLMClient
+
+Automatic retry with exponential backoff:
 
 ```rust
-let agent = AgentBuilder::new(AgentType::Conversational)
-    .with_name("support_bot")
-    .with_llm_config("gpt-4")
-    .with_memory_steps(20)  // Remember last 20 messages
-    .build()?;
+use flowgentra_ai::core::llm::RetryLLMClient;
 
-// First turn
-agent.process("Hi, I have a bug", &state)?;
+let client = RetryLLMClient::new(inner_client)
+    .with_max_retries(3)
+    .with_initial_delay(Duration::from_millis(500));
 
-// Second turn - agent remembers the context
-agent.process("Can you help?", &state)?;
+// Automatically retries on transient failures
+let response = client.chat(messages).await?;
+```
+
+### Token Counting and Cost Tracking
+
+```rust
+use flowgentra_ai::core::llm::token_counter::{estimate_tokens, context_window, ContextWindow};
+use flowgentra_ai::core::llm::model_pricing;
+
+// Estimate tokens
+let tokens = estimate_tokens("Hello, how are you?"); // ~5 tokens
+
+// Check context window limits
+let max = context_window("gpt-4"); // Some(8192)
+
+// Truncate messages to fit
+let ctx = ContextWindow { max_tokens: 8192, reserve_for_completion: 1024 };
+let trimmed = ctx.truncate(&messages);
+
+// Track costs
+let (input_price, output_price) = model_pricing("gpt-4").unwrap();
+let cost = usage.estimated_cost("gpt-4"); // USD
+```
+
+### Structured Output (ResponseFormat)
+
+Get deterministic JSON responses:
+
+```rust
+use flowgentra_ai::core::llm::{LLMConfig, ResponseFormat};
+
+// Simple JSON mode
+let config = LLMConfig::new(provider, model, key)
+    .with_response_format(ResponseFormat::Json);
+
+// JSON with schema enforcement (OpenAI)
+let config = LLMConfig::new(provider, model, key)
+    .with_response_format(ResponseFormat::JsonSchema {
+        name: "analysis".into(),
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "sentiment": { "type": "string" },
+                "score": { "type": "number" }
+            },
+            "required": ["sentiment", "score"]
+        }),
+    });
+```
+
+### Anthropic Tool Calling
+
+Native support for Anthropic's `input_schema` format:
+
+```rust
+// Tools are automatically formatted for Anthropic:
+// { "name": "...", "description": "...", "input_schema": {...} }
+// Response parsing handles tool_use content blocks
+let response = client.chat_with_tools(messages, &tools).await?;
+```
+
+### CachedLLMClient
+
+Cache LLM responses to avoid redundant API calls:
+
+```rust
+use flowgentra_ai::prelude::*;
+use std::sync::Arc;
+
+let cached = CachedLLMClient::new(inner_client)
+    .with_max_entries(1000);
+
+// Second call with identical messages returns cached response
+let response = cached.chat(messages.clone()).await?;
+let cached_response = cached.chat(messages).await?; // cache hit
+
+println!("Cache size: {}", cached.cache_size());
+cached.clear_cache();
+```
+
+### FallbackLLMClient
+
+Try multiple LLM providers in order until one succeeds:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let client = FallbackLLMClient::new(primary_client)
+    .with_fallback(secondary_client)
+    .with_fallback(tertiary_client);
+
+// Tries primary first, then secondary, then tertiary
+let response = client.chat(messages).await?;
+```
+
+### PromptTemplate
+
+Template strings with `{variable}` interpolation:
+
+```rust
+use flowgentra_ai::core::llm::prompt_template::PromptTemplate;
+
+let template = PromptTemplate::new("Summarize {text} in {language}");
+let result = template.format(&[
+    ("text", "Rust is a systems language"),
+    ("language", "French"),
+])?;
+// "Summarize Rust is a systems language in French"
+
+// Partial formatting
+let partial = template.partial(&[("language", "French")])?;
+let result = partial.format(&[("text", "some content")])?;
+```
+
+### ChatPromptTemplate
+
+Build multi-message prompts with templates:
+
+```rust
+use flowgentra_ai::core::llm::prompt_template::ChatPromptTemplate;
+
+let prompt = ChatPromptTemplate::new()
+    .system("You are a {role} expert.")
+    .user("Explain {topic} simply.");
+
+let messages = prompt.format_messages(&[
+    ("role", "Rust"),
+    ("topic", "ownership"),
+])?;
+```
+
+### OutputParser
+
+Parse structured data from LLM text responses:
+
+```rust
+use flowgentra_ai::core::llm::output_parser::{JsonOutputParser, ListOutputParser};
+
+// Extract JSON from freeform text
+let parser = JsonOutputParser::new();
+let value = parser.parse("Here's the result: ```json\n{\"score\": 95}\n```")?;
+
+// Parse lists
+let parser = ListOutputParser::comma_separated();
+let items = parser.parse("apples, oranges, bananas")?;
+// ["apples", "oranges", "bananas"]
 ```
 
 ---
 
-## 💾 Memory & Checkpointing
+## Tools and MCP
 
-**What's This?**  
-Save your agent's state so it can:
-- Resume multi-step processes
-- Remember conversations across sessions
-- Maintain context in long-running tasks
-
-**Two Types:**
-
-### 1. Checkpointing (State Persistence)
-
-Save the full state at each step. Resume from any checkpoint.
-
-```yaml
-# In config.yaml
-memory:
-  checkpointer:
-    enabled: true
-    checkpoint_dir: "./checkpoints"
-```
+### Local Tools
 
 ```rust
-// Save state
-let checkpoint = agent.create_checkpoint("user_123")?;
-
-// Later, load and resume
-agent.load_checkpoint("user_123")?;
-agent.run(state).await?;
+let tool = ToolSpec::new("search", "Search the web")
+    .with_parameter("query", "string")
+    .required("query");
 ```
 
-**Real-world example:** An agent analyzing a 100-page document
-- Page 1-10: Creates checkpoint
-- Page 11-20: Creates checkpoint (can resume here if it fails)
-- Page 21-30: Creates checkpoint
-- Etc.
+### MCP Transports
 
-### 2. Conversation Memory (Message History)
-
-Remember what was said in a conversation.
+Connect via SSE, Stdio, or Docker:
 
 ```yaml
-# In config.yaml
+mcp:
+  tools:
+    - name: web_search
+      type: sse
+      url: "http://localhost:8000"
+      timeout: 30
+
+    - name: local_tool
+      type: stdio
+      command: "/usr/bin/my-tool"
+
+    - name: containerized
+      type: docker
+      image: "my-tool:latest"
+```
+
+### Reconnecting MCP Client
+
+Auto-reconnects on connection failure:
+
+```rust
+use flowgentra_ai::core::mcp::ReconnectingMCPClient;
+
+let client = ReconnectingMCPClient::new(factory_fn)
+    .with_max_reconnects(5);
+
+// Automatically reconnects if the connection drops
+let tools = client.list_tools().await?;
+```
+
+### MCP Resources and Prompts
+
+Full MCP protocol support beyond just tool calls:
+
+```rust
+// List and read resources
+let resources = client.list_resources().await?;
+let content = client.read_resource("file:///path/to/doc.md").await?;
+
+// List and get prompt templates
+let prompts = client.list_prompts().await?;
+let result = client.get_prompt("summarize", args).await?;
+```
+
+---
+
+## RAG (Retrieval-Augmented Generation)
+
+### Vector Stores
+
+| Store | Type | Best For |
+|-------|------|----------|
+| **PineconeStore** | Cloud (REST API) | Production, managed service |
+| **QdrantStore** | Self-hosted (REST API) | Privacy, self-managed |
+| **ChromaStore** | Local/self-hosted | Development, small datasets |
+| **InMemoryStore** | In-process | Testing, prototyping |
+
+```rust
+use flowgentra_ai::core::rag::{RAGConfig, PineconeStore, QdrantStore};
+
+// Pinecone
+let store = PineconeStore::new(api_key, index_host);
+store.upsert(vectors).await?;
+let results = store.query(query_vector, top_k).await?;
+
+// Qdrant
+let store = QdrantStore::new(url, collection);
+store.upsert(points).await?;
+let results = store.query(query_vector, top_k).await?;
+```
+
+### Text Splitters
+
+Split documents into chunks for indexing:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+// Recursive character splitter (general purpose)
+let splitter = RecursiveCharacterTextSplitter::new(500, 50);
+let chunks = splitter.split("Long document text...");
+
+// Markdown-aware splitter (preserves heading structure)
+let splitter = MarkdownTextSplitter::new(500, 50);
+
+// Code splitter (respects language syntax)
+let splitter = CodeTextSplitter::new(Language::Rust, 500, 50);
+
+// HTML splitter (splits on tags)
+let splitter = HTMLTextSplitter::new(500, 50);
+
+// Token-based splitter
+let splitter = TokenTextSplitter::new(128, 20);
+```
+
+Supported code languages: Rust, Python, JavaScript, TypeScript, Go, Java, C, CPP, Ruby.
+
+### Retriever
+
+End-to-end retrieval pipeline that chains embed → search → rerank → dedup:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let retriever = Retriever::new(
+    vector_store,        // Arc<dyn VectorStoreBackend>
+    embeddings_provider, // Arc<dyn EmbeddingsProvider>
+)
+.with_top_k(10)
+.with_reranker(reranker);
+
+let results = retriever.retrieve("What is Rust?").await?;
+```
+
+### HuggingFace Embeddings
+
+Generate embeddings via HuggingFace Inference API or self-hosted TEI:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let embeddings = HuggingFaceEmbeddings::new(
+    "sentence-transformers/all-MiniLM-L6-v2",
+    "hf_your_api_key",
+);
+
+// Auto-detects dimension (384 for MiniLM, 768 for mpnet, 1024 for bge-large)
+let vector = embeddings.embed("Hello world").await?;
+
+// Self-hosted TEI server
+let embeddings = HuggingFaceEmbeddings::new("model", "key")
+    .with_endpoint("http://localhost:8080/embed");
+```
+
+### Cross-Encoder Reranker
+
+Rerank search results using a cross-encoder model:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let reranker = CrossEncoderReranker::new(
+    "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "hf_your_api_key",
+)
+.with_top_k(5);
+
+let reranked = reranker.rerank("query", results).await?;
+```
+
+### Document Loaders
+
+Load documents from various file formats:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+// Single file
+let doc = load_document("path/to/file.pdf")?;
+
+// Entire directory
+let docs = load_directory("path/to/docs/")?;
+```
+
+Supported formats: PDF, plain text, Markdown, JSON, CSV, HTML.
+
+### Ingestion Pipeline
+
+Load, split, embed, and index documents in one pipeline:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let pipeline = IngestionPipeline::new(
+    splitter,    // Box<dyn TextSplitter>
+    embeddings,  // Arc<dyn EmbeddingsProvider>
+    store,       // Arc<dyn VectorStoreBackend>
+);
+
+let stats = pipeline.ingest(documents).await?;
+println!("Indexed {} chunks from {} documents", stats.chunks, stats.documents);
+```
+
+---
+
+## Memory and Checkpointing
+
+### InMemoryCheckpointer
+
+Fast, ephemeral checkpoint storage for development:
+
+```rust
+let checkpointer = InMemoryCheckpointer::new();
+checkpointer.save("thread-1", &state)?;
+let restored = checkpointer.load("thread-1")?;
+```
+
+### FileCheckpointer
+
+Persist checkpoints to disk for durable recovery:
+
+```rust
+use flowgentra_ai::core::state_graph::FileCheckpointer;
+
+let checkpointer = FileCheckpointer::new("./checkpoints");
+checkpointer.save("thread-1", &state)?;
+
+// Later, even after restart:
+let restored = checkpointer.load("thread-1")?;
+```
+
+### Conversation Memory
+
+Remember chat history across turns:
+
+```yaml
 memory:
   conversation:
     enabled: true
-    buffer_window: 10  # Remember last 10 messages
+    buffer_window: 20  # Last 20 messages
 ```
+
+### TokenBufferMemory
+
+Sliding window that respects token budgets instead of message counts:
 
 ```rust
-// Automatically memories messages
-agent.process("What's my name?", &state)?;
-agent.process("My name is Alice", &state)?;
-agent.process("What did I just tell you?", &state)?;  // Remembers "Alice"
+use flowgentra_ai::prelude::*;
+
+let mut memory = TokenBufferMemory::new(4000); // 4000 token budget
+memory.add_message(Message::system("You are helpful."));
+memory.add_message(Message::user("Hello!"));
+
+// Oldest non-system messages are dropped when budget exceeded
+let messages = memory.messages();
 ```
 
-**Real-world example:** Customer support chatbot
-- Customer: "I bought a laptop yesterday"
-- Support bot creates a checkpoint
-- Customer: "It doesn't turn on"
-- Support bot remembers the laptop purchase from earlier
-- Support bot: "Hi! I see you bought a laptop. Let me help with the power issue..."
+### SummaryMemory
+
+Summarize older messages with an LLM to keep context compact:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let config = SummaryConfig {
+    buffer_size: 10,
+    max_summary_tokens: 500,
+};
+
+let memory = SummaryMemory::new(config, |messages| {
+    Box::pin(async move {
+        // Call your LLM to summarize
+        Ok("Summary of conversation so far...".to_string())
+    })
+});
+```
 
 ---
 
-## 🎓 Auto-Evaluation & Self-Correction
+## Observability
 
-**What's This?**  
-Your agent automatically grades its own work and retries if quality is low.
+### Event Broadcaster
 
-**Why it matters:** Get better results without human supervision.
-
-### Three-Step Process
-
-1. **Output Scoring** - Rate answer quality (0.0 to 1.0)
-2. **LLM Grading** - Use another LLM to evaluate
-3. **Auto-Retry** - If score < threshold, try again with corrections
-
-```yaml
-# In config.yaml
-evaluation:
-  enabled: true
-  min_confidence: 0.8  # Retry if confidence < 80%
-  max_retries: 3
-  scoring:
-    - metrics: [relevance, completeness]
-      weights: [0.5, 0.5]
-  grading:
-    enabled: true
-    rubric: "Is the answer accurate and complete?"
-```
+Stream real-time execution events:
 
 ```rust
-// This automatically happens in your nodes
-pub async fn generate_answer(mut state: State) -> Result<State> {
-    // Your logic generates an answer
-    let answer = llm.generate("Here's my answer...").await?;
-    state.set("answer", json!(answer));
-    
-    // Auto-evaluation middleware:
-    // 1. Scores the answer
-    // 2. If score is low, retries with "Improve your answer..."
-    // 3. Returns only when confident or max retries reached
-    
-    Ok(state)
+use flowgentra_ai::core::observability::{EventBroadcaster, ExecutionEvent};
+
+let broadcaster = EventBroadcaster::new(100); // buffer size
+let mut rx = broadcaster.subscribe();
+
+// In another task:
+while let Ok(event) = rx.recv().await {
+    match event {
+        ExecutionEvent::NodeStarted { name, .. } => println!("Starting: {}", name),
+        ExecutionEvent::NodeCompleted { name, duration, .. } => {
+            println!("{} took {:?}", name, duration);
+        }
+        ExecutionEvent::NodeFailed { name, error, .. } => {
+            eprintln!("{} failed: {}", name, error);
+        }
+        _ => {}
+    }
 }
 ```
 
-**Real-world example:** Customer email response generator
-- Agent drafts response: "OK" (score: 0.3 - too short!)
-- Auto-retry triggers
-- Agent drafts response: "Thank you for contacting us. I see your issue..." (score: 0.9 - good!)
-- Response sent
+### OpenTelemetry Export
+
+Export traces in OTLP format for Jaeger, Datadog, Honeycomb, etc.:
+
+```rust
+use flowgentra_ai::core::observability::otel::{trace_to_otel_spans, export_to_otlp};
+
+let spans = trace_to_otel_spans(&execution_trace);
+export_to_otlp("http://localhost:4318/v1/traces", &spans).await?;
+```
+
+### Execution Replay
+
+Step through past executions with full state snapshots:
+
+```rust
+use flowgentra_ai::core::observability::ReplayMode;
+
+let replay = ReplayMode::new(trace);
+let state_at_step_3 = replay.state_at(3);
+let diff = replay.diff_states(2, 3); // What changed between steps
+```
 
 ---
 
-## 🧠 Dynamic Planning (Planner Node)
+## Evaluation and Self-Correction
 
-**What's This?**  
-Instead of hardcoding which node runs next, ask the LLM to decide.
-
-**Why it matters:** Handle complex, unpredictable workflows
-
-### How It Works
-
-```
-State (current situation)
-    ↓
-LLM: "Based on this state, what should I do next?"
-    ↓
-Planner decides next node (can be anything)
-    ↓
-Execute that node
-    ↓
-Repeat (dynamic planning!)
-```
-
-### Example: Troubleshooting Agent
+Automatically grade agent output and retry when quality is low:
 
 ```yaml
-# config.yaml
+evaluation:
+  enabled: true
+  min_confidence: 0.8   # Retry if score < 80%
+  max_retries: 3
+  scoring:
+    metrics: [relevance, completeness, accuracy]
+    weights: [0.5, 0.3, 0.2]
+```
+
+---
+
+## Dynamic Planning
+
+Let the LLM decide what step to execute next based on current state:
+
+```yaml
 graph:
   planner:
     enabled: true
     max_plan_steps: 5
-    prompt_template: "You are a troubleshooting expert. Decide what to test next."
-  
-  nodes:
-    - name: power_check
-      handler: handlers::check_power
-    - name: connection_check
-      handler: handlers::check_connection
-    - name: software_check
-      handler: handlers::check_software
-  
-  edges:
-    - from: START
-      to: planner
-    - from: planner
-      to: [power_check, connection_check, software_check]
-    - from: power_check
-      to: planner
-    - from: connection_check
-      to: planner
-    - from: software_check
-      to: planner
-```
-
-**Agent reasoning:**
-1. "The device doesn't turn on..."
-2. "First, let me check power" → power_check
-3. "Power is fine. Let me check connection" → connection_check
-4. "Connection is fine. Let me check software" → software_check
-5. "Found the bug!  → END
-
-**No hardcoding needed!** The LLM adapts based on findings.
-
----
-
-## 🔧 Tools & MCP (Model Context Protocol)
-
-**What's This?**  
-Connect your agent to external tools, APIs, and services.
-
-**Two types:**
-
-### Local Tools
-Quick functions your agent calls directly.
-
-```rust
-let calculator = ToolSpec::new("calc", "Do math")
-    .with_parameter("expression", "string")
-    .required("expression");
-
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_tool(calculator)
-    .build()?;
-```
-
-### MCP Services (Remote)
-Connect to external services via HTTP, stdio, or Docker.
-
-```yaml
-# In config.yaml
-graph:
-  mcps:
-    web_search:
-      type: sse
-      url: "http://search-api.local:8000"
-      timeout: 30
-    
-    email_service:
-      type: stdio
-      command: "/usr/bin/email-handler"
-      timeout: 15
-    
-    nlp_api:
-      type: docker
-      image: "nlp-service:latest"
-      timeout: 60
-```
-
-```rust
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_mcp(web_search_mcp)
-    .with_mcp(email_service_mcp)
-    .build()?;
-
-// Agent automatically sees all available MCPs
-let response = agent.process(
-    "Search for Python 3.12 and email the results to me",
-    &state
-)?;
-// Agent calls both MCPs automatically!
+    prompt_template: |
+      Current state: {current_state}
+      Available actions: {available_nodes}
+      What should we do next?
 ```
 
 ---
 
-## 🔍 RAG (Retrieval-Augmented Generation)
+## Macros
 
-**What's This?**  
-Your agent searches your documents for context before answering.
+### #[node] Proc Macro
 
-**Why it matters:** Give LLM access to your company data without fine-tuning.
-
-### Three Steps
-
-1. **Upload** - Index your documents into vector store
-2. **Search** - Find relevant documents for each query
-3. **Augment** - Pass documents to LLM for better answers
-
-```yaml
-# In config.yaml
-rag:
-  enabled: true
-  vector_store:
-    type: pinecone
-    index: "my-docs"
-    api_key: ${PINECONE_API_KEY}
-  embedding_model: openai
-  retrieval:
-    top_k: 5
-    min_similarity: 0.7
-```
+Generate node factory functions from plain async functions:
 
 ```rust
-pub async fn answer_with_context(mut state: State) -> Result<State> {
-    let query = state.get_str("user_question")?;
-    
-    // Automatically retrieves relevant docs
-    let docs = rag.retrieve(query, 5).await?;
-    
-    // Build context
-    let context = docs.iter()
-        .map(|d| d.content.clone())
-        .collect::<Vec<_>>()
-        .join("\n---\n");
-    
-    // LLM uses context for better answer
-    let answer = llm.generate(format!(
-        "Context:\n{}\n\nQuestion: {}",
-        context, query
-    )).await?;
-    
-    state.set("answer", json!(answer));
+use flowgentra_ai_macros::node;
+
+#[node]
+async fn my_processor(state: PlainState) -> Result<PlainState> {
+    // your logic
     Ok(state)
 }
+
+// Generates: fn my_processor_node() -> impl Node<PlainState>
+let graph = StateGraphBuilder::new()
+    .add_node("processor", my_processor_node())
+    .compile()?;
 ```
 
-**Real-world example:** Internal knowledge base search
-- Employee: "What's our PTO policy?"
-- Agent retrieves policy document from RAG
-- Agent answers: "According to our policy, you get 20 days..."
+### #[register_handler]
 
----
-
-## 🏗️ Graph Compiler
-
-**What's This?**  
-Converts your YAML workflow into an optimized execution graph.
-
-**Why it matters:** Catches errors early, optimizes execution.
-
-### What It Does
-
-1. **Validates** - Checks all nodes and edges exist
-2. **Optimizes** - Finds parallel paths, removes redundancy
-3. **Compiles** - Builds execution plan
-
-```yaml
-# config.yaml - compiler validates this
-graph:
-  nodes:
-    - name: user_input
-      handler: handlers::capture_input
-    - name: analyze
-      handler: handlers::analyze
-    - name: generate
-      handler: handlers::generate_response
-  
-  edges:
-    - from: START
-      to: user_input
-    - from: user_input
-      to: analyze
-    - from: analyze
-      to: generate
-    - from: generate
-      to: END
-```
-
-Compiler checks:
-- ✅ All nodes referenced in edges exist
-- ✅ No orphaned nodes (nodes nothing points to)
-- ✅ START and END properly connected
-- ✅ No circular paths (unless intentional)
-- ✅ Parallel execution can be optimized
-
----
-
-## 📊 State Management
-
-**What's This?**  
-Pass data through your workflow. Think of it as the conversation context.
-
-**Three Ways to Use:**
-
-### 1. Document Your State Schema
-
-```yaml
-# In config.yaml
-state_schema:
-  user_input:
-    type: string
-    description: "What the user asked"
-  analysis:
-    type: object
-    description: "Results of analysis"
-  response:
-    type: string
-    description: "Final answer"
-```
-
-### 2. Access in Handlers
+Auto-register handlers for config-driven graph discovery:
 
 ```rust
-pub async fn my_handler(mut state: State) -> Result<State> {
-    // Read
-    let input = state.get_str("user_input")?;
-    let analysis = state.get("analysis")?;
-    
-    // Process
-    let result = process(&input);
-    
-    // Write
-    state.set("response", json!(result));
-    
+#[register_handler]
+pub async fn validate_input(state: State) -> Result<State> {
     Ok(state)
 }
+// Referenced in config.yaml as handler: "validate_input"
 ```
 
-### 3. Validate at Runtime
+### #[derive(State)]
 
-State schema enables validation to catch bugs early.
+Derive the State trait for custom types automatically.
+
+---
+
+## Infrastructure
+
+### Plugin System
+
+Extend the framework with custom lifecycle hooks:
 
 ```rust
-// Ensure required fields exist before executing
-state.validate()?;  // Checks against schema
+// Plugins can hook into: initialize, on_handler_start,
+// on_handler_end, on_error, shutdown
 ```
 
----
+### Middleware Pipeline
 
-## 📝 Complete Feature Checklist
+Composable middleware for cross-cutting concerns:
+- Logging
+- Caching (with TTL)
+- Rate limiting (RPM + burst)
+- Authentication
 
-- ✅ Predefined agents (ZeroShotReAct, FewShotReAct, Conversational)
-- ✅ Memory & checkpointing
-- ✅ Auto-evaluation & self-correction
-- ✅ Dynamic planning
-- ✅ Local tools
-- ✅ MCP services (SSE, Stdio, Docker)
-- ✅ RAG (vector stores)
-- ✅ Graph compiler
-- ✅ State management & validation
-- ✅ Multi-LLM support
-- ✅ Error handling & retry policies
-- ✅ Middleware pipeline
-- ✅ Health monitoring
-- ✅ Distributed tracing
+### Graph Validation
+
+The compiler validates your graph at build time:
+- All referenced nodes exist
+- No orphaned/unreachable nodes
+- START and END properly connected
+- Cycle detection (unless intentional)
 
 ---
 
-## 🚀 Next Steps
+## Complete Feature Checklist
 
-1. **Start simple:** Try a predefined agent first
-2. **Add memory:** Enable checkpointing for resumable workflows
-3. **Get smart:** Enable auto-evaluation for quality
-4. **Go dynamic:** Use planner for complex workflows
-5. **Connect:** Add tools and MCPs
-````
+### Graph Engine
+- [x] StateGraph builder with type-safe state
+- [x] Conditional routing (sync and async)
+- [x] Subgraph composition (SubgraphNode)
+- [x] Parallel execution with join strategies
+- [x] Graph export (DOT, Mermaid, JSON)
+- [x] Human-in-the-loop (interrupt/resume)
+- [x] Placeholder node detection
+- [x] MessageGraphBuilder (chat-focused graph wrapper)
+- [x] ToolNode (automatic tool call execution from state)
+- [x] tools_condition (route to tools or end based on tool calls)
+
+### State
+- [x] PlainState (owned) and SharedState (thread-safe)
+- [x] ScopedState (namespaced per node)
+- [x] JsonReducer with 7 strategies
+- [x] ReducerConfig for per-field merge control
+- [x] MergeStrategy (Default, Replace, Merge)
+
+### Agents
+- [x] ZeroShotReAct, FewShotReAct, Conversational
+- [x] Supervisor (multi-agent orchestration)
+
+### LLM
+- [x] 7 providers (OpenAI, Anthropic, Mistral, Groq, Azure, HuggingFace, Ollama)
+- [x] RetryLLMClient with exponential backoff
+- [x] CachedLLMClient (hash-based response caching)
+- [x] FallbackLLMClient (try multiple providers in order)
+- [x] Token counting and context window management
+- [x] Cost tracking with model pricing table
+- [x] Anthropic native tool calling (input_schema)
+- [x] HuggingFace real SSE streaming (TGI)
+- [x] Structured output (ResponseFormat: Text/Json/JsonSchema)
+- [x] PromptTemplate ({variable} interpolation, partial formatting)
+- [x] ChatPromptTemplate (multi-message prompt builder)
+- [x] FewShotPromptTemplate (prefix + examples + suffix)
+- [x] OutputParser trait (JsonOutputParser, ListOutputParser, StructuredOutputParser)
+
+### Tools and MCP
+- [x] Local tools (ToolSpec)
+- [x] MCP transports (SSE, Stdio, Docker)
+- [x] Reconnecting MCP client (auto-reconnect)
+- [x] MCP resources and prompts protocol
+
+### RAG
+- [x] PineconeStore (REST API)
+- [x] QdrantStore (REST API)
+- [x] ChromaStore
+- [x] InMemoryStore
+- [x] Text splitters (Recursive, Markdown, Code, HTML, Token)
+- [x] Retriever orchestrator (embed → search → rerank → dedup)
+- [x] Cross-encoder reranker (HuggingFace API)
+- [x] HuggingFace embeddings (Inference API + self-hosted TEI)
+- [x] OpenAI embeddings
+- [x] Mistral embeddings
+- [x] Ollama embeddings
+- [x] Cached embeddings (in-memory dedup)
+- [x] Document loaders (PDF, text, Markdown, JSON, CSV, HTML)
+- [x] Ingestion pipeline (load → split → embed → index)
+- [x] Hybrid search (semantic + BM25 keyword matching)
+- [x] Rerankers (RRF, LLM-based, cross-encoder, no-op)
+- [x] Deduplication (by ID, by similarity threshold)
+- [x] RAG evaluation (hit rate, MRR, NDCG)
+
+### Memory
+- [x] InMemoryCheckpointer
+- [x] FileCheckpointer (JSON on disk)
+- [x] Conversation memory with buffer window
+- [x] TokenBufferMemory (token-budget sliding window)
+- [x] SummaryMemory (LLM-based summarization of old messages)
+
+### Observability
+- [x] Event broadcaster (tokio broadcast channel)
+- [x] OpenTelemetry export (OTLP-compatible)
+- [x] Execution tracing and replay
+- [x] State snapshots at each step
+- [x] Configurable log levels
+
+### Macros
+- [x] #[node] (factory function generation)
+- [x] #[register_handler] (auto-registration)
+- [x] #[derive(State)]
+
+### Evaluation
+- [x] Auto-evaluation with quality scoring
+- [x] Self-correction with retry loop
+- [x] Configurable metrics and weights
+
+### Planning
+- [x] Dynamic LLM-driven step selection
+- [x] Adaptive workflows
+
+### Infrastructure
+- [x] Plugin system with lifecycle hooks
+- [x] Middleware pipeline (logging, cache, rate limit, auth)
+- [x] Graph validation and compilation

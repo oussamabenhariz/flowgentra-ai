@@ -58,8 +58,8 @@
 // - Children can be any node type: plain handlers, subgraph nodes, evaluation nodes, etc.
 // - Use `type: orchestrator` as an alias for backwards compatibility.
 
-use tracing::{info, warn, error};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
+use tracing::{error, info, warn};
 
 /// Evaluate a simple condition expression against a generic State.
 /// Supported forms: "key", "key == value", "key != value", "key == null", "key != null"
@@ -73,7 +73,9 @@ fn evaluate_condition<T: crate::core::state::State>(condition: &str, state: &T) 
         if rhs == "null" {
             return val.as_ref().map(|v| !v.is_null()).unwrap_or(false);
         }
-        return val.map(|v| v.to_string().trim_matches('"') != rhs).unwrap_or(true);
+        return val
+            .map(|v| v.to_string().trim_matches('"') != rhs)
+            .unwrap_or(true);
     }
     if condition.contains("==") {
         let parts: Vec<&str> = condition.splitn(2, "==").collect();
@@ -83,10 +85,13 @@ fn evaluate_condition<T: crate::core::state::State>(condition: &str, state: &T) 
         if rhs == "null" {
             return val.is_none() || val.as_ref().map(|v| v.is_null()).unwrap_or(true);
         }
-        return val.map(|v| v.to_string().trim_matches('"') == rhs).unwrap_or(false);
+        return val
+            .map(|v| v.to_string().trim_matches('"') == rhs)
+            .unwrap_or(false);
     }
     // Bare key: true if non-null and non-false
-    state.get(condition)
+    state
+        .get(condition)
         .map(|v| !v.is_null() && v.as_bool() != Some(false))
         .unwrap_or(false)
 }
@@ -99,9 +104,10 @@ pub enum ParallelAggregation {
 }
 
 /// Strategy for merging state from parallel child executions
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub enum ParallelMergeStrategy {
     /// Use the first successful child's state
+    #[default]
     FirstSuccess,
     /// Use the last successful child's state
     Latest,
@@ -109,12 +115,6 @@ pub enum ParallelMergeStrategy {
     DeepMerge,
     /// Custom merge strategy (placeholder for future plugins)
     Custom(String),
-}
-
-impl Default for ParallelMergeStrategy {
-    fn default() -> Self {
-        ParallelMergeStrategy::FirstSuccess
-    }
 }
 
 /// Per-child execution statistics collected when `collect_stats: true`
@@ -135,9 +135,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum OrchestrationStrategy {
     /// Children run one after another; state flows through each.
+    #[default]
     Sequential,
     /// All children run simultaneously on the same input; results are merged.
     Parallel,
@@ -163,11 +164,6 @@ pub enum OrchestrationStrategy {
     Custom(String),
 }
 
-impl Default for OrchestrationStrategy {
-    fn default() -> Self {
-        OrchestrationStrategy::Sequential
-    }
-}
 
 /// Configuration for the Supervisor node.
 /// Parsed from YAML via `from_node_config` or constructed programmatically.
@@ -283,12 +279,18 @@ pub type OrchestratorNodeConfig = SupervisorNodeConfig;
 
 impl SupervisorNodeConfig {
     /// Build from a NodeConfig (YAML deserialization target).
-    pub fn from_node_config(node: &crate::core::node::NodeConfig) -> crate::core::error::Result<Self> {
+    pub fn from_node_config(
+        node: &crate::core::node::NodeConfig,
+    ) -> crate::core::error::Result<Self> {
         let children: Vec<String> = node
             .config
             .get("children")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if children.is_empty() {
@@ -312,7 +314,9 @@ impl SupervisorNodeConfig {
             "hierarchical" => OrchestrationStrategy::Hierarchical,
             "broadcast" | "fan_out" | "fanout" => OrchestrationStrategy::Broadcast,
             "map_reduce" | "mapreduce" => OrchestrationStrategy::MapReduce,
-            "conditional_routing" | "conditional" | "routing" => OrchestrationStrategy::ConditionalRouting,
+            "conditional_routing" | "conditional" | "routing" => {
+                OrchestrationStrategy::ConditionalRouting
+            }
             "retry_fallback" | "retry" | "fallback" => OrchestrationStrategy::RetryFallback,
             "debate" | "critique" => OrchestrationStrategy::Debate,
             other => OrchestrationStrategy::Custom(other.to_string()),
@@ -353,12 +357,24 @@ impl SupervisorNodeConfig {
             })
             .unwrap_or_default();
 
-        let goal = node.config.get("goal").and_then(|v| v.as_str()).map(String::from);
-        let required_outputs: Vec<String> = node.config.get("required_outputs")
+        let goal = node
+            .config
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let required_outputs: Vec<String> = node
+            .config
+            .get("required_outputs")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
-        let output_owners: HashMap<String, String> = node.config.get("output_owners")
+        let output_owners: HashMap<String, String> = node
+            .config
+            .get("output_owners")
             .and_then(|v| v.as_object())
             .map(|obj| {
                 obj.iter()
@@ -366,17 +382,45 @@ impl SupervisorNodeConfig {
                     .collect()
             })
             .unwrap_or_default();
-        let max_iterations = node.config.get("max_iterations")
+        let max_iterations = node
+            .config
+            .get("max_iterations")
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as usize;
 
-        let selector_prompt = node.config.get("selector_prompt").and_then(|v| v.as_str()).map(String::from);
-        let tasks_key = node.config.get("tasks_key").and_then(|v| v.as_str()).map(String::from);
-        let selection_criteria = node.config.get("selection_criteria").and_then(|v| v.as_str()).map(String::from);
-        let score_key = node.config.get("score_key").and_then(|v| v.as_str()).map(String::from);
-        let map_key = node.config.get("map_key").and_then(|v| v.as_str()).map(String::from);
-        let reduce_key = node.config.get("reduce_key").and_then(|v| v.as_str()).map(String::from);
-        let routing_rules: HashMap<String, String> = node.config.get("routing_rules")
+        let selector_prompt = node
+            .config
+            .get("selector_prompt")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let tasks_key = node
+            .config
+            .get("tasks_key")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let selection_criteria = node
+            .config
+            .get("selection_criteria")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let score_key = node
+            .config
+            .get("score_key")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let map_key = node
+            .config
+            .get("map_key")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let reduce_key = node
+            .config
+            .get("reduce_key")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let routing_rules: HashMap<String, String> = node
+            .config
+            .get("routing_rules")
             .and_then(|v| v.as_object())
             .map(|obj| {
                 obj.iter()
@@ -384,14 +428,26 @@ impl SupervisorNodeConfig {
                     .collect()
             })
             .unwrap_or_default();
-        let fallback_order: Vec<String> = node.config.get("fallback_order")
+        let fallback_order: Vec<String> = node
+            .config
+            .get("fallback_order")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
-        let debate_rounds = node.config.get("debate_rounds")
+        let debate_rounds = node
+            .config
+            .get("debate_rounds")
             .and_then(|v| v.as_u64())
             .unwrap_or(2) as usize;
-        let debate_key = node.config.get("debate_key").and_then(|v| v.as_str()).map(String::from);
+        let debate_key = node
+            .config
+            .get("debate_key")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         Ok(SupervisorNodeConfig {
             name: node.name.clone(),
@@ -399,13 +455,29 @@ impl SupervisorNodeConfig {
             strategy,
             config: node.config.clone(),
             parallel_aggregation,
-            fail_fast: node.config.get("fail_fast").and_then(|v| v.as_bool()).unwrap_or(false),
+            fail_fast: node
+                .config
+                .get("fail_fast")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             child_timeout_ms: node.config.get("child_timeout_ms").and_then(|v| v.as_u64()),
             timeout_ms: node.config.get("timeout_ms").and_then(|v| v.as_u64()),
             merge_strategy,
-            collect_stats: node.config.get("collect_stats").and_then(|v| v.as_bool()).unwrap_or(true),
-            max_retries_per_child: node.config.get("max_retries_per_child").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-            max_concurrent: node.config.get("max_concurrent").and_then(|v| v.as_u64()).map(|v| v as usize),
+            collect_stats: node
+                .config
+                .get("collect_stats")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            max_retries_per_child: node
+                .config
+                .get("max_retries_per_child")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize,
+            max_concurrent: node
+                .config
+                .get("max_concurrent")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
             skip_conditions,
             goal,
             required_outputs,
@@ -511,7 +583,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let mut errors = Vec::new();
 
                 for child in &self.children {
-                    info!("Supervisor '{}': running child '{}'", self.config.name, child.name());
+                    info!(
+                        "Supervisor '{}': running child '{}'",
+                        self.config.name,
+                        child.name()
+                    );
                     let child_start = Instant::now();
                     let child_name = child.name().to_string();
 
@@ -530,7 +606,10 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                                 });
                             }
                             if !output.success {
-                                errors.push(format!("Child '{}' failed: {:?}", child_name, output.error));
+                                errors.push(format!(
+                                    "Child '{}' failed: {:?}",
+                                    child_name, output.error
+                                ));
                                 if self.config.fail_fast {
                                     warn!(
                                         "Supervisor '{}': fail_fast — stopping after '{}' failed",
@@ -542,7 +621,10 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                         }
                         Err(e) => {
                             let duration = child_start.elapsed().as_millis();
-                            warn!("Supervisor '{}': child '{}' error: {:?}", self.config.name, child_name, e);
+                            warn!(
+                                "Supervisor '{}': child '{}' error: {:?}",
+                                self.config.name, child_name, e
+                            );
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
                                     name: child_name.clone(),
@@ -574,7 +656,10 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                     orchestration_metadata.insert(
                         "errors".to_string(),
                         serde_json::Value::Array(
-                            errors.iter().map(|e| serde_json::Value::String(e.clone())).collect(),
+                            errors
+                                .iter()
+                                .map(|e| serde_json::Value::String(e.clone()))
+                                .collect(),
                         ),
                     );
                 }
@@ -584,7 +669,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                     state: current_state,
                     metadata: orchestration_metadata,
                     success: errors.is_empty(),
-                    error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+                    error: if errors.is_empty() {
+                        None
+                    } else {
+                        Some(errors.join("; "))
+                    },
                     execution_time_ms: elapsed,
                 })
             }
@@ -616,14 +705,12 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                     let timeout_dur = timeout_duration;
                     let state_copy = (*shared_state).clone();
                     (i, async move {
-                        let result =
-                            tokio::time::timeout(timeout_dur, child.run(state_copy)).await;
+                        let result = tokio::time::timeout(timeout_dur, child.run(state_copy)).await;
                         (i, result)
                     })
                 });
 
-                let results: Vec<_> =
-                    futures::future::join_all(futures.map(|(_, fut)| fut)).await;
+                let results: Vec<_> = futures::future::join_all(futures.map(|(_, fut)| fut)).await;
 
                 let mut per_child_metadata: HashMap<String, HashMap<String, serde_json::Value>> =
                     HashMap::new();
@@ -637,8 +724,7 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
 
                     match result {
                         Ok(Ok(output)) => {
-                            per_child_metadata
-                                .insert(child_name.clone(), output.metadata.clone());
+                            per_child_metadata.insert(child_name.clone(), output.metadata.clone());
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
                                     name: child_name.clone(),
@@ -746,7 +832,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                         state: final_state,
                         metadata: orchestration_metadata,
                         success: errors.is_empty(),
-                        error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+                        error: if errors.is_empty() {
+                            None
+                        } else {
+                            Some(errors.join("; "))
+                        },
                         execution_time_ms: elapsed,
                     }),
                     Majority => {
@@ -757,7 +847,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                                 state: final_state,
                                 metadata: orchestration_metadata,
                                 success: true,
-                                error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+                                error: if errors.is_empty() {
+                                    None
+                                } else {
+                                    Some(errors.join("; "))
+                                },
                                 execution_time_ms: elapsed,
                             })
                         } else {
@@ -781,12 +875,16 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
             OrchestrationStrategy::RoundRobin => {
                 // Distribute tasks from state array across children in rotation
                 let tasks_key = self.config.tasks_key.as_deref().unwrap_or("tasks");
-                let tasks: Vec<serde_json::Value> = state.get(tasks_key)
+                let tasks: Vec<serde_json::Value> = state
+                    .get(tasks_key)
                     .and_then(|v| v.as_array().cloned())
                     .unwrap_or_default();
 
                 if tasks.is_empty() {
-                    warn!("SupervisorNode '{}': round_robin — no tasks found at key '{}'", self.config.name, tasks_key);
+                    warn!(
+                        "SupervisorNode '{}': round_robin — no tasks found at key '{}'",
+                        self.config.name, tasks_key
+                    );
                     let elapsed = start.elapsed().as_millis();
                     return Ok(NodeOutput {
                         state,
@@ -820,8 +918,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             current_state = output.state;
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: duration,
-                                    success: output.success, error: output.error, timeout: false,
+                                    name: child_name,
+                                    duration_ms: duration,
+                                    success: output.success,
+                                    error: output.error,
+                                    timeout: false,
                                 });
                             }
                         }
@@ -829,11 +930,16 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             let duration = child_start.elapsed().as_millis();
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: duration,
-                                    success: false, error: Some(format!("{:?}", e)), timeout: false,
+                                    name: child_name,
+                                    duration_ms: duration,
+                                    success: false,
+                                    error: Some(format!("{:?}", e)),
+                                    timeout: false,
                                 });
                             }
-                            if self.config.fail_fast { break; }
+                            if self.config.fail_fast {
+                                break;
+                            }
                         }
                     }
                 }
@@ -842,17 +948,25 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let elapsed = start.elapsed().as_millis();
                 let mut metadata = HashMap::new();
                 if self.config.collect_stats {
-                    metadata.insert("stats".to_string(), serde_json::to_value(&child_stats).unwrap_or_default());
+                    metadata.insert(
+                        "stats".to_string(),
+                        serde_json::to_value(&child_stats).unwrap_or_default(),
+                    );
                 }
                 Ok(NodeOutput {
-                    state: current_state, metadata,
-                    success: true, error: None, execution_time_ms: elapsed,
+                    state: current_state,
+                    metadata,
+                    success: true,
+                    error: None,
+                    execution_time_ms: elapsed,
                 })
             }
 
             OrchestrationStrategy::Broadcast => {
                 // Send same task to all children, pick best result
-                let timeout_duration = self.config.child_timeout_ms
+                let timeout_duration = self
+                    .config
+                    .child_timeout_ms
                     .map(Duration::from_millis)
                     .unwrap_or(Duration::from_secs(300));
 
@@ -868,7 +982,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
 
                 let results: Vec<_> = futures::future::join_all(futures).await;
                 let score_key = self.config.score_key.as_deref().unwrap_or("__score__");
-                let criteria = self.config.selection_criteria.as_deref().unwrap_or("first_success");
+                let criteria = self
+                    .config
+                    .selection_criteria
+                    .as_deref()
+                    .unwrap_or("first_success");
 
                 let mut successes: Vec<(String, NodeOutput<T>)> = Vec::new();
                 let mut child_stats: Vec<ChildExecutionStats> = Vec::new();
@@ -878,8 +996,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                         Ok(Ok(output)) if output.success => {
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: name.clone(), duration_ms: output.execution_time_ms,
-                                    success: true, error: None, timeout: false,
+                                    name: name.clone(),
+                                    duration_ms: output.execution_time_ms,
+                                    success: true,
+                                    error: None,
+                                    timeout: false,
                                 });
                             }
                             successes.push((name, output));
@@ -887,24 +1008,33 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                         Ok(Ok(output)) => {
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name, duration_ms: output.execution_time_ms,
-                                    success: false, error: output.error, timeout: false,
+                                    name,
+                                    duration_ms: output.execution_time_ms,
+                                    success: false,
+                                    error: output.error,
+                                    timeout: false,
                                 });
                             }
                         }
                         Ok(Err(e)) => {
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name, duration_ms: 0, success: false,
-                                    error: Some(format!("{:?}", e)), timeout: false,
+                                    name,
+                                    duration_ms: 0,
+                                    success: false,
+                                    error: Some(format!("{:?}", e)),
+                                    timeout: false,
                                 });
                             }
                         }
                         Err(_) => {
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name, duration_ms: 0, success: false,
-                                    error: Some("Timeout".to_string()), timeout: true,
+                                    name,
+                                    duration_ms: 0,
+                                    success: false,
+                                    error: Some("Timeout".to_string()),
+                                    timeout: true,
                                 });
                             }
                         }
@@ -914,41 +1044,57 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let elapsed = start.elapsed().as_millis();
                 let mut metadata = HashMap::new();
                 if self.config.collect_stats {
-                    metadata.insert("stats".to_string(), serde_json::to_value(&child_stats).unwrap_or_default());
+                    metadata.insert(
+                        "stats".to_string(),
+                        serde_json::to_value(&child_stats).unwrap_or_default(),
+                    );
                 }
 
                 if successes.is_empty() {
                     return Ok(NodeOutput {
-                        state: (*shared_state).clone(), metadata,
-                        success: false, error: Some("Broadcast: no agent succeeded".to_string()),
+                        state: (*shared_state).clone(),
+                        metadata,
+                        success: false,
+                        error: Some("Broadcast: no agent succeeded".to_string()),
                         execution_time_ms: elapsed,
                     });
                 }
 
                 let winner = match criteria {
-                    "highest_score" => {
-                        successes.into_iter().max_by(|(_, a), (_, b)| {
-                            let score_a = a.state.get(score_key)
-                                .and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let score_b = b.state.get(score_key)
-                                .and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                    }
-                    _ => successes.into_iter().next().map(|s| s),
+                    "highest_score" => successes.into_iter().max_by(|(_, a), (_, b)| {
+                        let score_a = a
+                            .state
+                            .get(score_key)
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        let score_b = b
+                            .state
+                            .get(score_key)
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        score_a
+                            .partial_cmp(&score_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    }),
+                    _ => successes.into_iter().next(),
                 };
 
                 match winner {
                     Some((name, output)) => {
                         metadata.insert("winner".to_string(), serde_json::json!(name));
                         Ok(NodeOutput {
-                            state: output.state, metadata,
-                            success: true, error: None, execution_time_ms: elapsed,
+                            state: output.state,
+                            metadata,
+                            success: true,
+                            error: None,
+                            execution_time_ms: elapsed,
                         })
                     }
                     None => Ok(NodeOutput {
-                        state: (*shared_state).clone(), metadata,
-                        success: false, error: Some("Broadcast: no winner selected".to_string()),
+                        state: (*shared_state).clone(),
+                        metadata,
+                        success: false,
+                        error: Some("Broadcast: no winner selected".to_string()),
                         execution_time_ms: elapsed,
                     }),
                 }
@@ -975,8 +1121,10 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 if selected_child.is_none() && !self.children.is_empty() {
                     selected_child = Some(&self.children[0]);
                     selected_name = self.config.children[0].clone();
-                    info!("SupervisorNode '{}': no routing rule matched, using default '{}'",
-                        self.config.name, selected_name);
+                    info!(
+                        "SupervisorNode '{}': no routing rule matched, using default '{}'",
+                        self.config.name, selected_name
+                    );
                 }
 
                 let elapsed = start.elapsed().as_millis();
@@ -986,14 +1134,18 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                         let mut metadata = result.metadata.clone();
                         metadata.insert("routed_to".to_string(), serde_json::json!(selected_name));
                         Ok(NodeOutput {
-                            state: result.state, metadata,
-                            success: result.success, error: result.error,
+                            state: result.state,
+                            metadata,
+                            success: result.success,
+                            error: result.error,
                             execution_time_ms: elapsed,
                         })
                     }
                     None => Ok(NodeOutput {
-                        state, metadata: HashMap::new(),
-                        success: false, error: Some("ConditionalRouting: no children available".to_string()),
+                        state,
+                        metadata: HashMap::new(),
+                        success: false,
+                        error: Some("ConditionalRouting: no children available".to_string()),
                         execution_time_ms: elapsed,
                     }),
                 }
@@ -1002,7 +1154,9 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
             OrchestrationStrategy::RetryFallback => {
                 // Try agents in order until one succeeds
                 let order: Vec<usize> = if !self.config.fallback_order.is_empty() {
-                    self.config.fallback_order.iter()
+                    self.config
+                        .fallback_order
+                        .iter()
                         .filter_map(|name| self.config.children.iter().position(|c| c == name))
                         .collect()
                 } else {
@@ -1022,40 +1176,66 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             let duration = child_start.elapsed().as_millis();
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name.clone(), duration_ms: duration,
-                                    success: true, error: None, timeout: false,
+                                    name: child_name.clone(),
+                                    duration_ms: duration,
+                                    success: true,
+                                    error: None,
+                                    timeout: false,
                                 });
                             }
                             let elapsed = start.elapsed().as_millis();
                             let mut metadata = output.metadata.clone();
-                            metadata.insert("succeeded_agent".to_string(), serde_json::json!(child_name));
+                            metadata.insert(
+                                "succeeded_agent".to_string(),
+                                serde_json::json!(child_name),
+                            );
                             if self.config.collect_stats {
-                                metadata.insert("stats".to_string(), serde_json::to_value(&child_stats).unwrap_or_default());
+                                metadata.insert(
+                                    "stats".to_string(),
+                                    serde_json::to_value(&child_stats).unwrap_or_default(),
+                                );
                             }
                             return Ok(NodeOutput {
-                                state: output.state, metadata,
-                                success: true, error: None, execution_time_ms: elapsed,
+                                state: output.state,
+                                metadata,
+                                success: true,
+                                error: None,
+                                execution_time_ms: elapsed,
                             });
                         }
                         Ok(output) => {
                             let duration = child_start.elapsed().as_millis();
-                            last_error = output.error.unwrap_or_else(|| "unknown failure".to_string());
-                            warn!("SupervisorNode '{}': fallback '{}' failed: {}", self.config.name, child_name, last_error);
+                            last_error = output
+                                .error
+                                .unwrap_or_else(|| "unknown failure".to_string());
+                            warn!(
+                                "SupervisorNode '{}': fallback '{}' failed: {}",
+                                self.config.name, child_name, last_error
+                            );
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: duration,
-                                    success: false, error: Some(last_error.clone()), timeout: false,
+                                    name: child_name,
+                                    duration_ms: duration,
+                                    success: false,
+                                    error: Some(last_error.clone()),
+                                    timeout: false,
                                 });
                             }
                         }
                         Err(e) => {
                             let duration = child_start.elapsed().as_millis();
                             last_error = format!("{:?}", e);
-                            warn!("SupervisorNode '{}': fallback '{}' error: {}", self.config.name, child_name, last_error);
+                            warn!(
+                                "SupervisorNode '{}': fallback '{}' error: {}",
+                                self.config.name, child_name, last_error
+                            );
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: duration,
-                                    success: false, error: Some(last_error.clone()), timeout: false,
+                                    name: child_name,
+                                    duration_ms: duration,
+                                    success: false,
+                                    error: Some(last_error.clone()),
+                                    timeout: false,
                                 });
                             }
                         }
@@ -1065,12 +1245,19 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let elapsed = start.elapsed().as_millis();
                 let mut metadata = HashMap::new();
                 if self.config.collect_stats {
-                    metadata.insert("stats".to_string(), serde_json::to_value(&child_stats).unwrap_or_default());
+                    metadata.insert(
+                        "stats".to_string(),
+                        serde_json::to_value(&child_stats).unwrap_or_default(),
+                    );
                 }
                 Ok(NodeOutput {
-                    state, metadata,
+                    state,
+                    metadata,
                     success: false,
-                    error: Some(format!("RetryFallback: all agents failed. Last error: {}", last_error)),
+                    error: Some(format!(
+                        "RetryFallback: all agents failed. Last error: {}",
+                        last_error
+                    )),
                     execution_time_ms: elapsed,
                 })
             }
@@ -1078,18 +1265,29 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
             OrchestrationStrategy::MapReduce => {
                 // Split input array, process in parallel, merge results
                 let map_key = self.config.map_key.as_deref().unwrap_or("input_chunks");
-                let reduce_key = self.config.reduce_key.as_deref().unwrap_or("reduced_output");
+                let reduce_key = self
+                    .config
+                    .reduce_key
+                    .as_deref()
+                    .unwrap_or("reduced_output");
 
-                let chunks: Vec<serde_json::Value> = state.get(map_key)
+                let chunks: Vec<serde_json::Value> = state
+                    .get(map_key)
                     .and_then(|v| v.as_array().cloned())
                     .unwrap_or_default();
 
                 if chunks.is_empty() {
-                    warn!("SupervisorNode '{}': map_reduce — no data at key '{}'", self.config.name, map_key);
+                    warn!(
+                        "SupervisorNode '{}': map_reduce — no data at key '{}'",
+                        self.config.name, map_key
+                    );
                     let elapsed = start.elapsed().as_millis();
                     return Ok(NodeOutput {
-                        state, metadata: HashMap::new(),
-                        success: true, error: None, execution_time_ms: elapsed,
+                        state,
+                        metadata: HashMap::new(),
+                        success: true,
+                        error: None,
+                        execution_time_ms: elapsed,
                     });
                 }
 
@@ -1128,8 +1326,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             }
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: output.execution_time_ms,
-                                    success: output.success, error: output.error, timeout: false,
+                                    name: child_name,
+                                    duration_ms: output.execution_time_ms,
+                                    success: output.success,
+                                    error: output.error,
+                                    timeout: false,
                                 });
                             }
                         }
@@ -1138,8 +1339,11 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             errors.push(format!("Chunk {}: {:?}", i, e));
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: 0,
-                                    success: false, error: Some(format!("{:?}", e)), timeout: false,
+                                    name: child_name,
+                                    duration_ms: 0,
+                                    success: false,
+                                    error: Some(format!("{:?}", e)),
+                                    timeout: false,
                                 });
                             }
                         }
@@ -1152,26 +1356,43 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let mut metadata = HashMap::new();
                 metadata.insert("chunk_count".to_string(), serde_json::json!(chunks.len()));
                 if self.config.collect_stats {
-                    metadata.insert("stats".to_string(), serde_json::to_value(&child_stats).unwrap_or_default());
+                    metadata.insert(
+                        "stats".to_string(),
+                        serde_json::to_value(&child_stats).unwrap_or_default(),
+                    );
                 }
                 Ok(NodeOutput {
-                    state: final_state, metadata,
+                    state: final_state,
+                    metadata,
                     success: errors.is_empty(),
-                    error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+                    error: if errors.is_empty() {
+                        None
+                    } else {
+                        Some(errors.join("; "))
+                    },
                     execution_time_ms: elapsed,
                 })
             }
 
             OrchestrationStrategy::Debate => {
                 // Multiple agents generate responses, then critique each other
-                let rounds = if self.config.debate_rounds == 0 { 2 } else { self.config.debate_rounds };
+                let rounds = if self.config.debate_rounds == 0 {
+                    2
+                } else {
+                    self.config.debate_rounds
+                };
                 let _debate_key = self.config.debate_key.as_deref().unwrap_or("debate_topic");
 
                 let mut current_state = state;
                 let mut debate_log: Vec<serde_json::Value> = Vec::new();
 
                 for round in 0..rounds {
-                    info!("SupervisorNode '{}': debate round {}/{}", self.config.name, round + 1, rounds);
+                    info!(
+                        "SupervisorNode '{}': debate round {}/{}",
+                        self.config.name,
+                        round + 1,
+                        rounds
+                    );
                     let mut round_responses: Vec<serde_json::Value> = Vec::new();
 
                     // Each agent generates a response
@@ -1186,7 +1407,9 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
 
                         match child.run(current_state.clone()).await {
                             Ok(output) => {
-                                let response = output.state.get("__debate_response__")
+                                let response = output
+                                    .state
+                                    .get("__debate_response__")
                                     .unwrap_or(serde_json::json!(null));
                                 round_responses.push(serde_json::json!({
                                     "agent": child_name,
@@ -1204,7 +1427,10 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                     }
 
                     // Store all responses for this round so next round can critique
-                    current_state.set("__debate_current_responses__", serde_json::json!(round_responses.clone()));
+                    current_state.set(
+                        "__debate_current_responses__",
+                        serde_json::json!(round_responses.clone()),
+                    );
                     debate_log.push(serde_json::json!({
                         "round": round + 1,
                         "responses": round_responses,
@@ -1215,11 +1441,16 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let elapsed = start.elapsed().as_millis();
                 let mut metadata = HashMap::new();
                 metadata.insert("debate_rounds".to_string(), serde_json::json!(rounds));
-                metadata.insert("participants".to_string(),
-                    serde_json::json!(self.config.children));
+                metadata.insert(
+                    "participants".to_string(),
+                    serde_json::json!(self.config.children),
+                );
                 Ok(NodeOutput {
-                    state: current_state, metadata,
-                    success: true, error: None, execution_time_ms: elapsed,
+                    state: current_state,
+                    metadata,
+                    success: true,
+                    error: None,
+                    execution_time_ms: elapsed,
                 })
             }
 
@@ -1233,7 +1464,10 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 for child in &self.children {
                     let child_name = child.name().to_string();
                     let child_start = Instant::now();
-                    info!("SupervisorNode '{}': hierarchical delegation to '{}'", self.config.name, child_name);
+                    info!(
+                        "SupervisorNode '{}': hierarchical delegation to '{}'",
+                        self.config.name, child_name
+                    );
 
                     match child.run(current_state.clone()).await {
                         Ok(output) => {
@@ -1241,13 +1475,21 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             current_state = output.state;
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name.clone(), duration_ms: duration,
-                                    success: output.success, error: output.error.clone(), timeout: false,
+                                    name: child_name.clone(),
+                                    duration_ms: duration,
+                                    success: output.success,
+                                    error: output.error.clone(),
+                                    timeout: false,
                                 });
                             }
                             if !output.success {
-                                errors.push(format!("Sub-supervisor '{}' failed: {:?}", child_name, output.error));
-                                if self.config.fail_fast { break; }
+                                errors.push(format!(
+                                    "Sub-supervisor '{}' failed: {:?}",
+                                    child_name, output.error
+                                ));
+                                if self.config.fail_fast {
+                                    break;
+                                }
                             }
                         }
                         Err(e) => {
@@ -1255,11 +1497,16 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                             errors.push(format!("Sub-supervisor '{}' error: {:?}", child_name, e));
                             if self.config.collect_stats {
                                 child_stats.push(ChildExecutionStats {
-                                    name: child_name, duration_ms: duration,
-                                    success: false, error: Some(format!("{:?}", e)), timeout: false,
+                                    name: child_name,
+                                    duration_ms: duration,
+                                    success: false,
+                                    error: Some(format!("{:?}", e)),
+                                    timeout: false,
                                 });
                             }
-                            if self.config.fail_fast { break; }
+                            if self.config.fail_fast {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1267,12 +1514,20 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                 let elapsed = start.elapsed().as_millis();
                 let mut metadata = HashMap::new();
                 if self.config.collect_stats {
-                    metadata.insert("stats".to_string(), serde_json::to_value(&child_stats).unwrap_or_default());
+                    metadata.insert(
+                        "stats".to_string(),
+                        serde_json::to_value(&child_stats).unwrap_or_default(),
+                    );
                 }
                 Ok(NodeOutput {
-                    state: current_state, metadata,
+                    state: current_state,
+                    metadata,
                     success: errors.is_empty(),
-                    error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+                    error: if errors.is_empty() {
+                        None
+                    } else {
+                        Some(errors.join("; "))
+                    },
                     execution_time_ms: elapsed,
                 })
             }
@@ -1295,13 +1550,20 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                     state,
                     metadata: {
                         let mut m = HashMap::new();
-                        m.insert("warning".to_string(), serde_json::json!(format!(
-                            "{} strategy requires create_supervisor_handler from agent/mod.rs", strategy_name
-                        )));
+                        m.insert(
+                            "warning".to_string(),
+                            serde_json::json!(format!(
+                                "{} strategy requires create_supervisor_handler from agent/mod.rs",
+                                strategy_name
+                            )),
+                        );
                         m
                     },
                     success: false,
-                    error: Some(format!("{} strategy not supported via PluggableNode path", strategy_name)),
+                    error: Some(format!(
+                        "{} strategy not supported via PluggableNode path",
+                        strategy_name
+                    )),
                     execution_time_ms: elapsed,
                 })
             }

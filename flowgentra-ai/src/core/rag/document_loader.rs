@@ -96,7 +96,7 @@ fn strip_markdown(md: &str) -> String {
         cleaned = cleaned.trim_start_matches('#').to_string();
         // Strip bold/italic
         cleaned = cleaned.replace("**", "").replace("__", "");
-        cleaned = cleaned.replace('*', "").replace('_', "");
+        cleaned = cleaned.replace(['*', '_'], "");
         // Strip inline code
         cleaned = cleaned.replace('`', "");
         // Strip link syntax [text](url) → text
@@ -149,11 +149,9 @@ pub async fn load_document(path: impl AsRef<Path>) -> Result<LoadedDocument, Vec
                 .map_err(|e| VectorStoreError::Unknown(format!("Failed to read file: {}", e)))?;
             strip_markdown(&raw)
         }
-        FileType::PlainText | FileType::Unknown => {
-            tokio::fs::read_to_string(path)
-                .await
-                .map_err(|e| VectorStoreError::Unknown(format!("Failed to read file: {}", e)))?
-        }
+        FileType::PlainText | FileType::Unknown => tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| VectorStoreError::Unknown(format!("Failed to read file: {}", e)))?,
     };
 
     Ok(LoadedDocument {
@@ -207,11 +205,20 @@ mod tests {
 
     #[test]
     fn test_file_type_detection() {
-        assert_eq!(FileType::from_path(Path::new("doc.txt")), FileType::PlainText);
-        assert_eq!(FileType::from_path(Path::new("readme.md")), FileType::Markdown);
+        assert_eq!(
+            FileType::from_path(Path::new("doc.txt")),
+            FileType::PlainText
+        );
+        assert_eq!(
+            FileType::from_path(Path::new("readme.md")),
+            FileType::Markdown
+        );
         assert_eq!(FileType::from_path(Path::new("page.html")), FileType::Html);
         assert_eq!(FileType::from_path(Path::new("report.pdf")), FileType::Pdf);
-        assert_eq!(FileType::from_path(Path::new("data.csv")), FileType::Unknown);
+        assert_eq!(
+            FileType::from_path(Path::new("data.csv")),
+            FileType::Unknown
+        );
     }
 
     #[test]

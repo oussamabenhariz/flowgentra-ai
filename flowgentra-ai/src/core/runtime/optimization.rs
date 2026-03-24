@@ -51,23 +51,22 @@ impl<T: State> OptimizedState<T> {
     }
 }
 
-
-    impl<T: State> AsRef<T> for OptimizedState<T> {
-        fn as_ref(&self) -> &T {
-            &self.inner
-        }
+impl<T: State> AsRef<T> for OptimizedState<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner
     }
+}
 
-    impl<T: State> AsMut<T> for OptimizedState<T> {
-        fn as_mut(&mut self) -> &mut T {
-            if Arc::strong_count(&self.inner) > 1 {
-                // Clone-on-write: make a private copy before mutating
-                let state = self.inner.as_ref().clone();
-                self.inner = Arc::new(state);
-            }
-            Arc::get_mut(&mut self.inner).expect("BUG: Arc strong_count should be 1 after CoW clone")
+impl<T: State> AsMut<T> for OptimizedState<T> {
+    fn as_mut(&mut self) -> &mut T {
+        if Arc::strong_count(&self.inner) > 1 {
+            // Clone-on-write: make a private copy before mutating
+            let state = self.inner.as_ref().clone();
+            self.inner = Arc::new(state);
         }
+        Arc::get_mut(&mut self.inner).expect("BUG: Arc strong_count should be 1 after CoW clone")
     }
+}
 
 /// Statistics for tracking cloning efficiency
 #[derive(Debug, Clone, Default)]

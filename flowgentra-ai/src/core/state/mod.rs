@@ -8,7 +8,7 @@ pub trait ValidateState {
     fn validate(&self) -> Result<(), String>;
 }
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Trait for state types used throughout the framework.
 ///
@@ -57,7 +57,9 @@ pub trait State: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + '
     /// Convert from JSON value
     fn from_json(value: Value) -> crate::core::error::Result<Self> {
         let _ = value;
-        Err(crate::core::error::FlowgentraError::StateError("from_json not implemented".to_string()))
+        Err(crate::core::error::FlowgentraError::StateError(
+            "from_json not implemented".to_string(),
+        ))
     }
 
     /// Merge another state into this one
@@ -89,7 +91,9 @@ pub trait State: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + '
 
     /// Convert to JSON string
     fn to_json_string(&self) -> crate::core::error::Result<String> {
-        Err(crate::core::error::FlowgentraError::StateError("to_json_string not implemented".to_string()))
+        Err(crate::core::error::FlowgentraError::StateError(
+            "to_json_string not implemented".to_string(),
+        ))
     }
 
     /// Get all key-value pairs as a map - for iteration/merging
@@ -112,7 +116,9 @@ pub struct StateUpdate<T: State> {
 
 impl<T: State> StateUpdate<T> {
     pub fn new() -> Self {
-        Self { _phantom: std::marker::PhantomData }
+        Self {
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
@@ -231,8 +237,7 @@ impl PlainState {
                 ))
             })
             .and_then(|v| {
-                serde_json::from_value(v.clone())
-                    .map_err(crate::core::error::FlowgentraError::from)
+                serde_json::from_value(v.clone()).map_err(crate::core::error::FlowgentraError::from)
             })
     }
 
@@ -392,7 +397,10 @@ impl State for PlainState {
     }
 
     fn as_map(&self) -> Vec<(String, Value)> {
-        self.data.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        self.data
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     fn get_str(&self, key: &str) -> Option<&str> {
@@ -426,12 +434,12 @@ pub mod state_management;
 pub use state_management::{CompressionManager, CustomState, MessageHistory};
 
 // New modules and re-exports
-pub mod typed;
 pub mod state_ext;
+pub mod typed;
 
 // Re-export only necessary types
-pub use typed::{StateExt, TypedState};
 pub use state_ext::StateExtMethods;
+pub use typed::{StateExt, TypedState};
 
 // =============================================================================
 // Type Alias: State = SharedState (Default)

@@ -29,19 +29,19 @@
 //! ```
 
 // Module declarations
+pub mod docker;
 pub mod factory;
 pub mod sse;
 pub mod stdio;
-pub mod docker;
 
 // Re-exports for convenience
+pub use docker::{
+    ContainerState, ContainerStatus, DockerConfig, DockerConnection, DockerConnectionBuilder,
+};
 pub use factory::MCPClientFactory;
 pub use sse::{SSEConnection, SSEMessage, SSEResponse, SSEStatus, SSEStreamReceiver};
 pub use stdio::{
-    StdioConnection, StdioConnectionBuilder, JsonRpcRequest, JsonRpcResponse, JsonRpcError,
-};
-pub use docker::{
-    DockerConnection, DockerConnectionBuilder, DockerConfig, ContainerStatus, ContainerState,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, StdioConnection, StdioConnectionBuilder,
 };
 
 use crate::core::error::{FlowgentraError, Result};
@@ -143,7 +143,9 @@ impl MCPConfig {
         match self.connection_type {
             MCPConnectionType::Sse => {
                 if self.uri.is_empty() {
-                    return Err(FlowgentraError::MCPError("SSE connection requires a URI".into()));
+                    return Err(FlowgentraError::MCPError(
+                        "SSE connection requires a URI".into(),
+                    ));
                 }
                 if !self.uri.starts_with("http") {
                     return Err(FlowgentraError::MCPError(
@@ -305,9 +307,9 @@ impl MCPConfigBuilder {
         let name = self
             .name
             .ok_or_else(|| FlowgentraError::ConfigError("MCP name is required".into()))?;
-        let connection_type = self
-            .connection_type
-            .ok_or_else(|| FlowgentraError::ConfigError("MCP connection type is required".into()))?;
+        let connection_type = self.connection_type.ok_or_else(|| {
+            FlowgentraError::ConfigError("MCP connection type is required".into())
+        })?;
         let uri = self.uri.unwrap_or_default();
 
         let mut connection_settings = MCPConnectionSettings::default();
@@ -600,13 +602,19 @@ pub fn apply_tool_filters(
     if let Some(include) = include {
         let suffixes: Vec<String> = include.iter().map(|i| format!(".{}", i)).collect();
         result.retain(|t| {
-            include.iter().zip(&suffixes).any(|(i, suf)| t.name == *i || t.name.ends_with(suf))
+            include
+                .iter()
+                .zip(&suffixes)
+                .any(|(i, suf)| t.name == *i || t.name.ends_with(suf))
         });
     }
     if let Some(exclude) = exclude {
         let suffixes: Vec<String> = exclude.iter().map(|e| format!(".{}", e)).collect();
         result.retain(|t| {
-            !exclude.iter().zip(&suffixes).any(|(e, suf)| t.name == *e || t.name.ends_with(suf))
+            !exclude
+                .iter()
+                .zip(&suffixes)
+                .any(|(e, suf)| t.name == *e || t.name.ends_with(suf))
         });
     }
 
@@ -624,15 +632,27 @@ fn apply_auth(config: &MCPConfig, req: reqwest::RequestBuilder) -> reqwest::Requ
                 req
             }
             "api_key" => {
-                let header = auth.credentials.get("header").map(|s| s.as_str()).unwrap_or("X-API-Key");
+                let header = auth
+                    .credentials
+                    .get("header")
+                    .map(|s| s.as_str())
+                    .unwrap_or("X-API-Key");
                 if let Some(key) = auth.credentials.get("key") {
                     return req.header(header, key);
                 }
                 req
             }
             "basic" => {
-                let user = auth.credentials.get("username").cloned().unwrap_or_default();
-                let pass = auth.credentials.get("password").cloned().unwrap_or_default();
+                let user = auth
+                    .credentials
+                    .get("username")
+                    .cloned()
+                    .unwrap_or_default();
+                let pass = auth
+                    .credentials
+                    .get("password")
+                    .cloned()
+                    .unwrap_or_default();
                 req.basic_auth(user, Some(pass))
             }
             _ => {
@@ -679,7 +699,10 @@ impl DefaultMCPClient {
     /// Create new MCP client with given configuration
     pub fn new(config: MCPConfig) -> Self {
         let general = config.connection_settings.timeout.unwrap_or(30);
-        let connect = config.connection_settings.connect_timeout.unwrap_or(general);
+        let connect = config
+            .connection_settings
+            .connect_timeout
+            .unwrap_or(general);
         let call = config.connection_settings.call_timeout.unwrap_or(general);
 
         DefaultMCPClient {
@@ -696,7 +719,6 @@ impl DefaultMCPClient {
     pub fn config(&self) -> &MCPConfig {
         &self.config
     }
-
 }
 
 #[async_trait::async_trait]
@@ -715,9 +737,10 @@ impl MCPClient for DefaultMCPClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(classify_http_status(status, &format!(
-                "MCP server returned {}: {}", status, body
-            )));
+            return Err(classify_http_status(
+                status,
+                &format!("MCP server returned {}: {}", status, body),
+            ));
         }
 
         let tools: Vec<MCPTool> = response.json().await.map_err(|e| {
@@ -746,7 +769,8 @@ impl MCPClient for DefaultMCPClient {
         // Enforce tool_exclude at call time
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration", tool_name
+                "Tool '{}' is excluded by configuration",
+                tool_name
             )));
         }
 
@@ -762,21 +786,19 @@ impl MCPClient for DefaultMCPClient {
 
             let url = format!("{}/call", self.config.uri);
             let req = apply_auth(&self.config, self.client.post(&url).json(&payload));
-            let response = req
-                .send()
-                .await
-                .map_err(|e| {
-                    let err_msg = format!("Failed to call MCP tool '{}': {}", tool_name, e);
-                    tracing::error!(tool = %tool_name, error = %e, "MCP call failed");
-                    classify_reqwest_error(err_msg, &e)
-                })?;
+            let response = req.send().await.map_err(|e| {
+                let err_msg = format!("Failed to call MCP tool '{}': {}", tool_name, e);
+                tracing::error!(tool = %tool_name, error = %e, "MCP call failed");
+                classify_reqwest_error(err_msg, &e)
+            })?;
 
             if !response.status().is_success() {
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
-                return Err(classify_http_status(status, &format!(
-                    "MCP tool '{}' returned {}: {}", tool_name, status, body
-                )));
+                return Err(classify_http_status(
+                    status,
+                    &format!("MCP tool '{}' returned {}: {}", tool_name, status, body),
+                ));
             }
 
             let result = response.json().await.map_err(|e| {
@@ -788,7 +810,9 @@ impl MCPClient for DefaultMCPClient {
             tracing::debug!("MCP tool call completed");
             Ok(result)
         }
-        .instrument(tracing::info_span!("mcp_call_tool", mcp = %self.config.name, tool = %tool_name))
+        .instrument(
+            tracing::info_span!("mcp_call_tool", mcp = %self.config.name, tool = %tool_name),
+        )
         .await
     }
 
@@ -796,16 +820,18 @@ impl MCPClient for DefaultMCPClient {
         let url = format!("{}/resources", self.config.uri);
         let req = apply_auth(&self.config, self.client.get(&url));
         match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.json().await.map_err(|e| {
-                    FlowgentraError::MCPError(format!("Failed to parse resources: {}", e))
-                })
-            }
+            Ok(resp) if resp.status().is_success() => resp.json().await.map_err(|e| {
+                FlowgentraError::MCPError(format!("Failed to parse resources: {}", e))
+            }),
             Ok(resp) if resp.status().as_u16() == 404 => Ok(vec![]),
             Ok(resp) => Err(FlowgentraError::MCPError(format!(
-                "resources/list returned {}", resp.status()
+                "resources/list returned {}",
+                resp.status()
             ))),
-            Err(e) => Err(classify_reqwest_error(format!("resources/list failed: {}", e), &e)),
+            Err(e) => Err(classify_reqwest_error(
+                format!("resources/list failed: {}", e),
+                &e,
+            )),
         }
     }
 
@@ -813,12 +839,14 @@ impl MCPClient for DefaultMCPClient {
         let url = format!("{}/resources/read", self.config.uri);
         let payload = serde_json::json!({ "uri": uri });
         let req = apply_auth(&self.config, self.client.post(&url).json(&payload));
-        let resp = req.send().await.map_err(|e| {
-            classify_reqwest_error(format!("resources/read failed: {}", e), &e)
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| classify_reqwest_error(format!("resources/read failed: {}", e), &e))?;
         if !resp.status().is_success() {
             return Err(FlowgentraError::MCPError(format!(
-                "resources/read returned {}", resp.status()
+                "resources/read returned {}",
+                resp.status()
             )));
         }
         resp.json().await.map_err(|e| {
@@ -830,34 +858,43 @@ impl MCPClient for DefaultMCPClient {
         let url = format!("{}/prompts", self.config.uri);
         let req = apply_auth(&self.config, self.client.get(&url));
         match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.json().await.map_err(|e| {
-                    FlowgentraError::MCPError(format!("Failed to parse prompts: {}", e))
-                })
-            }
+            Ok(resp) if resp.status().is_success() => resp
+                .json()
+                .await
+                .map_err(|e| FlowgentraError::MCPError(format!("Failed to parse prompts: {}", e))),
             Ok(resp) if resp.status().as_u16() == 404 => Ok(vec![]),
             Ok(resp) => Err(FlowgentraError::MCPError(format!(
-                "prompts/list returned {}", resp.status()
+                "prompts/list returned {}",
+                resp.status()
             ))),
-            Err(e) => Err(classify_reqwest_error(format!("prompts/list failed: {}", e), &e)),
+            Err(e) => Err(classify_reqwest_error(
+                format!("prompts/list failed: {}", e),
+                &e,
+            )),
         }
     }
 
-    async fn get_prompt(&self, name: &str, arguments: serde_json::Value) -> Result<MCPPromptResult> {
+    async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<MCPPromptResult> {
         let url = format!("{}/prompts/get", self.config.uri);
         let payload = serde_json::json!({ "name": name, "arguments": arguments });
         let req = apply_auth(&self.config, self.client.post(&url).json(&payload));
-        let resp = req.send().await.map_err(|e| {
-            classify_reqwest_error(format!("prompts/get failed: {}", e), &e)
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| classify_reqwest_error(format!("prompts/get failed: {}", e), &e))?;
         if !resp.status().is_success() {
             return Err(FlowgentraError::MCPError(format!(
-                "prompts/get returned {}", resp.status()
+                "prompts/get returned {}",
+                resp.status()
             )));
         }
-        resp.json().await.map_err(|e| {
-            FlowgentraError::MCPError(format!("Failed to parse prompt result: {}", e))
-        })
+        resp.json()
+            .await
+            .map_err(|e| FlowgentraError::MCPError(format!("Failed to parse prompt result: {}", e)))
     }
 }
 
@@ -939,7 +976,10 @@ impl MCPClient for StdioMCPClient {
         );
 
         // Send initialized notification (no response expected, but still use call)
-        let _ = self.connection.call("notifications/initialized", serde_json::json!({})).await;
+        let _ = self
+            .connection
+            .call("notifications/initialized", serde_json::json!({}))
+            .await;
 
         Ok(server_version)
     }
@@ -948,7 +988,10 @@ impl MCPClient for StdioMCPClient {
         self.ensure_started().await?;
 
         tracing::debug!(mcp = %self.config.name, "Listing tools via stdio");
-        let result = self.connection.call("tools/list", serde_json::json!({})).await?;
+        let result = self
+            .connection
+            .call("tools/list", serde_json::json!({}))
+            .await?;
 
         // Parse the response — expect {"tools": [...]} or just [...]
         let tools_value = if let Some(tools) = result.get("tools") {
@@ -957,13 +1000,13 @@ impl MCPClient for StdioMCPClient {
             result
         } else {
             return Err(FlowgentraError::MCPError(format!(
-                "Unexpected list_tools response: {}", result
+                "Unexpected list_tools response: {}",
+                result
             )));
         };
 
-        let tools: Vec<MCPTool> = serde_json::from_value(tools_value).map_err(|e| {
-            FlowgentraError::MCPError(format!("Failed to parse tools: {}", e))
-        })?;
+        let tools: Vec<MCPTool> = serde_json::from_value(tools_value)
+            .map_err(|e| FlowgentraError::MCPError(format!("Failed to parse tools: {}", e)))?;
 
         let tools = apply_tool_filters(
             tools,
@@ -986,7 +1029,8 @@ impl MCPClient for StdioMCPClient {
         // Enforce tool_exclude at call time
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration", tool_name
+                "Tool '{}' is excluded by configuration",
+                tool_name
             )));
         }
 
@@ -1038,7 +1082,13 @@ impl Drop for StdioMCPClient {
             tracing::info!(mcp = %self.config.name, "Killing stdio MCP subprocess on drop");
             // Best-effort: try to get the process lock synchronously via get_mut
             // (only works if no async task holds the lock, which is expected during drop)
-            if let Some(mut proc) = self.connection.process.try_lock().ok().and_then(|mut g| g.take()) {
+            if let Some(mut proc) = self
+                .connection
+                .process
+                .try_lock()
+                .ok()
+                .and_then(|mut g| g.take())
+            {
                 // Start kill but can't await it in Drop — fire and forget
                 let _ = proc.child.start_kill();
             }
@@ -1067,10 +1117,10 @@ impl SSEMCPClient {
 #[async_trait::async_trait]
 impl MCPClient for SSEMCPClient {
     async fn list_tools(&self) -> Result<Vec<MCPTool>> {
-        let mut stream = self.connection.stream(
-            "tools/list",
-            serde_json::json!({}),
-        ).await?;
+        let mut stream = self
+            .connection
+            .stream("tools/list", serde_json::json!({}))
+            .await?;
 
         let mut tools = Vec::new();
         while let Some(result) = stream.next().await {
@@ -1099,7 +1149,8 @@ impl MCPClient for SSEMCPClient {
     ) -> Result<serde_json::Value> {
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration", tool_name
+                "Tool '{}' is excluded by configuration",
+                tool_name
             )));
         }
 
@@ -1128,7 +1179,8 @@ impl MCPClient for SSEMCPClient {
     ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Result<serde_json::Value>>> {
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration", tool_name
+                "Tool '{}' is excluded by configuration",
+                tool_name
             )));
         }
 
@@ -1183,12 +1235,17 @@ pub struct DockerMCPClient {
 impl DockerMCPClient {
     /// Create a new Docker MCP client from config.
     pub fn new(config: MCPConfig) -> Self {
-        let container_name = config.connection_settings.container_name
+        let container_name = config
+            .connection_settings
+            .container_name
             .clone()
             .unwrap_or_else(|| format!("flowgentra-mcp-{}", &config.name));
         let configured_host_port = config.connection_settings.host_port.unwrap_or(0);
         let general = config.connection_settings.timeout.unwrap_or(30);
-        let connect = config.connection_settings.connect_timeout.unwrap_or(general);
+        let connect = config
+            .connection_settings
+            .connect_timeout
+            .unwrap_or(general);
         let call = config.connection_settings.call_timeout.unwrap_or(general);
 
         DockerMCPClient {
@@ -1207,9 +1264,9 @@ impl DockerMCPClient {
     /// Ensure the container is running. Uses OnceCell so the long startup
     /// only happens once and concurrent callers wait without holding a mutex.
     async fn ensure_started(&self) -> Result<()> {
-        self.host_port.get_or_try_init(|| async {
-            self.do_start().await
-        }).await?;
+        self.host_port
+            .get_or_try_init(|| async { self.do_start().await })
+            .await?;
         Ok(())
     }
 
@@ -1269,14 +1326,13 @@ impl DockerMCPClient {
             .args(&args)
             .output()
             .await
-            .map_err(|e| {
-                FlowgentraError::MCPError(format!("Failed to run docker: {}", e))
-            })?;
+            .map_err(|e| FlowgentraError::MCPError(format!("Failed to run docker: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(FlowgentraError::MCPError(format!(
-                "docker run failed: {}", stderr.trim()
+                "docker run failed: {}",
+                stderr.trim()
             )));
         }
 
@@ -1296,7 +1352,8 @@ impl DockerMCPClient {
                     .status()
                     .await;
                 return Err(FlowgentraError::MCPError(format!(
-                    "Container did not become healthy within {}s", timeout_secs
+                    "Container did not become healthy within {}s",
+                    timeout_secs
                 )));
             }
 
@@ -1334,9 +1391,10 @@ impl MCPClient for DockerMCPClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(classify_http_status(status, &format!(
-                "Docker MCP server returned {}: {}", status, body
-            )));
+            return Err(classify_http_status(
+                status,
+                &format!("Docker MCP server returned {}: {}", status, body),
+            ));
         }
 
         let tools: Vec<MCPTool> = response.json().await.map_err(|e| {
@@ -1364,7 +1422,8 @@ impl MCPClient for DockerMCPClient {
         // Enforce tool_exclude at call time
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration", tool_name
+                "Tool '{}' is excluded by configuration",
+                tool_name
             )));
         }
 
@@ -1387,9 +1446,13 @@ impl MCPClient for DockerMCPClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(classify_http_status(status, &format!(
-                "Docker MCP tool '{}' returned {}: {}", tool_name, status, body
-            )));
+            return Err(classify_http_status(
+                status,
+                &format!(
+                    "Docker MCP tool '{}' returned {}: {}",
+                    tool_name, status, body
+                ),
+            ));
         }
 
         let result = response.json().await.map_err(|e| {
@@ -1504,7 +1567,7 @@ impl RetryMCPClient {
         if let Some(opened_at) = cb.opened_at {
             if opened_at.elapsed() < self.circuit_cooldown {
                 return Err(FlowgentraError::MCPTransportError(
-                    "Circuit breaker is open — MCP server appears down".into()
+                    "Circuit breaker is open — MCP server appears down".into(),
                 ));
             }
             // Cooldown elapsed — allow one probe (half-open)
@@ -1529,7 +1592,8 @@ impl RetryMCPClient {
         if cb.consecutive_failures >= self.circuit_threshold {
             tracing::error!(
                 failures = cb.consecutive_failures,
-                "Circuit breaker opened after {} consecutive failures", cb.consecutive_failures
+                "Circuit breaker opened after {} consecutive failures",
+                cb.consecutive_failures
             );
             cb.opened_at = Some(std::time::Instant::now());
         }
@@ -1588,10 +1652,12 @@ impl MCPClient for RetryMCPClient {
         }
 
         let inner = self.inner.clone();
-        let tools: Vec<MCPTool> = self.with_retry("list_tools", || {
-            let inner = inner.clone();
-            async move { inner.list_tools().await }
-        }).await?;
+        let tools: Vec<MCPTool> = self
+            .with_retry("list_tools", || {
+                let inner = inner.clone();
+                async move { inner.list_tools().await }
+            })
+            .await?;
 
         // Cache with timestamp
         {
@@ -1615,7 +1681,8 @@ impl MCPClient for RetryMCPClient {
             let name = name.clone();
             let args = args.clone();
             async move { inner.call_tool(&name, args).await }
-        }).await
+        })
+        .await
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -1701,10 +1768,7 @@ impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> ReconnectingMCPClient<F> {
     }
 
     /// Try the operation; on connection error, recreate the client and retry.
-    async fn with_reconnect<T, Fut>(
-        &self,
-        op: impl Fn(Arc<dyn MCPClient>) -> Fut,
-    ) -> Result<T>
+    async fn with_reconnect<T, Fut>(&self, op: impl Fn(Arc<dyn MCPClient>) -> Fut) -> Result<T>
     where
         Fut: std::future::Future<Output = Result<T>>,
     {
@@ -1720,7 +1784,10 @@ impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> ReconnectingMCPClient<F> {
                     match op(new_client).await {
                         Ok(val) => return Ok(val),
                         Err(e) if is_connection_error(&e) && attempt < self.max_reconnects => {
-                            tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                500 * attempt as u64,
+                            ))
+                            .await;
                             continue;
                         }
                         Err(e) => return Err(e),
@@ -1735,14 +1802,18 @@ impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> ReconnectingMCPClient<F> {
 
 fn is_connection_error(err: &FlowgentraError) -> bool {
     let msg = err.to_string().to_lowercase();
-    msg.contains("connection") || msg.contains("timeout") || msg.contains("refused")
-        || msg.contains("reset") || msg.contains("broken pipe")
+    msg.contains("connection")
+        || msg.contains("timeout")
+        || msg.contains("refused")
+        || msg.contains("reset")
+        || msg.contains("broken pipe")
 }
 
 #[async_trait::async_trait]
 impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> MCPClient for ReconnectingMCPClient<F> {
     async fn list_tools(&self) -> Result<Vec<MCPTool>> {
-        self.with_reconnect(|c| async move { c.list_tools().await }).await
+        self.with_reconnect(|c| async move { c.list_tools().await })
+            .await
     }
 
     async fn call_tool(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value> {
@@ -1751,6 +1822,7 @@ impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> MCPClient for ReconnectingMCPC
             let n = name.clone();
             let a = args.clone();
             async move { c.call_tool(&n, a).await }
-        }).await
+        })
+        .await
     }
 }

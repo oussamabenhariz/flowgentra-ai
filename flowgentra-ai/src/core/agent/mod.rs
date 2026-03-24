@@ -40,7 +40,6 @@ use tracing::info;
 //
 // Handlers are automatically registered via the `#[register_handler]` attribute macro.
 /// Handler names must match the function name and be referenced by that name in your config.yaml.
-
 pub(crate) use crate::core::config::AgentConfig;
 pub(crate) use crate::core::error::{FlowgentraError, Result};
 pub(crate) use crate::core::llm::{create_llm_client, LLMClient};
@@ -164,10 +163,13 @@ pub struct Agent {
 }
 
 impl Agent {
-        /// Log agent startup and configuration for observability
-        pub fn log_startup(&self) {
-            info!("Agent '{}' starting with config: {:?}", self.config.name, self.config);
-        }
+    /// Log agent startup and configuration for observability
+    pub fn log_startup(&self) {
+        info!(
+            "Agent '{}' starting with config: {:?}",
+            self.config.name, self.config
+        );
+    }
     /// Create an agent from a YAML config file
     ///
     /// This is the main entry point for users. It:
@@ -235,12 +237,20 @@ impl Agent {
 
         // Built-in node types that don't require a user-supplied handler
         const BUILTIN_TYPES: &[&str] = &[
-            "evaluation", "retry", "timeout", "loop",
-            "planner", "human_in_the_loop", "memory",
+            "evaluation",
+            "retry",
+            "timeout",
+            "loop",
+            "planner",
+            "human_in_the_loop",
+            "memory",
             // supervisor (+ backwards-compat alias)
-            "supervisor", "orchestrator",
+            "supervisor",
+            "orchestrator",
             // subgraph (+ backwards-compat aliases)
-            "subgraph", "agent", "agent_or_graph",
+            "subgraph",
+            "agent",
+            "agent_or_graph",
         ];
 
         // Supervisor-managed children are not in the runtime graph — skip registration.
@@ -248,12 +258,21 @@ impl Agent {
             .graph
             .nodes
             .iter()
-            .filter(|n| matches!(n.node_type.as_deref(), Some("supervisor") | Some("orchestrator")))
+            .filter(|n| {
+                matches!(
+                    n.node_type.as_deref(),
+                    Some("supervisor") | Some("orchestrator")
+                )
+            })
             .flat_map(|n| {
                 n.config
                     .get("children")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default()
             })
             .collect();
@@ -268,7 +287,8 @@ impl Agent {
             if node.handler.starts_with("builtin::") {
                 continue;
             }
-            let arc_handler = arc_handlers.get(&node.name)
+            let arc_handler = arc_handlers
+                .get(&node.name)
                 .or_else(|| arc_handlers.get(&node.handler))
                 .cloned();
 
@@ -277,7 +297,10 @@ impl Agent {
             // If a handler IS present (e.g. the planner built by from_config_path), always
             // register it so the placeholder function is replaced.
             let is_builtin_standalone = node.handler.is_empty()
-                && node.node_type.as_deref().map_or(false, |t| BUILTIN_TYPES.contains(&t))
+                && node
+                    .node_type
+                    .as_deref()
+                    .is_some_and(|t| BUILTIN_TYPES.contains(&t))
                 && arc_handler.is_none();
             if is_builtin_standalone {
                 continue;
@@ -285,7 +308,8 @@ impl Agent {
 
             match arc_handler {
                 Some(h) => {
-                    runtime.register_node(&node.name, Box::new(move |state| h(state)))
+                    runtime
+                        .register_node(&node.name, Box::new(move |state| h(state)))
                         .map_err(|e| {
                             if matches!(e, FlowgentraError::NodeNotFound(_)) {
                                 FlowgentraError::NodeNotFound(format!(
@@ -307,7 +331,8 @@ impl Agent {
             let available_list = if arc_handlers.is_empty() {
                 "(none registered)".to_string()
             } else {
-                arc_handlers.keys()
+                arc_handlers
+                    .keys()
                     .map(|k| format!("'{}'", k))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -325,19 +350,23 @@ impl Agent {
 
         // Register all conditions
         type EdgeConditionFn = std::sync::Arc<
-            dyn Fn(&SharedState) -> std::result::Result<Option<String>, crate::core::error::FlowgentraError>
+            dyn Fn(
+                    &SharedState,
+                )
+                    -> std::result::Result<Option<String>, crate::core::error::FlowgentraError>
                 + Send
                 + Sync,
         >;
         for (condition_name, condition_fn) in conditions {
             let cond_name_clone = condition_name.clone();
-            let edge_condition: EdgeConditionFn = std::sync::Arc::new(move |state: &SharedState| {
-                if condition_fn(state) {
-                    Ok(Some(cond_name_clone.clone()))
-                } else {
-                    Ok(None)
-                }
-            });
+            let edge_condition: EdgeConditionFn =
+                std::sync::Arc::new(move |state: &SharedState| {
+                    if condition_fn(state) {
+                        Ok(Some(cond_name_clone.clone()))
+                    } else {
+                        Ok(None)
+                    }
+                });
 
             let edges_to_register: Vec<String> = runtime
                 .graph()
@@ -487,27 +516,11 @@ impl Agent {
         &self.config
     }
 
-    /// Visualize the agent's execution graph
-    ///
-    /// Generates a text-based or graphical representation of your agent's workflow.
-    /// Useful for debugging and documentation.
-    ///
-    /// # Arguments
-    /// - `output_path`: Where to save the visualization
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use flowgentra_ai::prelude::*;
-    /// # use std::collections::HashMap;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<()> {
-    /// # let mut agent = Agent::from_config("config.yaml", HashMap::new(), HashMap::new())?;
-    /// // Save the graph visualization
-    /// #[cfg(feature = "visualization")]
-    /// agent.visualize_graph("agent_graph.txt")?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    // Visualize the agent's execution graph
+    //
+    // Generates a text-based or graphical representation of your agent's workflow.
+    // Useful for debugging and documentation.
+    //
     // visualize_graph requires type parameter T to be known, which is not available in Agent context
     // pub async fn visualize_graph(&self, output_path: &str) -> Result<()> {
     //     self.runtime.visualize_graph(output_path)
@@ -720,9 +733,8 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
     for mcp in config.graph.mcps.values_mut() {
         if mcp.connection_type == crate::core::mcp::MCPConnectionType::Stdio {
             if mcp.connection_settings.working_dir.is_none() {
-                mcp.connection_settings.working_dir = Some(
-                    config_dir.to_string_lossy().to_string()
-                );
+                mcp.connection_settings.working_dir =
+                    Some(config_dir.to_string_lossy().to_string());
             }
             // Resolve command to absolute path if needed (e.g. "python" → "/usr/bin/python")
             let cmd = mcp.stdio_command().to_string();
@@ -747,21 +759,30 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
                 if resolved.is_empty() && (cmd == "python" || cmd == "python3") {
                     let candidates = [
                         // Standard Python installer paths
-                        format!("C:\\Python312\\python.exe"),
-                        format!("C:\\Python311\\python.exe"),
-                        format!("C:\\Python310\\python.exe"),
-                        format!("C:\\Python39\\python.exe"),
+                        "C:\\Python312\\python.exe".to_string(),
+                        "C:\\Python311\\python.exe".to_string(),
+                        "C:\\Python310\\python.exe".to_string(),
+                        "C:\\Python39\\python.exe".to_string(),
                         // Program Files
-                        format!("C:\\Program Files\\Python312\\python.exe"),
-                        format!("C:\\Program Files\\Python311\\python.exe"),
-                        format!("C:\\Program Files\\Python310\\python.exe"),
-                        format!("C:\\Program Files\\Python39\\python.exe"),
+                        "C:\\Program Files\\Python312\\python.exe".to_string(),
+                        "C:\\Program Files\\Python311\\python.exe".to_string(),
+                        "C:\\Program Files\\Python310\\python.exe".to_string(),
+                        "C:\\Program Files\\Python39\\python.exe".to_string(),
                     ];
-                    if let Some(home) = std::env::var("USERPROFILE").ok() {
+                    if let Ok(home) = std::env::var("USERPROFILE") {
                         let user_candidates = [
-                            format!("{}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe", home),
-                            format!("{}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe", home),
-                            format!("{}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe", home),
+                            format!(
+                                "{}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+                                home
+                            ),
+                            format!(
+                                "{}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+                                home
+                            ),
+                            format!(
+                                "{}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe",
+                                home
+                            ),
                         ];
                         for c in user_candidates.iter().chain(candidates.iter()) {
                             if std::path::Path::new(c).exists() {
@@ -799,9 +820,15 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
 
     // Inject builtin::planner into handlers_map for backward compatibility
     // (when a node uses handler: "builtin::planner" instead of type: "planner")
-    let has_legacy_planner = config.graph.nodes.iter()
+    let has_legacy_planner = config
+        .graph
+        .nodes
+        .iter()
         .any(|n| n.handler == "builtin::planner");
-    let has_planner_type = config.graph.nodes.iter()
+    let has_planner_type = config
+        .graph
+        .nodes
+        .iter()
         .any(|n| n.node_type.as_deref() == Some("planner"));
     if has_legacy_planner || has_planner_type {
         let llm_client = config.create_llm_client()?;
@@ -810,7 +837,8 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
             llm_client,
             prompt_template,
         ));
-        let arc_handler: ArcHandler<SharedState> = Arc::new(move |state| planner_fn.as_ref()(state));
+        let arc_handler: ArcHandler<SharedState> =
+            Arc::new(move |state| planner_fn.as_ref()(state));
         handlers_map.insert("__builtin_planner__".to_string(), arc_handler);
     }
 
@@ -846,7 +874,6 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
 
         let node_name = node_config.name.clone();
         let handler = match node_config.node_type.as_deref() {
-
             // ── Evaluation: loop until confident ───────────────────────────
             // Standalone (no handler): scores the current state field and writes
             // evaluation metadata. Designed to be used as a graph node with back-edges.
@@ -914,13 +941,15 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
             // NOTE: the guard `if` on a `|` pattern applies to ALL alternatives, so these
             // two cases must be separate arms to avoid the guard blocking `Some("planner")`.
             Some("planner") => {
-                let arc = handlers_map.get("__builtin_planner__")
+                let arc = handlers_map
+                    .get("__builtin_planner__")
                     .cloned()
                     .expect("planner was pre-injected");
                 Box::new(move |state| arc(state))
             }
             None if node_config.handler == "builtin::planner" => {
-                let arc = handlers_map.get("__builtin_planner__")
+                let arc = handlers_map
+                    .get("__builtin_planner__")
                     .cloned()
                     .expect("planner was pre-injected");
                 Box::new(move |state| arc(state))
@@ -935,17 +964,21 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
 
             // ── Memory: built-in memory operations ─────────────────────────
             Some("memory") => {
-                let op = node_config.config.get("operation")
+                let op = node_config
+                    .config
+                    .get("operation")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 match create_memory_handler(op) {
                     Some(h) => h,
-                    None => return Err(FlowgentraError::ConfigError(format!(
-                        "Unknown memory operation '{}' for node '{}'. \
+                    None => {
+                        return Err(FlowgentraError::ConfigError(format!(
+                            "Unknown memory operation '{}' for node '{}'. \
                          Valid operations: append_message, compress_history, \
                          clear_history, get_message_count, format_history_for_context",
-                        op, node_config.name
-                    ))),
+                            op, node_config.name
+                        )))
+                    }
                 }
             }
 
@@ -1010,8 +1043,16 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
     //
     // Supervisors are built in multiple passes so that parent supervisors can
     // reference child supervisors that were built in an earlier pass.
-    let supervisor_nodes: Vec<_> = config.graph.nodes.iter()
-        .filter(|n| matches!(n.node_type.as_deref(), Some("supervisor") | Some("orchestrator")))
+    let supervisor_nodes: Vec<_> = config
+        .graph
+        .nodes
+        .iter()
+        .filter(|n| {
+            matches!(
+                n.node_type.as_deref(),
+                Some("supervisor") | Some("orchestrator")
+            )
+        })
         .collect();
 
     let mut built_supervisor_arcs: HashMap<String, ArcHandler<SharedState>> = HashMap::new();
@@ -1019,11 +1060,16 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
     let max_passes = remaining.len() + 1; // guard against infinite loops
 
     for _pass in 0..max_passes {
-        if remaining.is_empty() { break; }
+        if remaining.is_empty() {
+            break;
+        }
         let mut still_remaining = Vec::new();
 
         for sup_name in &remaining {
-            let node_config = supervisor_nodes.iter().find(|n| &n.name == sup_name).unwrap();
+            let node_config = supervisor_nodes
+                .iter()
+                .find(|n| &n.name == sup_name)
+                .unwrap();
             use crate::core::node::orchestrator_node::SupervisorNodeConfig;
             let cfg = SupervisorNodeConfig::from_node_config(node_config)?;
 
@@ -1050,15 +1096,27 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
 
             if all_resolved {
                 // Build per-child MCP map from node configs
-                let child_mcps: HashMap<String, Vec<String>> = cfg.children.iter()
+                let child_mcps: HashMap<String, Vec<String>> = cfg
+                    .children
+                    .iter()
                     .filter_map(|name| {
                         let node = config.graph.nodes.iter().find(|n| &n.name == name)?;
-                        if node.mcps.is_empty() { None } else { Some((name.clone(), node.mcps.clone())) }
+                        if node.mcps.is_empty() {
+                            None
+                        } else {
+                            Some((name.clone(), node.mcps.clone()))
+                        }
                     })
                     .collect();
 
-                let handler = if matches!(cfg.strategy, crate::core::node::orchestrator_node::OrchestrationStrategy::Dynamic) {
-                    let llm = config.create_llm_client().ok().map(|c| c as Arc<dyn LLMClient>);
+                let handler = if matches!(
+                    cfg.strategy,
+                    crate::core::node::orchestrator_node::OrchestrationStrategy::Dynamic
+                ) {
+                    let llm = config
+                        .create_llm_client()
+                        .ok()
+                        .map(|c| c as Arc<dyn LLMClient>);
                     create_supervisor_handler_with_llm(cfg, child_arcs, llm, child_mcps)
                 } else {
                     create_supervisor_handler(cfg, child_arcs, child_mcps)
@@ -1077,7 +1135,10 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
         if still_remaining.len() == remaining.len() {
             // No progress — remaining supervisors have unresolvable children
             for sup_name in &still_remaining {
-                let node_config = supervisor_nodes.iter().find(|n| &n.name == sup_name).unwrap();
+                let node_config = supervisor_nodes
+                    .iter()
+                    .find(|n| &n.name == sup_name)
+                    .unwrap();
                 use crate::core::node::orchestrator_node::SupervisorNodeConfig;
                 let cfg = SupervisorNodeConfig::from_node_config(node_config)?;
                 for child_name in &cfg.children {
@@ -1177,13 +1238,17 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
 
             let scoring_criteria = ScoringCriteria::default();
 
-            let mut confidence_config = ConfidenceConfig::default();
-            confidence_config.low_threshold = eval_config.min_confidence * 0.6;
-            confidence_config.high_threshold = eval_config.min_confidence;
+            let confidence_config = ConfidenceConfig {
+                low_threshold: eval_config.min_confidence * 0.6,
+                high_threshold: eval_config.min_confidence,
+                ..Default::default()
+            };
 
-            let mut retry_config = RetryConfig::default();
-            retry_config.max_retries = eval_config.max_retries;
-            retry_config.confidence_threshold = eval_config.min_confidence;
+            let retry_config = RetryConfig {
+                max_retries: eval_config.max_retries,
+                confidence_threshold: eval_config.min_confidence,
+                ..Default::default()
+            };
 
             let middleware = AutoEvaluationMiddleware::new()
                 .with_policy(policy)
@@ -1249,7 +1314,10 @@ fn wrap_handler_with_retry(
                     Err(e) => {
                         tracing::warn!(
                             "Retry '{}' attempt {}/{} failed: {}",
-                            config.name, attempt + 1, config.max_retries, e
+                            config.name,
+                            attempt + 1,
+                            config.max_retries,
+                            e
                         );
                         last_err = Some(e);
 
@@ -1349,7 +1417,9 @@ fn wrap_handler_with_loop(
             for iteration in 0..config.max_iterations {
                 tracing::info!(
                     "Loop '{}' iteration {}/{}",
-                    config.handler, iteration + 1, config.max_iterations
+                    config.handler,
+                    iteration + 1,
+                    config.max_iterations
                 );
                 state = handler(state).await?;
 
@@ -1357,7 +1427,9 @@ fn wrap_handler_with_loop(
                     if state.get(cond).and_then(|v| v.as_bool()).unwrap_or(false) {
                         tracing::info!(
                             "Loop '{}' break condition '{}' met at iteration {}",
-                            config.handler, cond, iteration + 1
+                            config.handler,
+                            cond,
+                            iteration + 1
                         );
                         break;
                     }
@@ -1389,14 +1461,14 @@ fn create_human_in_loop_handler(
     Box::new(move |state| {
         let config = config.clone();
         Box::pin(async move {
-            tracing::info!(
-                "Human-in-the-loop '{}': {}",
-                config.name, config.prompt
-            );
+            tracing::info!("Human-in-the-loop '{}': {}", config.name, config.prompt);
             state.set("_human_approved", serde_json::json!(true));
             state.set("_human_node", serde_json::json!(config.name));
             if !config.editable_fields.is_empty() {
-                state.set("_human_editable_fields", serde_json::json!(config.editable_fields));
+                state.set(
+                    "_human_editable_fields",
+                    serde_json::json!(config.editable_fields),
+                );
             }
             Ok(state)
         })
@@ -1452,7 +1524,7 @@ fn create_memory_handler(operation: &str) -> Option<Handler<SharedState>> {
 /// - `__eval_score__<name>`        – current numeric score (0.0–1.0)
 /// - `__eval_feedback__<name>`     – textual feedback for the next handler
 /// - `__eval_needs_retry__<name>`  – bool, true when score < min_confidence
-///                                   AND attempt < max_retries
+///   AND attempt < max_retries
 /// - `__eval_attempt__<name>`      – current attempt counter (starts at 1)
 /// - `__eval_meta__<name>`         – full JSON object with all metadata
 ///
@@ -1507,10 +1579,7 @@ fn create_retry_standalone_handler(
             let count_key = format!("__retry_count__{}", config.name);
             let should_retry_key = format!("__retry_should_retry__{}", config.name);
 
-            let current = state
-                .get(&count_key)
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as usize;
+            let current = state.get(&count_key).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
             let next = current + 1;
             let should_retry = current < config.max_retries;
@@ -1539,13 +1608,17 @@ fn create_retry_standalone_handler(
             if should_retry {
                 tracing::info!(
                     "Standalone retry '{}' attempt {}/{}, sleeping {}ms",
-                    config.name, next, config.max_retries, backoff_ms
+                    config.name,
+                    next,
+                    config.max_retries,
+                    backoff_ms
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
             } else {
                 tracing::info!(
                     "Standalone retry '{}' exhausted {} attempts — no more retries",
-                    config.name, config.max_retries
+                    config.name,
+                    config.max_retries
                 );
             }
 
@@ -1624,7 +1697,9 @@ fn create_timeout_standalone_handler(
             if timed_out {
                 tracing::warn!(
                     "Standalone timeout '{}' expired (deadline={}ms, now={}ms)",
-                    config.name, deadline_ms, now_ms
+                    config.name,
+                    deadline_ms,
+                    now_ms
                 );
                 match config.on_timeout.as_str() {
                     "error" => {
@@ -1655,7 +1730,7 @@ fn create_timeout_standalone_handler(
 /// State keys written:
 /// - `__loop_iteration__<name>` – current iteration (starts at 1)
 /// - `__loop_continue__<name>`  – bool, true while within max_iterations
-///                                AND break_condition is not set in state
+///   AND break_condition is not set in state
 /// - `__loop_meta__<name>`      – JSON with full iteration metadata
 ///
 /// YAML:
@@ -1724,7 +1799,9 @@ fn create_supervisor_handler_with_llm(
             if rhs == "null" {
                 return val.is_some() && !val.unwrap().is_null();
             }
-            return val.map(|v| v.to_string().trim_matches('"') != rhs).unwrap_or(false);
+            return val
+                .map(|v| v.to_string().trim_matches('"') != rhs)
+                .unwrap_or(false);
         }
         if condition.contains("==") {
             let parts: Vec<&str> = condition.splitn(2, "==").collect();
@@ -1734,10 +1811,15 @@ fn create_supervisor_handler_with_llm(
             if rhs == "null" {
                 return val.is_none() || val.unwrap().is_null();
             }
-            return val.map(|v| v.to_string().trim_matches('"') == rhs).unwrap_or(false);
+            return val
+                .map(|v| v.to_string().trim_matches('"') == rhs)
+                .unwrap_or(false);
         }
         // bare key: skip if truthy
-        state.get(condition).map(|v| !v.is_null() && v.as_bool() != Some(false)).unwrap_or(false)
+        state
+            .get(condition)
+            .map(|v| !v.is_null() && v.as_bool() != Some(false))
+            .unwrap_or(false)
     }
 
     // Run a single child with optional timeout, returning (result, duration_ms).
@@ -1749,16 +1831,14 @@ fn create_supervisor_handler_with_llm(
     ) -> (crate::core::error::Result<SharedState>, u128) {
         let child_start = std::time::Instant::now();
         let result = if let Some(ms) = timeout_ms {
-            tokio::time::timeout(
-                std::time::Duration::from_millis(ms),
-                handler(state),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                Err(FlowgentraError::ExecutionTimeout(format!(
-                    "Child '{}' timed out after {}ms", name, ms
-                )))
-            })
+            tokio::time::timeout(std::time::Duration::from_millis(ms), handler(state))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(FlowgentraError::ExecutionTimeout(format!(
+                        "Child '{}' timed out after {}ms",
+                        name, ms
+                    )))
+                })
         } else {
             handler(state).await
         };
@@ -1783,7 +1863,6 @@ fn create_supervisor_handler_with_llm(
             };
 
             match &config.strategy {
-
                 // ── Sequential ──────────────────────────────────────────────
                 OrchestrationStrategy::Sequential => {
                     let mut current = state;
@@ -1796,7 +1875,8 @@ fn create_supervisor_handler_with_llm(
                             if should_skip(cond, &current) {
                                 tracing::info!(
                                     "Supervisor '{}': skipping '{}' (condition: {cond})",
-                                    config.name, name
+                                    config.name,
+                                    name
                                 );
                                 child_results.push(json!({
                                     "name": name, "skipped": true, "condition": cond
@@ -1813,7 +1893,9 @@ fn create_supervisor_handler_with_llm(
 
                         inject_mcps(name, &current);
                         for attempt in 1..=max_attempts {
-                            let (result, ms) = run_child(name, handler, current.clone(), config.child_timeout_ms).await;
+                            let (result, ms) =
+                                run_child(name, handler, current.clone(), config.child_timeout_ms)
+                                    .await;
                             total_ms += ms;
                             match result {
                                 Ok(new_state) => {
@@ -1877,7 +1959,9 @@ fn create_supervisor_handler_with_llm(
                     );
                     tracing::info!(
                         "Supervisor '{}' sequential done in {}ms, errors={}",
-                        config.name, start.elapsed().as_millis(), errors.len()
+                        config.name,
+                        start.elapsed().as_millis(),
+                        errors.len()
                     );
                     Ok(current)
                 }
@@ -1887,7 +1971,8 @@ fn create_supervisor_handler_with_llm(
                     let base_state = Arc::new(state);
                     // Semaphore limits how many children run at the same time.
                     // All futures are spawned immediately; only `max_concurrent` can hold a permit.
-                    let semaphore = config.max_concurrent
+                    let semaphore = config
+                        .max_concurrent
                         .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
 
                     // Filter children by skip conditions, cloning so futures own their data
@@ -2000,7 +2085,8 @@ fn create_supervisor_handler_with_llm(
                             // compare each child's values against the base to detect
                             // real modifications — avoiding null overwrites from
                             // schema-initialized keys the child never touched.
-                            let base_snapshot: Vec<(String, serde_json::Value)> = base_state.iter_map();
+                            let base_snapshot: Vec<(String, serde_json::Value)> =
+                                base_state.iter_map();
                             let merged = (*base_state).clone();
                             for child_state in successes {
                                 for (key, value) in child_state.iter_map() {
@@ -2012,10 +2098,11 @@ fn create_supervisor_handler_with_llm(
                                         continue;
                                     }
                                     // Only merge if the child actually changed this key
-                                    let changed = match base_snapshot.iter().find(|(k, _)| k == &key) {
-                                        Some((_, base_val)) => value != *base_val,
-                                        None => true, // new key not in base — always merge
-                                    };
+                                    let changed =
+                                        match base_snapshot.iter().find(|(k, _)| k == &key) {
+                                            Some((_, base_val)) => value != *base_val,
+                                            None => true, // new key not in base — always merge
+                                        };
                                     if changed {
                                         merged.set(key, value);
                                     }
@@ -2042,7 +2129,9 @@ fn create_supervisor_handler_with_llm(
                     );
                     tracing::info!(
                         "Supervisor '{}' parallel done in {}ms, errors={}",
-                        config.name, start.elapsed().as_millis(), errors.len()
+                        config.name,
+                        start.elapsed().as_millis(),
+                        errors.len()
                     );
                     Ok(final_state)
                 }
@@ -2056,7 +2145,8 @@ fn create_supervisor_handler_with_llm(
                     if let Some(goal) = &config.goal {
                         tracing::info!(
                             "Supervisor '{}' autonomous start, goal: {}",
-                            config.name, goal
+                            config.name,
+                            goal
                         );
                     }
 
@@ -2066,15 +2156,21 @@ fn create_supervisor_handler_with_llm(
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
 
-                    let max_iter = if config.max_iterations == 0 { 10 } else { config.max_iterations };
+                    let max_iter = if config.max_iterations == 0 {
+                        10
+                    } else {
+                        config.max_iterations
+                    };
                     let mut iteration_log = Vec::new();
 
                     'outer: for iteration in 1..=max_iter {
                         // Which required outputs are still missing?
-                        let missing: Vec<String> = config.required_outputs
+                        let missing: Vec<String> = config
+                            .required_outputs
                             .iter()
                             .filter(|key| {
-                                current.get(key.as_str())
+                                current
+                                    .get(key.as_str())
                                     .map(|v| v.is_null())
                                     .unwrap_or(true)
                             })
@@ -2091,7 +2187,10 @@ fn create_supervisor_handler_with_llm(
 
                         tracing::info!(
                             "Supervisor '{}' autonomous iteration {}/{}: missing {:?}",
-                            config.name, iteration, max_iter, missing
+                            config.name,
+                            iteration,
+                            max_iter,
+                            missing
                         );
 
                         // Collect agents responsible for the missing outputs (deduplicated)
@@ -2107,7 +2206,8 @@ fn create_supervisor_handler_with_llm(
                         if agents_to_call.is_empty() {
                             tracing::warn!(
                                 "Supervisor '{}' autonomous: no owners for missing {:?}, stopping",
-                                config.name, missing
+                                config.name,
+                                missing
                             );
                             break;
                         }
@@ -2123,8 +2223,12 @@ fn create_supervisor_handler_with_llm(
 
                                 for attempt in 1..=max_attempts {
                                     let (result, ms) = run_child(
-                                        agent_name, handler, current.clone(), config.child_timeout_ms,
-                                    ).await;
+                                        agent_name,
+                                        handler,
+                                        current.clone(),
+                                        config.child_timeout_ms,
+                                    )
+                                    .await;
                                     total_ms += ms;
                                     match result {
                                         Ok(new_state) => {
@@ -2157,7 +2261,8 @@ fn create_supervisor_handler_with_llm(
                             } else {
                                 tracing::warn!(
                                     "Supervisor '{}' autonomous: agent '{}' not found",
-                                    config.name, agent_name
+                                    config.name,
+                                    agent_name
                                 );
                             }
                         }
@@ -2171,10 +2276,12 @@ fn create_supervisor_handler_with_llm(
                     }
 
                     // Final completeness check
-                    let final_missing: Vec<String> = config.required_outputs
+                    let final_missing: Vec<String> = config
+                        .required_outputs
                         .iter()
                         .filter(|key| {
-                            current.get(key.as_str())
+                            current
+                                .get(key.as_str())
                                 .map(|v| v.is_null())
                                 .unwrap_or(true)
                         })
@@ -2196,7 +2303,9 @@ fn create_supervisor_handler_with_llm(
                     );
                     tracing::info!(
                         "Supervisor '{}' autonomous done in {}ms, success={}",
-                        config.name, start.elapsed().as_millis(), success
+                        config.name,
+                        start.elapsed().as_millis(),
+                        success
                     );
                     Ok(current)
                 }
@@ -2211,8 +2320,13 @@ fn create_supervisor_handler_with_llm(
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
 
-                    let child_names: Vec<String> = children.iter().map(|(n, _)| n.clone()).collect();
-                    let max_iter = if config.max_iterations == 0 { 10 } else { config.max_iterations };
+                    let child_names: Vec<String> =
+                        children.iter().map(|(n, _)| n.clone()).collect();
+                    let max_iter = if config.max_iterations == 0 {
+                        10
+                    } else {
+                        config.max_iterations
+                    };
                     let mut iteration_log = Vec::new();
 
                     let llm = llm_client.clone();
@@ -2222,13 +2336,22 @@ fn create_supervisor_handler_with_llm(
 
                         // Build a filtered view: separate populated vs null keys, hide internals
                         let all_keys: Vec<String> = current.keys().collect();
-                        let populated_keys: Vec<&String> = all_keys.iter()
+                        let populated_keys: Vec<&String> = all_keys
+                            .iter()
                             .filter(|k| !k.starts_with('_'))
-                            .filter(|k| current.get(k.as_str()).map(|v| !v.is_null()).unwrap_or(false))
+                            .filter(|k| {
+                                current
+                                    .get(k.as_str())
+                                    .map(|v| !v.is_null())
+                                    .unwrap_or(false)
+                            })
                             .collect();
-                        let null_keys: Vec<&String> = all_keys.iter()
+                        let null_keys: Vec<&String> = all_keys
+                            .iter()
                             .filter(|k| !k.starts_with('_'))
-                            .filter(|k| current.get(k.as_str()).map(|v| v.is_null()).unwrap_or(true))
+                            .filter(|k| {
+                                current.get(k.as_str()).map(|v| v.is_null()).unwrap_or(true)
+                            })
                             .collect();
 
                         println!("  [dynamic]  Completed: {populated_keys:?}");
@@ -2265,7 +2388,10 @@ fn create_supervisor_handler_with_llm(
 
                             match llm.chat(messages).await {
                                 Ok(response) => {
-                                    println!("  [dynamic]  LLM raw response: {:?}", response.content);
+                                    println!(
+                                        "  [dynamic]  LLM raw response: {:?}",
+                                        response.content
+                                    );
                                     let content = response.content.trim();
                                     // Try to extract JSON array from the response
                                     let json_str = if let Some(start) = content.find('[') {
@@ -2277,7 +2403,8 @@ fn create_supervisor_handler_with_llm(
                                     } else {
                                         content
                                     };
-                                    let parsed = serde_json::from_str::<Vec<String>>(json_str).unwrap_or_default();
+                                    let parsed = serde_json::from_str::<Vec<String>>(json_str)
+                                        .unwrap_or_default();
                                     if parsed.is_empty() && !content.contains("[]") {
                                         println!("  [dynamic]  WARNING: could not parse LLM response as JSON array");
                                     }
@@ -2290,17 +2417,21 @@ fn create_supervisor_handler_with_llm(
                             }
                         } else {
                             // No LLM — fall back to output_owners
-                            let missing: Vec<String> = config.required_outputs
+                            let missing: Vec<String> = config
+                                .required_outputs
                                 .iter()
                                 .filter(|key| {
-                                    current.get(key.as_str())
+                                    current
+                                        .get(key.as_str())
                                         .map(|v| v.is_null())
                                         .unwrap_or(true)
                                 })
                                 .cloned()
                                 .collect();
 
-                            if missing.is_empty() { break; }
+                            if missing.is_empty() {
+                                break;
+                            }
 
                             let mut agents = Vec::new();
                             for key in &missing {
@@ -2310,16 +2441,20 @@ fn create_supervisor_handler_with_llm(
                                     }
                                 }
                             }
-                            if agents.is_empty() { break; }
+                            if agents.is_empty() {
+                                break;
+                            }
                             agents
                         };
 
                         // If LLM returned empty but outputs still missing, use fallback
                         if agents_to_call.is_empty() {
-                            let still_missing: Vec<String> = config.required_outputs
+                            let still_missing: Vec<String> = config
+                                .required_outputs
                                 .iter()
                                 .filter(|key| {
-                                    current.get(key.as_str())
+                                    current
+                                        .get(key.as_str())
                                         .map(|v| v.is_null())
                                         .unwrap_or(true)
                                 })
@@ -2335,7 +2470,9 @@ fn create_supervisor_handler_with_llm(
                             let mut fallback = Vec::new();
                             for key in &still_missing {
                                 if let Some(owner) = config.output_owners.get(key.as_str()) {
-                                    if !fallback.contains(owner) && child_map.contains_key(owner.as_str()) {
+                                    if !fallback.contains(owner)
+                                        && child_map.contains_key(owner.as_str())
+                                    {
                                         fallback.push(owner.clone());
                                     }
                                 }
@@ -2352,8 +2489,12 @@ fn create_supervisor_handler_with_llm(
                                     inject_mcps(agent_name, &current);
                                     println!("  [dynamic]  Running {agent_name}...");
                                     let (result, ms) = run_child(
-                                        agent_name, handler, current.clone(), config.child_timeout_ms,
-                                    ).await;
+                                        agent_name,
+                                        handler,
+                                        current.clone(),
+                                        config.child_timeout_ms,
+                                    )
+                                    .await;
                                     match result {
                                         Ok(new_state) => {
                                             current = new_state;
@@ -2368,7 +2509,9 @@ fn create_supervisor_handler_with_llm(
                                                 "name": agent_name, "success": false,
                                                 "error": e.to_string(), "duration_ms": ms,
                                             }));
-                                            if config.fail_fast { break 'dynamic_outer; }
+                                            if config.fail_fast {
+                                                break 'dynamic_outer;
+                                            }
                                         }
                                     }
                                 }
@@ -2389,8 +2532,12 @@ fn create_supervisor_handler_with_llm(
                                 inject_mcps(agent_name, &current);
                                 println!("  [dynamic]  Running {agent_name}...");
                                 let (result, ms) = run_child(
-                                    agent_name, handler, current.clone(), config.child_timeout_ms,
-                                ).await;
+                                    agent_name,
+                                    handler,
+                                    current.clone(),
+                                    config.child_timeout_ms,
+                                )
+                                .await;
                                 match result {
                                     Ok(new_state) => {
                                         current = new_state;
@@ -2405,7 +2552,9 @@ fn create_supervisor_handler_with_llm(
                                             "name": agent_name, "success": false,
                                             "error": e.to_string(), "duration_ms": ms,
                                         }));
-                                        if config.fail_fast { break 'dynamic_outer; }
+                                        if config.fail_fast {
+                                            break 'dynamic_outer;
+                                        }
                                     }
                                 }
                             } else {
@@ -2436,14 +2585,16 @@ fn create_supervisor_handler_with_llm(
                 // Tasks from a state array are distributed across agents in rotation.
                 OrchestrationStrategy::RoundRobin => {
                     let tasks_key = config.tasks_key.as_deref().unwrap_or("tasks");
-                    let tasks: Vec<serde_json::Value> = state.get(tasks_key)
+                    let tasks: Vec<serde_json::Value> = state
+                        .get(tasks_key)
                         .and_then(|v| v.as_array().cloned())
                         .unwrap_or_default();
 
                     if tasks.is_empty() {
                         tracing::warn!(
                             "Supervisor '{}' round_robin: no tasks at key '{}'",
-                            config.name, tasks_key
+                            config.name,
+                            tasks_key
                         );
                         state.set(
                             format!("__supervisor_meta__{}", config.name),
@@ -2466,7 +2617,9 @@ fn create_supervisor_handler_with_llm(
                         current.set("__task_index__".to_string(), json!(i));
                         inject_mcps(name, &current);
 
-                        let (result, ms) = run_child(name, handler, current.clone(), config.child_timeout_ms).await;
+                        let (result, ms) =
+                            run_child(name, handler, current.clone(), config.child_timeout_ms)
+                                .await;
                         match result {
                             Ok(new_state) => {
                                 if let Some(r) = new_state.get("__task_result__") {
@@ -2483,7 +2636,9 @@ fn create_supervisor_handler_with_llm(
                                     "task_index": i, "agent": name, "success": false,
                                     "error": e.to_string(), "duration_ms": ms,
                                 }));
-                                if config.fail_fast { break; }
+                                if config.fail_fast {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -2514,7 +2669,8 @@ fn create_supervisor_handler_with_llm(
                     for (name, handler) in &children {
                         tracing::info!(
                             "Supervisor '{}' hierarchical: delegating to sub-supervisor '{}'",
-                            config.name, name
+                            config.name,
+                            name
                         );
 
                         // Skip condition
@@ -2532,7 +2688,9 @@ fn create_supervisor_handler_with_llm(
                         let mut last_err = String::new();
 
                         for attempt in 1..=max_attempts {
-                            let (result, ms) = run_child(name, handler, current.clone(), config.child_timeout_ms).await;
+                            let (result, ms) =
+                                run_child(name, handler, current.clone(), config.child_timeout_ms)
+                                    .await;
                             total_ms += ms;
                             match result {
                                 Ok(new_state) => {
@@ -2560,7 +2718,9 @@ fn create_supervisor_handler_with_llm(
 
                         if !succeeded {
                             errors.push(format!("Sub-supervisor '{}': {}", name, last_err));
-                            if config.fail_fast { break; }
+                            if config.fail_fast {
+                                break;
+                            }
                         }
                     }
 
@@ -2582,7 +2742,8 @@ fn create_supervisor_handler_with_llm(
                 // Each child gets a deep_clone so writes are isolated.
                 OrchestrationStrategy::Broadcast => {
                     let base_state = Arc::new(state);
-                    let semaphore = config.max_concurrent
+                    let semaphore = config
+                        .max_concurrent
                         .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
 
                     let futures: Vec<_> = children
@@ -2600,7 +2761,8 @@ fn create_supervisor_handler_with_llm(
                                 } else {
                                     None
                                 };
-                                let (result, ms) = run_child(&name, &handler, state_copy, timeout_ms).await;
+                                let (result, ms) =
+                                    run_child(&name, &handler, state_copy, timeout_ms).await;
                                 (name, result, ms)
                             }
                         })
@@ -2609,7 +2771,10 @@ fn create_supervisor_handler_with_llm(
                     let results = futures::future::join_all(futures).await;
 
                     let score_key = config.score_key.as_deref().unwrap_or("__score__");
-                    let criteria = config.selection_criteria.as_deref().unwrap_or("first_success");
+                    let criteria = config
+                        .selection_criteria
+                        .as_deref()
+                        .unwrap_or("first_success");
 
                     let mut successes: Vec<(String, SharedState, u128)> = Vec::new();
                     let mut child_results = Vec::new();
@@ -2655,13 +2820,14 @@ fn create_supervisor_handler_with_llm(
                                 let sb = b.get(score_key).and_then(|v| v.as_f64()).unwrap_or(0.0);
                                 sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
                             });
-                            best.map(|(n, s, _)| (n, s)).unwrap_or_else(|| {
-                                ("unknown".to_string(), (*base_state).clone())
-                            })
+                            best.map(|(n, s, _)| (n, s))
+                                .unwrap_or_else(|| ("unknown".to_string(), (*base_state).clone()))
                         }
                         _ => {
                             // first_success
-                            successes.into_iter().next()
+                            successes
+                                .into_iter()
+                                .next()
                                 .map(|(n, s, _)| (n, s))
                                 .unwrap_or_else(|| ("unknown".to_string(), (*base_state).clone()))
                         }
@@ -2687,14 +2853,16 @@ fn create_supervisor_handler_with_llm(
                     let map_key = config.map_key.as_deref().unwrap_or("input_chunks");
                     let reduce_key = config.reduce_key.as_deref().unwrap_or("reduced_output");
 
-                    let chunks: Vec<serde_json::Value> = state.get(map_key)
+                    let chunks: Vec<serde_json::Value> = state
+                        .get(map_key)
                         .and_then(|v| v.as_array().cloned())
                         .unwrap_or_default();
 
                     if chunks.is_empty() {
                         tracing::warn!(
                             "Supervisor '{}' map_reduce: no data at key '{}'",
-                            config.name, map_key
+                            config.name,
+                            map_key
                         );
                         state.set(
                             format!("__supervisor_meta__{}", config.name),
@@ -2706,11 +2874,14 @@ fn create_supervisor_handler_with_llm(
 
                     let base_state = Arc::new(state);
                     let num_children = children.len();
-                    let semaphore = config.max_concurrent
+                    let semaphore = config
+                        .max_concurrent
                         .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
 
                     // Map phase: distribute chunks across children
-                    let futures: Vec<_> = chunks.iter().enumerate()
+                    let futures: Vec<_> = chunks
+                        .iter()
+                        .enumerate()
                         .map(|(i, chunk)| {
                             let child_idx = i % num_children;
                             let (name, handler) = children[child_idx].clone();
@@ -2725,7 +2896,8 @@ fn create_supervisor_handler_with_llm(
                                 } else {
                                     None
                                 };
-                                let (result, ms) = run_child(&name, &handler, chunk_state, timeout_ms).await;
+                                let (result, ms) =
+                                    run_child(&name, &handler, chunk_state, timeout_ms).await;
                                 (i, name, result, ms)
                             }
                         })
@@ -2804,7 +2976,8 @@ fn create_supervisor_handler_with_llm(
                     });
 
                     if let Some(handler) = child_map.get(&agent_name) {
-                        let (result, ms) = run_child(&agent_name, handler, state, config.child_timeout_ms).await;
+                        let (result, ms) =
+                            run_child(&agent_name, handler, state, config.child_timeout_ms).await;
                         match result {
                             Ok(final_state) => {
                                 final_state.set(
@@ -2852,8 +3025,12 @@ fn create_supervisor_handler_with_llm(
 
                             for attempt in 1..=max_attempts {
                                 let (result, ms) = run_child(
-                                    agent_name, handler, state.clone(), config.child_timeout_ms,
-                                ).await;
+                                    agent_name,
+                                    handler,
+                                    state.clone(),
+                                    config.child_timeout_ms,
+                                )
+                                .await;
                                 total_ms += ms;
 
                                 match result {
@@ -2874,7 +3051,8 @@ fn create_supervisor_handler_with_llm(
                                         );
                                         tracing::info!(
                                             "Supervisor '{}' retry_fallback: '{}' succeeded",
-                                            config.name, agent_name
+                                            config.name,
+                                            agent_name
                                         );
                                         return Ok(final_state);
                                     }
@@ -2923,19 +3101,26 @@ fn create_supervisor_handler_with_llm(
                 // Agents generate responses and critique each other across rounds.
                 OrchestrationStrategy::Debate => {
                     let mut current = state;
-                    let rounds = if config.debate_rounds == 0 { 2 } else { config.debate_rounds };
+                    let rounds = if config.debate_rounds == 0 {
+                        2
+                    } else {
+                        config.debate_rounds
+                    };
                     let mut debate_log: Vec<serde_json::Value> = Vec::new();
 
                     let child_map: HashMap<String, ArcHandler<SharedState>> = children
                         .iter()
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
-                    let child_names: Vec<String> = children.iter().map(|(n, _)| n.clone()).collect();
+                    let child_names: Vec<String> =
+                        children.iter().map(|(n, _)| n.clone()).collect();
 
                     for round in 0..rounds {
                         tracing::info!(
                             "Supervisor '{}' debate: round {}/{}",
-                            config.name, round + 1, rounds
+                            config.name,
+                            round + 1,
+                            rounds
                         );
                         let mut round_responses: Vec<serde_json::Value> = Vec::new();
 
@@ -2956,12 +3141,17 @@ fn create_supervisor_handler_with_llm(
                                 }
 
                                 let (result, ms) = run_child(
-                                    agent_name, handler, current.clone(), config.child_timeout_ms,
-                                ).await;
+                                    agent_name,
+                                    handler,
+                                    current.clone(),
+                                    config.child_timeout_ms,
+                                )
+                                .await;
 
                                 match result {
                                     Ok(new_state) => {
-                                        let response = new_state.get("__debate_response__")
+                                        let response = new_state
+                                            .get("__debate_response__")
                                             .unwrap_or(json!(null));
                                         round_responses.push(json!({
                                             "agent": agent_name,
@@ -3061,7 +3251,10 @@ fn create_loop_standalone_handler(
 
             tracing::info!(
                 "Standalone loop '{}' iteration={}/{}, continue={}",
-                key_base, iteration, config.max_iterations, should_continue
+                key_base,
+                iteration,
+                config.max_iterations,
+                should_continue
             );
 
             Ok(state)

@@ -103,12 +103,11 @@ impl EmbeddingsProvider for OllamaEmbeddings {
             });
         }
 
-        let result: OllamaEmbedResponse = resp.json().await.map_err(|e| {
-            EmbeddingError::ApiError {
+        let result: OllamaEmbedResponse =
+            resp.json().await.map_err(|e| EmbeddingError::ApiError {
                 status: 0,
                 message: format!("Failed to parse response: {}", e),
-            }
-        })?;
+            })?;
 
         Ok(result.embedding)
     }

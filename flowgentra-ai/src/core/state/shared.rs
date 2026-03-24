@@ -55,14 +55,16 @@ pub struct SharedState {
     inner: Arc<RwLock<PlainState>>,
 }
 
-
 // Custom serialization implementation
 impl serde::Serialize for SharedState {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let guard = self.inner.read().map_err(|_| serde::ser::Error::custom("Failed to acquire read lock"))?;
+        let guard = self
+            .inner
+            .read()
+            .map_err(|_| serde::ser::Error::custom("Failed to acquire read lock"))?;
         guard.serialize(serializer)
     }
 }
@@ -93,7 +95,10 @@ impl SharedState {
     /// `Arc<RwLock<PlainState>>` with a snapshot of the current data.
     /// Use this when children must have isolated state (e.g. Broadcast, MapReduce).
     pub fn deep_clone(&self) -> Self {
-        let guard = self.inner.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let plain_copy = PlainState {
             data: guard.data.clone(),
         };
@@ -125,8 +130,9 @@ impl SharedState {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn lock(&self) -> crate::core::error::Result<RwLockWriteGuard<'_, PlainState>> {
-        self.inner.write()
-            .map_err(|_| crate::core::error::FlowgentraError::StateError("Write lock poisoned".to_string()))
+        self.inner.write().map_err(|_| {
+            crate::core::error::FlowgentraError::StateError("Write lock poisoned".to_string())
+        })
     }
 
     /// Try to lock the state for writing, returning None if lock is poisoned
@@ -164,7 +170,9 @@ impl SharedState {
         self.inner
             .read()
             .map_err(|_| {
-                crate::core::error::FlowgentraError::StateError("Failed to acquire read lock".to_string())
+                crate::core::error::FlowgentraError::StateError(
+                    "Failed to acquire read lock".to_string(),
+                )
             })?
             .get_typed(key)
     }
@@ -210,15 +218,21 @@ impl SharedState {
         self.inner
             .read()
             .ok()
-            .map(|guard| guard.data.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect())
+            .map(|guard| {
+                guard
+                    .data
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     /// Convert to a JSON value
     pub fn to_value(&self) -> Value {
-        self.inner.read().ok()
+        self.inner
+            .read()
+            .ok()
             .map(|guard| guard.to_value())
             .unwrap_or(Value::Null)
     }
@@ -228,14 +242,15 @@ impl SharedState {
         self.inner
             .read()
             .map_err(|_| {
-                crate::core::error::FlowgentraError::StateError("Failed to acquire read lock".to_string())
+                crate::core::error::FlowgentraError::StateError(
+                    "Failed to acquire read lock".to_string(),
+                )
             })?
             .to_json_string()
     }
 
     /// Store evaluation result for a node
     pub fn set_evaluation(&self, node: &str, eval: crate::core::evaluation::EvaluationResult) {
-
         let key = format!("_evaluation_{}", node);
         if let Ok(json_val) = serde_json::to_value(&eval) {
             self.set(key, json_val);
@@ -247,9 +262,13 @@ impl SharedState {
         self.inner
             .read()
             .ok()
-            .map(|guard| guard.data.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect())
+            .map(|guard| {
+                guard
+                    .data
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -272,10 +291,14 @@ impl SharedState {
     /// Merge another state into this one
     pub fn merge(&self, other: SharedState) -> crate::core::error::Result<()> {
         let mut this = self.inner.write().map_err(|_| {
-            crate::core::error::FlowgentraError::StateError("Failed to acquire write lock".to_string())
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire write lock".to_string(),
+            )
         })?;
         let other_inner = other.inner.read().map_err(|_| {
-            crate::core::error::FlowgentraError::StateError("Failed to acquire read lock".to_string())
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire read lock".to_string(),
+            )
         })?;
         this.merge(other_inner.clone());
         Ok(())
@@ -299,7 +322,9 @@ impl SharedState {
         F: FnOnce(&mut PlainState),
     {
         let mut state = self.inner.write().map_err(|_| {
-            crate::core::error::FlowgentraError::StateError("Failed to acquire write lock".to_string())
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire write lock".to_string(),
+            )
         })?;
         f(&mut state);
         Ok(())
@@ -311,7 +336,9 @@ impl SharedState {
         F: FnOnce(&PlainState) -> R,
     {
         let state = self.inner.read().map_err(|_| {
-            crate::core::error::FlowgentraError::StateError("Failed to acquire read lock".to_string())
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire read lock".to_string(),
+            )
         })?;
         Ok(f(&state))
     }
@@ -319,7 +346,9 @@ impl SharedState {
     /// Convert back to a PlainState (clones the inner state)
     pub fn into_state(self) -> crate::core::error::Result<PlainState> {
         self.inner.read().map(|state| state.clone()).map_err(|_| {
-            crate::core::error::FlowgentraError::StateError("Failed to acquire read lock".to_string())
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire read lock".to_string(),
+            )
         })
     }
 
@@ -331,10 +360,9 @@ impl SharedState {
     /// Get a value as a string, or `None` if missing/not a string.
     pub fn get_str(&self, key: &str) -> Option<String> {
         match self.inner.read() {
-            Ok(guard) => {
-                guard.get(key)
-                    .and_then(|v| v.as_str().map(|s| s.to_string()))
-            }
+            Ok(guard) => guard
+                .get(key)
+                .and_then(|v| v.as_str().map(|s| s.to_string())),
             Err(_) => None,
         }
     }
@@ -454,9 +482,7 @@ impl SharedState {
     /// let store = state.get_rag_store().await?;
     /// let results = store.search(query_embedding, 5, None).await?;
     /// ```
-    pub async fn get_rag_store(
-        &self,
-    ) -> crate::core::error::Result<crate::core::rag::ChromaStore> {
+    pub async fn get_rag_store(&self) -> crate::core::error::Result<crate::core::rag::ChromaStore> {
         let config = self.get_rag_config()?;
 
         let endpoint = config
@@ -513,15 +539,19 @@ impl SharedState {
                         .to_string(),
                 )
             })?;
-        let config = configs.into_iter().find(|(k, _)| k == name).map(|(_, v)| v).ok_or_else(|| {
-            crate::core::error::FlowgentraError::ConfigError(format!(
-                "MCP '{}' not found in config. Available: {:?}",
-                name,
-                self.get("_mcp_configs")
-                    .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()))
-                    .unwrap_or_default()
-            ))
-        })?;
+        let config = configs
+            .into_iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v)
+            .ok_or_else(|| {
+                crate::core::error::FlowgentraError::ConfigError(format!(
+                    "MCP '{}' not found in config. Available: {:?}",
+                    name,
+                    self.get("_mcp_configs")
+                        .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()))
+                        .unwrap_or_default()
+                ))
+            })?;
         crate::core::mcp::MCPClientFactory::create(config)
     }
 
@@ -556,7 +586,8 @@ impl SharedState {
         let node_mcps = self.get_node_mcps();
         let name = node_mcps.first().ok_or_else(|| {
             crate::core::error::FlowgentraError::ConfigError(
-                "No MCPs assigned to this node. Add mcps: [mcp_name] to the node config.".to_string()
+                "No MCPs assigned to this node. Add mcps: [mcp_name] to the node config."
+                    .to_string(),
             )
         })?;
         self.get_mcp_client(name)
@@ -588,10 +619,12 @@ impl SharedState {
         let node_mcps = self.get_node_mcps();
         let name = node_mcps.first().ok_or_else(|| {
             crate::core::error::FlowgentraError::ConfigError(
-                "No MCPs assigned to this node. Add mcps: [mcp_name] to the node config.".to_string()
+                "No MCPs assigned to this node. Add mcps: [mcp_name] to the node config."
+                    .to_string(),
             )
         })?;
-        self.chat_with_mcp_tools(name, messages, max_iterations).await
+        self.chat_with_mcp_tools(name, messages, max_iterations)
+            .await
     }
 
     /// Run an LLM chat with MCP tools in a loop until the LLM produces a final text response.
@@ -628,17 +661,21 @@ impl SharedState {
         let mcp_tools = mcp.list_tools().await?;
         let tool_defs: Vec<crate::core::llm::ToolDefinition> = mcp_tools
             .iter()
-            .map(|t| crate::core::llm::ToolDefinition::new(
-                &t.name,
-                t.description.as_deref().unwrap_or(""),
-                t.input_schema.clone(),
-            ))
+            .map(|t| {
+                crate::core::llm::ToolDefinition::new(
+                    &t.name,
+                    t.description.as_deref().unwrap_or(""),
+                    t.input_schema.clone(),
+                )
+            })
             .collect();
 
         let mut conversation = messages;
 
         for iteration in 0..max_iterations {
-            let response = llm.chat_with_tools(conversation.clone(), &tool_defs).await?;
+            let response = llm
+                .chat_with_tools(conversation.clone(), &tool_defs)
+                .await?;
 
             if !response.has_tool_calls() {
                 // LLM gave a final text answer
@@ -665,30 +702,36 @@ impl SharedState {
         }
 
         // Max iterations reached — return the last assistant message or error
-        Err(crate::core::error::FlowgentraError::ExecutionError(format!(
-            "chat_with_mcp_tools: max iterations ({}) reached without final response",
-            max_iterations
-        )))
+        Err(crate::core::error::FlowgentraError::ExecutionError(
+            format!(
+                "chat_with_mcp_tools: max iterations ({}) reached without final response",
+                max_iterations
+            ),
+        ))
     }
 
     /// Helper: Acquire read lock with proper error handling
-    /// 
+    ///
     /// Converts lock poison errors to FlowgentraError::StateError
     pub fn lock_read(&self) -> crate::core::error::Result<RwLockReadGuard<'_, PlainState>> {
-        self.inner.read()
-            .map_err(|_| crate::core::error::FlowgentraError::StateError(
-                "Failed to acquire read lock (poisoned or concurrent modification issue)".to_string()
-            ))
+        self.inner.read().map_err(|_| {
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire read lock (poisoned or concurrent modification issue)"
+                    .to_string(),
+            )
+        })
     }
 
     /// Helper: Acquire write lock with proper error handling
-    /// 
+    ///
     /// Converts lock poison errors to FlowgentraError::StateError
     pub fn lock_write(&self) -> crate::core::error::Result<RwLockWriteGuard<'_, PlainState>> {
-        self.inner.write()
-            .map_err(|_| crate::core::error::FlowgentraError::StateError(
-                "Failed to acquire write lock (poisoned or concurrent modification issue)".to_string()
-            ))
+        self.inner.write().map_err(|_| {
+            crate::core::error::FlowgentraError::StateError(
+                "Failed to acquire write lock (poisoned or concurrent modification issue)"
+                    .to_string(),
+            )
+        })
     }
 }
 
@@ -733,7 +776,8 @@ impl crate::core::state::State for SharedState {
     }
 
     fn keys(&self) -> Box<dyn Iterator<Item = String> + '_> {
-        let keys: Vec<String> = self.inner
+        let keys: Vec<String> = self
+            .inner
             .read()
             .ok()
             .map(|state| state.data.keys().cloned().collect())

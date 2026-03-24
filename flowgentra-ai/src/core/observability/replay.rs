@@ -97,7 +97,11 @@ impl ReplayMode {
         let b_obj = b.as_object()?;
 
         let mut changed = Vec::new();
-        for key in a_obj.keys().chain(b_obj.keys()).collect::<std::collections::HashSet<_>>() {
+        for key in a_obj
+            .keys()
+            .chain(b_obj.keys())
+            .collect::<std::collections::HashSet<_>>()
+        {
             if a_obj.get(key) != b_obj.get(key) {
                 changed.push(key.clone());
             }

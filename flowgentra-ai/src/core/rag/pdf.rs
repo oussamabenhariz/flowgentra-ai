@@ -23,7 +23,7 @@ pub struct PdfDocument {
 pub fn estimate_tokens(text: &str) -> usize {
     // A common heuristic: 1 token ≈ 4 characters for English text.
     // CJK and code may differ, but this is a reasonable default.
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 /// Extract all text from a PDF file (async — offloads to blocking thread pool)

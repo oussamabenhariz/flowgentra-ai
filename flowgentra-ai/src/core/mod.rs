@@ -42,7 +42,6 @@ pub mod reducer;
 //        ├─ LLM (AI)
 //        └─ MCP (Tools)
 /// ```
-
 // Core modules - organized by dependency layer
 pub mod agent;
 pub mod agents;
@@ -69,9 +68,12 @@ pub mod validation;
 // Re-export from submodules for backward compatibility
 pub use graph::routing;
 pub use node::{advanced_nodes, builtin_nodes, nodes_trait};
-pub use runtime::{context, parallel};
 pub use reducer::{JsonReducer, ReducerConfig};
-pub use state_graph::{FunctionNode, InMemoryCheckpointer, StateGraph, StateGraphBuilder, StateGraphError, StateUpdate, START, END};
+pub use runtime::{context, parallel};
+pub use state_graph::{
+    FunctionNode, InMemoryCheckpointer, StateGraph, StateGraphBuilder, StateGraphError,
+    StateUpdate, END, START,
+};
 pub use utils::visualization;
 pub use utils::{debug, tracing};
 
@@ -90,9 +92,6 @@ pub use validation::ValidationError;
 pub use advanced_nodes::{
     JoinNodeConfig, JoinType, LoopNodeConfig, MergeStrategy, ParallelNodeConfig, SubgraphNodeConfig,
 };
-pub use node::builtin_nodes::{
-    ConditionalRouter, HumanInTheLoopNode, LLMNode, RetryNode, TimeoutNode, ToolNode,
-};
 pub use context::ExecutionContext;
 pub use graph::Graph;
 pub use llm::{LLMConfig, LLMProvider, Message, MessageRole};
@@ -104,6 +103,9 @@ pub use memory::{
 };
 pub use middleware::{
     ExecutionContext as MiddlewareContext, Middleware, MiddlewarePipeline, MiddlewareResult,
+};
+pub use node::builtin_nodes::{
+    ConditionalRouter, HumanInTheLoopNode, LLMNode, RetryNode, TimeoutNode, ToolNode,
 };
 pub use node::{Edge, EdgeConfig, Node, NodeConfig};
 pub use nodes_trait::{

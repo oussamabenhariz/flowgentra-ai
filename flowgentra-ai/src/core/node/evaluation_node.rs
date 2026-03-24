@@ -27,16 +27,16 @@
 //! confidence >= min_confidence or max_retries is reached.
 
 use crate::core::error::{FlowgentraError, Result};
-use crate::core::state::State;
 use crate::core::node::nodes_trait::PluggableNode;
+use crate::core::state::State;
 use crate::core::NodeOutput;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{info, warn};
-use async_trait::async_trait;
 
 /// An async scorer: receives `(output, attempt)`, returns `(score 0.0–1.0, feedback)`.
 ///
@@ -47,9 +47,8 @@ use async_trait::async_trait;
 /// - [`scorer_from_confidence`] — use the built-in [`ConfidenceScorer`](crate::core::evaluation::ConfidenceScorer)
 /// - [`scorer_from_llm_grader`] — use the built-in [`LLMGrader`](crate::core::evaluation::LLMGrader)
 /// - [`scorer_combine`] — weighted mix of multiple scorers
-pub type ScorerFn = Arc<
-    dyn Fn(Value, u32) -> futures::future::BoxFuture<'static, (f64, String)> + Send + Sync,
->;
+pub type ScorerFn =
+    Arc<dyn Fn(Value, u32) -> futures::future::BoxFuture<'static, (f64, String)> + Send + Sync>;
 
 /// Configuration for an evaluation node (from YAML or programmatic)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -93,15 +92,20 @@ impl EvaluationNodeConfig {
     /// Validate configuration
     pub fn validate(config: &EvaluationNodeConfig) -> Result<()> {
         if config.name.is_empty() {
-            return Err(FlowgentraError::ConfigError("Node name cannot be empty".to_string()));
+            return Err(FlowgentraError::ConfigError(
+                "Node name cannot be empty".to_string(),
+            ));
         }
         if config.handler.is_empty() {
-            return Err(FlowgentraError::ConfigError("Handler name cannot be empty".to_string()));
+            return Err(FlowgentraError::ConfigError(
+                "Handler name cannot be empty".to_string(),
+            ));
         }
         if config.min_confidence < 0.0 || config.min_confidence > 1.0 {
-            return Err(FlowgentraError::ConfigError(
-                format!("min_confidence must be 0.0-1.0, got {}", config.min_confidence)
-            ));
+            return Err(FlowgentraError::ConfigError(format!(
+                "min_confidence must be 0.0-1.0, got {}",
+                config.min_confidence
+            )));
         }
         Ok(())
     }
@@ -111,19 +115,27 @@ impl EvaluationNodeConfig {
     /// Extracts evaluation-specific fields (field_state, min_confidence, max_retries, rubric)
     /// from the node's config map.
     pub fn from_node_config(node: &crate::core::node::NodeConfig) -> Result<Self> {
-        let field_state = node.config.get("field_state")
+        let field_state = node
+            .config
+            .get("field_state")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let min_confidence = node.config.get("min_confidence")
+        let min_confidence = node
+            .config
+            .get("min_confidence")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.80);
 
-        let max_retries = node.config.get("max_retries")
+        let max_retries = node
+            .config
+            .get("max_retries")
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as u32;
 
-        let rubric = node.config.get("rubric")
+        let rubric = node
+            .config
+            .get("rubric")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -144,7 +156,8 @@ impl EvaluationNodeConfig {
     /// Get effective field name (handles aliases)
     pub fn get_field_name(&self) -> Option<String> {
         self.field_state.clone().or_else(|| {
-            self.config.get("field_state")
+            self.config
+                .get("field_state")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
         })
@@ -223,8 +236,14 @@ impl EvaluationNodeConfig {
 
                 state.set(&attempt_key, json!(attempt));
                 state.set(format!("__eval_score__{}", config.name), json!(score));
-                state.set(format!("__eval_feedback__{}", config.name), json!(&feedback));
-                state.set(format!("__eval_needs_retry__{}", config.name), json!(needs_retry));
+                state.set(
+                    format!("__eval_feedback__{}", config.name),
+                    json!(&feedback),
+                );
+                state.set(
+                    format!("__eval_needs_retry__{}", config.name),
+                    json!(needs_retry),
+                );
                 state.set(
                     format!("__eval_meta__{}", config.name),
                     json!({
@@ -246,7 +265,11 @@ impl EvaluationNodeConfig {
 
                 tracing::info!(
                     "Standalone eval '{}' attempt {}/{}: score={:.2}, needs_retry={}",
-                    config.name, attempt, config.max_retries, score, needs_retry
+                    config.name,
+                    attempt,
+                    config.max_retries,
+                    score,
+                    needs_retry
                 );
 
                 Ok(state)
@@ -313,7 +336,9 @@ impl EvaluationNodeConfig {
                 for attempt_num in 1..=config.max_retries {
                     tracing::info!(
                         "Evaluation attempt {}/{} for '{}'",
-                        attempt_num, config.max_retries, config.name
+                        attempt_num,
+                        config.max_retries,
+                        config.name
                     );
 
                     state = inner(state).await?;
@@ -351,7 +376,9 @@ impl EvaluationNodeConfig {
                         );
                         tracing::info!(
                             "Evaluation '{}' reached confidence {:.2} after {} attempts",
-                            config.name, score, attempt_num
+                            config.name,
+                            score,
+                            attempt_num
                         );
                         return Ok(state);
                     }
@@ -359,7 +386,9 @@ impl EvaluationNodeConfig {
                     state.set(format!("__eval_feedback__{}", config.name), json!(feedback));
                     tracing::info!(
                         "Evaluation '{}' attempt {} scored {:.2}, retrying...",
-                        config.name, attempt_num, score
+                        config.name,
+                        attempt_num,
+                        score
                     );
                 }
 
@@ -381,7 +410,8 @@ impl EvaluationNodeConfig {
 
                 tracing::warn!(
                     "Evaluation '{}' reached max retries with best score {:.2}",
-                    config.name, best_score
+                    config.name,
+                    best_score
                 );
                 Ok(state)
             })
@@ -485,13 +515,19 @@ pub struct EvaluationNode<T: State> {
 
 impl<T: State> EvaluationNode<T> {
     /// Create a new evaluation node with validation
-    pub fn new(config: EvaluationNodeConfig, inner_node: Box<dyn PluggableNode<T>>) -> Result<Self> {
+    pub fn new(
+        config: EvaluationNodeConfig,
+        inner_node: Box<dyn PluggableNode<T>>,
+    ) -> Result<Self> {
         EvaluationNodeConfig::validate(&config)?;
         Ok(EvaluationNode { config, inner_node })
     }
 
     /// Create without validation (useful for dynamic wrapping)
-    pub fn new_unchecked(config: EvaluationNodeConfig, inner_node: Box<dyn PluggableNode<T>>) -> Self {
+    pub fn new_unchecked(
+        config: EvaluationNodeConfig,
+        inner_node: Box<dyn PluggableNode<T>>,
+    ) -> Self {
         EvaluationNode { config, inner_node }
     }
 }
@@ -553,9 +589,14 @@ impl<T: State> PluggableNode<T> for EvaluationNode<T> {
             let inner_state = inner_result.state;
             let output = match field_name.as_ref() {
                 Some(field) => inner_state.get(field).unwrap_or(Value::Null),
-                None => Value::String(inner_result.metadata.get("output")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("").to_string()),
+                None => Value::String(
+                    inner_result
+                        .metadata
+                        .get("output")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                ),
             };
 
             let duration = attempt_start.elapsed();
@@ -684,9 +725,7 @@ pub fn scorer_from_sync(
 /// });
 /// cfg.into_standalone_node_fn_with_scorer::<SharedState>(scorer)
 /// ```
-pub fn scorer_from_node_scorer(
-    criteria: crate::core::evaluation::ScoringCriteria,
-) -> ScorerFn {
+pub fn scorer_from_node_scorer(criteria: crate::core::evaluation::ScoringCriteria) -> ScorerFn {
     Arc::new(move |output: Value, _attempt: u32| {
         let criteria = criteria.clone();
         Box::pin(async move {

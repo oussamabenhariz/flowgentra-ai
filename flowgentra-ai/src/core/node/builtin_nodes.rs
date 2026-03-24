@@ -1,13 +1,11 @@
-use crate::core::node::nodes_trait::{ToolNodeConfig, ConditionalRouterConfig};
 use crate::core::node::nodes_trait::LLMNodeConfig;
-use crate::core::TimeoutNodeConfig;
-use crate::core::nodes_trait::NodeService;
+use crate::core::node::nodes_trait::{ConditionalRouterConfig, ToolNodeConfig};
 use crate::core::nodes_trait::HumanInTheLoopConfig;
+use crate::core::nodes_trait::NodeService;
+use crate::core::NodeOutput;
 use crate::core::PluggableNode;
 use crate::core::RetryNodeConfig;
-use crate::core::NodeOutput;
-
-
+use crate::core::TimeoutNodeConfig;
 
 // # Built-in Node Implementations
 //
@@ -107,6 +105,7 @@ pub type ConditionFn<T> = Box<dyn Fn(&T) -> bool + Send + Sync>;
 /// Node that routes based on conditions
 pub struct ConditionalRouter<T: State> {
     config: ConditionalRouterConfig,
+    #[allow(clippy::type_complexity)]
     conditions: HashMap<String, Box<dyn Fn(&T) -> bool + Send + Sync>>,
 }
 
@@ -444,7 +443,10 @@ impl<T: crate::core::state::State> crate::core::node::PluggableNode<T> for Timeo
     fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
         Box::new(TimeoutNode {
             config: self.config.clone(),
-            inner_node: self.inner_node.as_ref().map(|n: &Box<dyn PluggableNode<T>>| n.clone_box()),
+            inner_node: self
+                .inner_node
+                .as_ref()
+                .map(|n| n.clone_box()),
         })
     }
 }

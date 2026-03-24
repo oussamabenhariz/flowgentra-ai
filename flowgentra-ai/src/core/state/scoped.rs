@@ -62,7 +62,6 @@ impl ScopedState {
     /// Get all keys in this namespace (without the namespace prefix).
     pub fn keys(&self) -> Vec<String> {
         let prefix = format!("{}.", self.namespace);
-        use crate::core::state::State;
         self.inner
             .keys()
             .filter_map(|k| k.strip_prefix(&prefix).map(|s| s.to_string()))

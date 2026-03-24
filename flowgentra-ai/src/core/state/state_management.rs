@@ -39,7 +39,7 @@ impl MessageHistory {
         }
     }
 
-    /// Load from state field `messages` 
+    /// Load from state field `messages`
     pub fn from_state<T: State>(state: &T) -> Result<Self> {
         if let Some(messages_value) = state.get("messages") {
             if let Ok(messages) = serde_json::from_value::<Vec<MessageHistoryEntry>>(messages_value)

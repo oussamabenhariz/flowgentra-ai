@@ -61,7 +61,10 @@ impl OpenAIEmbeddings {
 impl EmbeddingsProvider for OpenAIEmbeddings {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         let results = self.embed_batch(vec![text]).await?;
-        results.into_iter().next().ok_or(EmbeddingError::EmptyResponse)
+        results
+            .into_iter()
+            .next()
+            .ok_or(EmbeddingError::EmptyResponse)
     }
 
     async fn embed_batch(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>, EmbeddingError> {
@@ -86,17 +89,21 @@ impl EmbeddingsProvider for OpenAIEmbeddings {
 
             return Err(match status {
                 401 => EmbeddingError::AuthError(text),
-                429 => EmbeddingError::RateLimited { retry_after_ms: None },
-                _ => EmbeddingError::ApiError { status, message: text },
+                429 => EmbeddingError::RateLimited {
+                    retry_after_ms: None,
+                },
+                _ => EmbeddingError::ApiError {
+                    status,
+                    message: text,
+                },
             });
         }
 
-        let result: EmbeddingResponse = resp.json().await.map_err(|e| {
-            EmbeddingError::ApiError {
+        let result: EmbeddingResponse =
+            resp.json().await.map_err(|e| EmbeddingError::ApiError {
                 status: 0,
                 message: format!("Failed to parse response: {}", e),
-            }
-        })?;
+            })?;
 
         Ok(result.data.into_iter().map(|d| d.embedding).collect())
     }
@@ -121,8 +128,7 @@ mod tests {
 
     #[test]
     fn test_openai_embeddings_custom_dimension() {
-        let emb =
-            OpenAIEmbeddings::new("test-key", "text-embedding-3-small").with_dimension(512);
+        let emb = OpenAIEmbeddings::new("test-key", "text-embedding-3-small").with_dimension(512);
         assert_eq!(emb.get_dimension(), 512);
     }
 }

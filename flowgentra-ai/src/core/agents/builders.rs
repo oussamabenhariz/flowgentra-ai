@@ -1,13 +1,16 @@
+use super::graph_nodes::ToolExecutorFn;
 /// Agent Builder Factory
 ///
 /// Provides builder patterns for creating predefined agents with sensible defaults.
 /// Similar to LangChain's `initialize_agent` but tailored for FlowgentraAI.
-use super::{Agent, AgentType, ToolSpec, AgentReasoningNode, ToolExecutorNode, ConversationalNode, reasoning_router};
-use super::graph_nodes::ToolExecutorFn;
+use super::{
+    reasoning_router, Agent, AgentReasoningNode, AgentType, ConversationalNode, ToolExecutorNode,
+    ToolSpec,
+};
 use crate::core::error::FlowgentraError;
 use crate::core::mcp::MCPConfig;
 use crate::core::state::SharedState;
-use crate::core::state_graph::{StateGraph, FunctionNode};
+use crate::core::state_graph::{FunctionNode, StateGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -99,17 +102,20 @@ pub struct GraphBasedAgent {
 
 impl GraphBasedAgent {
     /// Create a new graph-based agent
-    pub fn new(config: AgentConfig, tool_executor: Option<ToolExecutorFn>) -> Result<Self, FlowgentraError> {
+    pub fn new(
+        config: AgentConfig,
+        tool_executor: Option<ToolExecutorFn>,
+    ) -> Result<Self, FlowgentraError> {
         let name = config.name.clone();
         let agent_type = AgentType::from_type_str(&config.agent_type);
-        
+
         // Build appropriate graph based on agent type
         let graph = match agent_type {
             AgentType::ZeroShotReAct => Self::build_zero_shot_react_graph(&config, tool_executor)?,
             AgentType::FewShotReAct => Self::build_few_shot_react_graph(&config, tool_executor)?,
             AgentType::Conversational => Self::build_conversational_graph(&config)?,
         };
-        
+
         Ok(Self {
             config,
             name,
@@ -128,23 +134,21 @@ impl GraphBasedAgent {
         let tool_executor = tool_executor.unwrap_or_else(|| Arc::new(|name: &str, _args: &str| {
             format!("Tool '{}' has no executor registered. Use .with_tool_executor() on the AgentBuilder.", name)
         }));
-        
+
         // Create agent reasoning node (wraps the actual node logic)
-        let agent_node = Arc::new(FunctionNode::new(
-            "agent",
-            move |state: &SharedState| {
-                let config = agent_config.clone();
-                let state = state.clone();
-                Box::pin(async move {
-                    let reasoning_node = AgentReasoningNode::new(config);
-                    reasoning_node.execute(&state).await
-                        .map_err(|e| crate::core::state_graph::StateGraphError::ExecutionError {
-                            node: "agent".to_string(),
-                            reason: e.to_string(),
-                        })
+        let agent_node = Arc::new(FunctionNode::new("agent", move |state: &SharedState| {
+            let config = agent_config.clone();
+            let state = state.clone();
+            Box::pin(async move {
+                let reasoning_node = AgentReasoningNode::new(config);
+                reasoning_node.execute(&state).await.map_err(|e| {
+                    crate::core::state_graph::StateGraphError::ExecutionError {
+                        node: "agent".to_string(),
+                        reason: e.to_string(),
+                    }
                 })
-            },
-        ));
+            })
+        }));
 
         // Create tool executor node with the user-provided executor
         let tool_exec_fn = tool_executor.clone();
@@ -156,25 +160,21 @@ impl GraphBasedAgent {
                 let state = state.clone();
                 Box::pin(async move {
                     let tool_node = ToolExecutorNode::new(config).with_executor(executor);
-                    tool_node.execute(&state).await
-                        .map_err(|e| crate::core::state_graph::StateGraphError::ExecutionError {
+                    tool_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
                             node: "tool_executor".to_string(),
                             reason: e.to_string(),
-                        })
+                        }
+                    })
                 })
             },
         ));
 
         // Create end node (terminal node that just returns state)
-        let end_node = Arc::new(FunctionNode::new(
-            "END",
-            |state: &SharedState| {
-                let state = state.clone();
-                Box::pin(async move {
-                    Ok(state)
-                })
-            },
-        ));
+        let end_node = Arc::new(FunctionNode::new("END", |state: &SharedState| {
+            let state = state.clone();
+            Box::pin(async move { Ok(state) })
+        }));
 
         // Build the graph with routing
         let graph = StateGraph::<SharedState>::builder()
@@ -186,18 +186,21 @@ impl GraphBasedAgent {
             .add_conditional_edge(
                 "agent",
                 Box::new(|state: &SharedState| {
-                    reasoning_router(state)
-                        .map_err(|e| crate::core::state_graph::StateGraphError::ExecutionError {
+                    reasoning_router(state).map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
                             node: "agent".to_string(),
                             reason: e.to_string(),
-                        })
+                        }
+                    })
                 }),
             )
             // Tools always go back to agent for next iteration
             .add_edge("tool_executor", "agent")
             .compile()
-            .map_err(|e| FlowgentraError::GraphError(format!("ZeroShotReAct graph build failed: {}", e)))?;
-        
+            .map_err(|e| {
+                FlowgentraError::GraphError(format!("ZeroShotReAct graph build failed: {}", e))
+            })?;
+
         debug!("Built ZeroShotReAct graph");
         Ok(graph)
     }
@@ -213,9 +216,11 @@ impl GraphBasedAgent {
     }
 
     /// Build a Conversational agent graph
-    fn build_conversational_graph(config: &AgentConfig) -> Result<StateGraph<SharedState>, FlowgentraError> {
+    fn build_conversational_graph(
+        config: &AgentConfig,
+    ) -> Result<StateGraph<SharedState>, FlowgentraError> {
         let config_clone = config.clone();
-        
+
         // Single node for conversational response
         let conversation_node = Arc::new(FunctionNode::new(
             "conversation",
@@ -224,11 +229,12 @@ impl GraphBasedAgent {
                 let state = state.clone();
                 Box::pin(async move {
                     let conv_node = ConversationalNode::new(config);
-                    conv_node.execute(&state).await
-                        .map_err(|e| crate::core::state_graph::StateGraphError::ExecutionError {
+                    conv_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
                             node: "conversation".to_string(),
                             reason: e.to_string(),
-                        })
+                        }
+                    })
                 })
             },
         ));
@@ -237,37 +243,40 @@ impl GraphBasedAgent {
             .add_node("conversation", conversation_node)
             .set_entry_point("conversation")
             .compile()
-            .map_err(|e| FlowgentraError::GraphError(format!("Conversational graph build failed: {}", e)))?;
-        
+            .map_err(|e| {
+                FlowgentraError::GraphError(format!("Conversational graph build failed: {}", e))
+            })?;
+
         debug!("Built Conversational graph");
         Ok(graph)
     }
 
     /// Execute the agent with given input
-    pub async fn execute_input(
-        &self,
-        input: &str,
-    ) -> Result<String, FlowgentraError> {
+    pub async fn execute_input(&self, input: &str) -> Result<String, FlowgentraError> {
         // Create initial state
         let initial_state = SharedState::default();
         initial_state.set("input", serde_json::json!(input));
-        
+
         // Inject conversation history into state for multi-turn context
         {
-            let history = self.conversation_history.lock()
-                .map_err(|_| FlowgentraError::StateError("Failed to lock conversation history".to_string()))?;
+            let history = self.conversation_history.lock().map_err(|_| {
+                FlowgentraError::StateError("Failed to lock conversation history".to_string())
+            })?;
             if !history.is_empty() {
-                let history_json: Vec<serde_json::Value> = history.iter()
+                let history_json: Vec<serde_json::Value> = history
+                    .iter()
                     .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
                     .collect();
                 initial_state.set("conversation_history", serde_json::json!(history_json));
             }
         }
-        
+
         // Execute the graph - StateGraph handles routing, loops, checkpointing
-        let final_state = self.graph.invoke(initial_state).await
-            .map_err(|e| FlowgentraError::StateError(format!("Graph execution failed: {}", e)))?;
-        
+        let final_state =
+            self.graph.invoke(initial_state).await.map_err(|e| {
+                FlowgentraError::StateError(format!("Graph execution failed: {}", e))
+            })?;
+
         // Extract response based on agent type
         let response = match AgentType::from_type_str(&self.config.agent_type) {
             AgentType::ZeroShotReAct | AgentType::FewShotReAct => {
@@ -293,22 +302,21 @@ impl GraphBasedAgent {
                     full_response
                 }
             }
-            AgentType::Conversational => {
-                final_state
-                    .get("response")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "No response generated".to_string())
-            }
+            AgentType::Conversational => final_state
+                .get("response")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "No response generated".to_string()),
         };
-        
+
         // Append to conversation history for future turns
         {
-            let mut history = self.conversation_history.lock()
-                .map_err(|_| FlowgentraError::StateError("Failed to lock conversation history".to_string()))?;
+            let mut history = self.conversation_history.lock().map_err(|_| {
+                FlowgentraError::StateError("Failed to lock conversation history".to_string())
+            })?;
             history.push(("user".to_string(), input.to_string()));
             history.push(("assistant".to_string(), response.clone()));
         }
-        
+
         Ok(response)
     }
 
@@ -337,13 +345,13 @@ impl Agent for GraphBasedAgent {
         AgentType::from_type_str(&self.config.agent_type)
     }
 
-    fn initialize(
-        &mut self,
-        _state: &mut SharedState,
-    ) -> Result<(), FlowgentraError> {
+    fn initialize(&mut self, _state: &mut SharedState) -> Result<(), FlowgentraError> {
         // Initialize any resources needed
         if self.config.memory_enabled {
-            debug!("Agent memory enabled with {} steps", self.config.memory_steps);
+            debug!(
+                "Agent memory enabled with {} steps",
+                self.config.memory_steps
+            );
         }
         Ok(())
     }
@@ -351,7 +359,7 @@ impl Agent for GraphBasedAgent {
     fn process(&self, _input: &str, _state: &SharedState) -> Result<String, FlowgentraError> {
         // Synchronous wrapper - use execute_input() for async execution
         Err(FlowgentraError::StateError(
-            "Use execute_input() for async execution".to_string()
+            "Use execute_input() for async execution".to_string(),
         ))
     }
 
@@ -587,4 +595,3 @@ mod tests {
         assert_eq!(agent.tools().len(), 1);
     }
 }
-

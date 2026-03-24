@@ -33,10 +33,10 @@ use std::sync::Arc;
 //   edges:
 //     - from: START
 //       to: process_input
-//     
+//
 //     - from: process_input
 //       to: generate_response
-//     
+//
 //     - from: generate_response
 //       to: END
 //
@@ -436,10 +436,18 @@ pub struct GradingConfig {
     pub rubric: Option<String>,
 }
 
-fn eval_default_true() -> bool { true }
-fn default_recursion_limit() -> usize { 25 }
-fn eval_default_min_confidence() -> f64 { 0.8 }
-fn eval_default_max_retries() -> u32 { 3 }
+fn eval_default_true() -> bool {
+    true
+}
+fn default_recursion_limit() -> usize {
+    25
+}
+fn eval_default_min_confidence() -> f64 {
+    0.8
+}
+fn eval_default_max_retries() -> u32 {
+    3
+}
 
 // =============================================================================
 // RAG Configuration
@@ -542,8 +550,12 @@ pub struct RetrievalSettings {
     pub similarity_threshold: f32,
 }
 
-fn default_top_k() -> usize { 5 }
-fn default_similarity_threshold() -> f32 { 0.7 }
+fn default_top_k() -> usize {
+    5
+}
+fn default_similarity_threshold() -> f32 {
+    0.7
+}
 
 impl Default for RetrievalSettings {
     fn default() -> Self {
@@ -566,8 +578,12 @@ pub struct PdfSettings {
     pub chunk_overlap: usize,
 }
 
-fn default_chunk_size() -> usize { 1000 }
-fn default_chunk_overlap() -> usize { 200 }
+fn default_chunk_size() -> usize {
+    1000
+}
+fn default_chunk_overlap() -> usize {
+    200
+}
 
 impl Default for PdfSettings {
     fn default() -> Self {
@@ -622,19 +638,22 @@ impl AgentConfig {
         let content = std::fs::read_to_string(&path).map_err(|e| {
             crate::core::error::FlowgentraError::ConfigError(format!(
                 "Failed to read config file '{}': {}",
-                path.as_ref().display(), e
+                path.as_ref().display(),
+                e
             ))
         })?;
         let config = Self::from_yaml_str(&content).map_err(|e| {
             crate::core::error::FlowgentraError::ConfigError(format!(
                 "Failed to parse config file '{}': {}",
-                path.as_ref().display(), e
+                path.as_ref().display(),
+                e
             ))
         })?;
         config.validate().map_err(|e| {
             crate::core::error::FlowgentraError::ConfigError(format!(
                 "Invalid configuration in '{}': {}",
-                path.as_ref().display(), e
+                path.as_ref().display(),
+                e
             ))
         })?;
         Ok(config)
@@ -708,7 +727,9 @@ impl AgentConfig {
 
     /// Get the validation schema if configured
     pub fn get_validation_schema(&self) -> Option<&StateSchema> {
-        self.validation_schema.as_ref().map(|arc: &Arc<crate::core::state::state_validation::StateSchema>| arc.as_ref())
+        self.validation_schema
+            .as_ref()
+            .map(|arc: &Arc<crate::core::state::state_validation::StateSchema>| arc.as_ref())
     }
 
     /// Create an initial state from the configured state_schema
@@ -744,17 +765,19 @@ impl AgentConfig {
         state: &T,
     ) -> crate::core::error::Result<()> {
         if let Some(schema) = &self.validation_schema {
-            schema.validate(state).map_err(|errors: Vec<ValidationError>| {
-                let error_msgs = errors
-                    .iter()
-                    .map(|e| format!("{}: {}", e.field, e.message))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                crate::core::error::FlowgentraError::ValidationError(format!(
-                    "State validation failed: {}",
-                    error_msgs
-                ))
-            })?;
+            schema
+                .validate(state)
+                .map_err(|errors: Vec<ValidationError>| {
+                    let error_msgs = errors
+                        .iter()
+                        .map(|e| format!("{}: {}", e.field, e.message))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    crate::core::error::FlowgentraError::ValidationError(format!(
+                        "State validation failed: {}",
+                        error_msgs
+                    ))
+                })?;
         }
         Ok(())
     }

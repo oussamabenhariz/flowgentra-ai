@@ -176,7 +176,10 @@ impl Agent for ConversationalAgent {
         AgentType::Conversational
     }
 
-    fn initialize(&mut self, state: &mut crate::core::state::SharedState) -> Result<(), FlowgentraError> {
+    fn initialize(
+        &mut self,
+        state: &mut crate::core::state::SharedState,
+    ) -> Result<(), FlowgentraError> {
         state.set(
             "__agent_name",
             serde_json::Value::String(self.config.name.clone()),
@@ -192,7 +195,11 @@ impl Agent for ConversationalAgent {
         Ok(())
     }
 
-    fn process(&self, input: &str, _state: &crate::core::state::SharedState) -> Result<String, FlowgentraError> {
+    fn process(
+        &self,
+        input: &str,
+        _state: &crate::core::state::SharedState,
+    ) -> Result<String, FlowgentraError> {
         let prompt = self.generate_response_prompt(input);
 
         Ok(format!(

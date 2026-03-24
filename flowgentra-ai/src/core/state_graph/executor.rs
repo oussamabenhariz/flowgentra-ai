@@ -4,13 +4,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::core::state::State;
-use crate::core::middleware::{ExecutionContext, Middleware, MiddlewarePipeline};
-use crate::core::plugins::PluginRegistry;
+use super::checkpoint::{Checkpoint, Checkpointer, InMemoryCheckpointer};
+use super::edge::{Edge, FixedEdge, END, START};
 use super::error::{Result, StateGraphError};
 use super::node::{Node, RouterFn};
-use super::edge::{Edge, FixedEdge, START, END};
-use super::checkpoint::{Checkpoint, Checkpointer, InMemoryCheckpointer};
+use crate::core::middleware::{ExecutionContext, Middleware, MiddlewarePipeline};
+use crate::core::plugins::PluginRegistry;
+use crate::core::state::State;
 
 /// State graph builder - fluent API for constructing graphs
 pub struct StateGraphBuilder<S: State> {
@@ -94,11 +94,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
     }
 
     /// Add a conditional edge (A → router → B or C or ...)
-    pub fn add_conditional_edge(
-        mut self,
-        from: impl Into<String>,
-        router: RouterFn<S>,
-    ) -> Self {
+    pub fn add_conditional_edge(mut self, from: impl Into<String>, router: RouterFn<S>) -> Self {
         self.edges.push(Edge::Conditional {
             from: from.into(),
             router,
@@ -195,9 +191,9 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             }
         }
 
-        let checkpointer = self.checkpointer.unwrap_or_else(|| {
-            Arc::new(InMemoryCheckpointer::new())
-        });
+        let checkpointer = self
+            .checkpointer
+            .unwrap_or_else(|| Arc::new(InMemoryCheckpointer::new()));
 
         Ok(StateGraph {
             nodes: self.nodes,
@@ -299,63 +295,71 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         loop {
             // Check for max steps
             if step >= self.max_steps {
-                return Err(StateGraphError::Timeout(
-                    "Max steps exceeded".to_string(),
-                ));
+                return Err(StateGraphError::Timeout("Max steps exceeded".to_string()));
             }
 
             // Check for interruption before
             if self.interrupt_before.contains(&current_node) {
-                return Err(StateGraphError::InterruptedAtBreakpoint {
-                    node: current_node,
-                });
+                return Err(StateGraphError::InterruptedAtBreakpoint { node: current_node });
             }
 
             // Create execution context for middleware
             let mut middleware_ctx = ExecutionContext::new(&current_node, current_state.clone());
 
             // Execute before_node hooks
-            self.middleware.execute_before_node(&mut middleware_ctx).await
+            self.middleware
+                .execute_before_node(&mut middleware_ctx)
+                .await
                 .map_err(|e| StateGraphError::ExecutionError {
                     node: current_node.clone(),
                     reason: format!("Middleware error: {}", e),
                 })?;
-            
+
             // Apply any state modifications from middleware
             current_state = middleware_ctx.state;
 
             // Create plugin context for this execution
             let plugin_ctx = crate::core::plugins::PluginContext::new();
-            
+
             // Execute plugin hooks for node start
-            let _ = self.plugins.on_node_execute(&plugin_ctx, &current_node).await;
+            let _ = self
+                .plugins
+                .on_node_execute(&plugin_ctx, &current_node)
+                .await;
 
             // Execute current node
             tracing::info!(node = %current_node, step = %step, "Executing node");
-            
-            let node = self.nodes.get(&current_node)
+
+            let node = self
+                .nodes
+                .get(&current_node)
                 .ok_or_else(|| StateGraphError::NodeNotFound(current_node.clone()))?;
-            
+
             match node.execute(&current_state).await {
                 Ok(new_state) => {
                     current_state = new_state;
-                    
+
                     // Update context for after_node hooks
                     middleware_ctx.state = current_state.clone();
-                    
+
                     // Execute after_node hooks
-                    self.middleware.execute_after_node(&mut middleware_ctx).await
+                    self.middleware
+                        .execute_after_node(&mut middleware_ctx)
+                        .await
                         .map_err(|e| StateGraphError::ExecutionError {
                             node: current_node.clone(),
                             reason: format!("Middleware error: {}", e),
                         })?;
-                    
+
                     // Apply any state modifications from middleware
                     current_state = middleware_ctx.state;
-                    
+
                     // Execute plugin hooks for node completion
-                    let _ = self.plugins.on_node_complete(&plugin_ctx, &current_node, true).await;
-                    
+                    let _ = self
+                        .plugins
+                        .on_node_complete(&plugin_ctx, &current_node, true)
+                        .await;
+
                     // CRITICAL PERFORMANCE: Checkpoint State Cloning
                     // – Issue: state.clone() called every step (N steps × clone cost)
                     // – Impact: 50-200ms overhead with large state (>500KB)
@@ -366,7 +370,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                         thread_id.clone(),
                         step,
                         current_node.clone(),
-                        current_state.clone(),  // Clone only when saving
+                        current_state.clone(), // Clone only when saving
                     );
                     self.checkpointer.save(&checkpoint).await?;
 
@@ -379,7 +383,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
 
                     // Determine next node
                     let next_node = self.get_next_node(&current_node, &current_state).await?;
-                    
+
                     if next_node == END {
                         // Execute on_complete hooks
                         self.middleware.execute_on_complete(&current_state).await;
@@ -390,15 +394,21 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                 }
                 Err(e) => {
                     tracing::error!(node = %current_node, error = %e, "Node execution failed");
-                    
+
                     // Execute plugin hooks for node failure
-                    let _ = self.plugins.on_node_complete(&plugin_ctx, &current_node, false).await;
-                    
+                    let _ = self
+                        .plugins
+                        .on_node_complete(&plugin_ctx, &current_node, false)
+                        .await;
+
                     // Execute error hooks with a fresh context
                     let error_ctx = ExecutionContext::new(&current_node, current_state.clone());
-                    let err_as_flowgentra = crate::core::error::FlowgentraError::ExecutionError(e.to_string());
-                    self.middleware.execute_on_error(&current_node, &err_as_flowgentra, &error_ctx).await;
-                    
+                    let err_as_flowgentra =
+                        crate::core::error::FlowgentraError::ExecutionError(e.to_string());
+                    self.middleware
+                        .execute_on_error(&current_node, &err_as_flowgentra, &error_ctx)
+                        .await;
+
                     return Err(e);
                 }
             }
@@ -414,24 +424,21 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                 return edge.next_node(state).await;
             }
         }
-        
+
         // Default: if no outgoing edge, go to END
         Ok(END.to_string())
     }
 
     /// Resume execution from a checkpoint
-    pub async fn resume(
-        &self,
-        thread_id: &str,
-    ) -> Result<S> {
-        let checkpoint = self.checkpointer
+    pub async fn resume(&self, thread_id: &str) -> Result<S> {
+        let checkpoint = self
+            .checkpointer
             .load_latest(thread_id)
             .await?
-            .ok_or_else(|| StateGraphError::ResumeFailed(
-                "No checkpoint found".to_string(),
-            ))?;
+            .ok_or_else(|| StateGraphError::ResumeFailed("No checkpoint found".to_string()))?;
 
-        self.invoke_with_id(thread_id.to_string(), checkpoint.state).await
+        self.invoke_with_id(thread_id.to_string(), checkpoint.state)
+            .await
     }
 
     /// Resume execution from a checkpoint with injected state modifications.
@@ -453,24 +460,20 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     ///     let result = graph.resume_with_state("thread-123", updates).await?;
     /// }
     /// ```
-    pub async fn resume_with_state(
-        &self,
-        thread_id: &str,
-        state_updates: S,
-    ) -> Result<S> {
-        let checkpoint = self.checkpointer
+    pub async fn resume_with_state(&self, thread_id: &str, state_updates: S) -> Result<S> {
+        let checkpoint = self
+            .checkpointer
             .load_latest(thread_id)
             .await?
-            .ok_or_else(|| StateGraphError::ResumeFailed(
-                "No checkpoint found".to_string(),
-            ))?;
+            .ok_or_else(|| StateGraphError::ResumeFailed("No checkpoint found".to_string()))?;
 
         // Merge the user's state updates into the checkpointed state
-        let mut merged_state = checkpoint.state;
+        let merged_state = checkpoint.state;
         // Use State::merge to apply updates
         merged_state.merge(state_updates);
 
-        self.invoke_with_id(thread_id.to_string(), merged_state).await
+        self.invoke_with_id(thread_id.to_string(), merged_state)
+            .await
     }
 
     /// Get execution history for a thread
@@ -497,8 +500,8 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         dot.push_str("  node [shape=box style=rounded];\n\n");
 
         // START → entry point
-        dot.push_str(&format!("  \"__start__\" [label=\"START\" shape=ellipse];\n"));
-        dot.push_str(&format!("  \"__end__\" [label=\"END\" shape=ellipse];\n"));
+        dot.push_str("  \"__start__\" [label=\"START\" shape=ellipse];\n");
+        dot.push_str("  \"__end__\" [label=\"END\" shape=ellipse];\n");
         dot.push_str(&format!("  \"__start__\" -> \"{}\";\n", self.entry_point));
 
         // Node declarations
@@ -510,12 +513,20 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         for edge in &self.edges {
             match edge {
                 Edge::Fixed(fe) => {
-                    let from = if fe.from == START { "__start__" } else { &fe.from };
+                    let from = if fe.from == START {
+                        "__start__"
+                    } else {
+                        &fe.from
+                    };
                     let to = if fe.to == END { "__end__" } else { &fe.to };
                     dot.push_str(&format!("  \"{}\" -> \"{}\";\n", from, to));
                 }
                 Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
-                    let from_label = if from == START { "__start__" } else { from.as_str() };
+                    let from_label = if from == START {
+                        "__start__"
+                    } else {
+                        from.as_str()
+                    };
                     for target_name in self.nodes.keys() {
                         dot.push_str(&format!(
                             "  \"{}\" -> \"{}\" [style=dashed label=\"?\"];\n",
@@ -548,12 +559,20 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         for edge in &self.edges {
             match edge {
                 Edge::Fixed(fe) => {
-                    let from = if fe.from == START { "__start__" } else { &fe.from };
+                    let from = if fe.from == START {
+                        "__start__"
+                    } else {
+                        &fe.from
+                    };
                     let to = if fe.to == END { "__end__" } else { &fe.to };
                     out.push_str(&format!("  {} --> {}\n", from, to));
                 }
                 Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
-                    let from_label = if from == START { "__start__" } else { from.as_str() };
+                    let from_label = if from == START {
+                        "__start__"
+                    } else {
+                        from.as_str()
+                    };
                     for target_name in self.nodes.keys() {
                         out.push_str(&format!("  {} -.->|?| {}\n", from_label, target_name));
                     }
@@ -568,19 +587,23 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// Export the graph structure as a JSON value for programmatic use.
     pub fn to_json(&self) -> serde_json::Value {
         let nodes: Vec<String> = self.nodes.keys().cloned().collect();
-        let edges: Vec<serde_json::Value> = self.edges.iter().map(|edge| {
-            match edge {
+        let edges: Vec<serde_json::Value> = self
+            .edges
+            .iter()
+            .map(|edge| match edge {
                 Edge::Fixed(fe) => serde_json::json!({
                     "type": "fixed",
                     "from": fe.from,
                     "to": fe.to,
                 }),
-                Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => serde_json::json!({
-                    "type": "conditional",
-                    "from": from,
-                }),
-            }
-        }).collect();
+                Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
+                    serde_json::json!({
+                        "type": "conditional",
+                        "from": from,
+                    })
+                }
+            })
+            .collect();
 
         serde_json::json!({
             "nodes": nodes,
@@ -599,14 +622,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_graph_builder() {
-        let node1 = Arc::new(super::super::node::FunctionNode::new("node1", |state: &PlainState| {
-            let cloned = state.clone();
-            Box::pin(async move {
-                let mut new_state = cloned;
-                PlainState::set(&mut new_state, "counter", json!(1));
-                Ok(new_state)
-            })
-        }));
+        let node1 = Arc::new(super::super::node::FunctionNode::new(
+            "node1",
+            |state: &PlainState| {
+                let cloned = state.clone();
+                Box::pin(async move {
+                    let mut new_state = cloned;
+                    PlainState::set(&mut new_state, "counter", json!(1));
+                    Ok(new_state)
+                })
+            },
+        ));
 
         let graph = StateGraph::builder()
             .add_node("node1", node1)

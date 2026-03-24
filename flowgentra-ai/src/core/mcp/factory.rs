@@ -1,6 +1,9 @@
 //! Factory for creating MCP clients based on connection type
 
-use super::{MCPClient, MCPConfig, MCPConnectionType, DefaultMCPClient, StdioMCPClient, DockerMCPClient, RetryMCPClient};
+use super::{
+    DefaultMCPClient, DockerMCPClient, MCPClient, MCPConfig, MCPConnectionType, RetryMCPClient,
+    StdioMCPClient,
+};
 use crate::core::error::Result;
 use std::sync::Arc;
 
@@ -44,10 +47,7 @@ impl MCPClientFactory {
 
     /// Create multiple MCP clients from a list of configs
     pub fn create_multiple(configs: Vec<MCPConfig>) -> Result<Vec<Arc<dyn MCPClient>>> {
-        configs
-            .into_iter()
-            .map(Self::create)
-            .collect()
+        configs.into_iter().map(Self::create).collect()
     }
 }
 

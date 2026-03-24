@@ -35,7 +35,7 @@ pub struct SmartFallback;
 
 impl SmartFallback {
     /// Generate fallback content for content generation
-    /// 
+    ///
     /// Provides progressively simpler responses based on retry level
     ///
     /// # Example
@@ -93,10 +93,7 @@ impl SmartFallback {
     }
 
     /// Generate fallback content for refinement
-    pub fn refine_content_fallback(
-        content: &str,
-        level: FallbackLevel,
-    ) -> String {
+    pub fn refine_content_fallback(content: &str, level: FallbackLevel) -> String {
         match level {
             FallbackLevel::Initial => {
                 format!("{}\n\n[Unable to refine at this time]", content)
@@ -124,10 +121,7 @@ impl SmartFallback {
     }
 
     /// Generate retry message for LLM
-    pub fn retry_message(
-        level: FallbackLevel,
-        previous_feedback: Option<&str>,
-    ) -> String {
+    pub fn retry_message(level: FallbackLevel, previous_feedback: Option<&str>) -> String {
         match level {
             FallbackLevel::Degraded => {
                 "Your previous attempt was not satisfactory. Please try again, focusing on clarity and accuracy. Consider the following feedback if provided.".to_string()
@@ -170,15 +164,28 @@ mod tests {
 
     #[test]
     fn test_fallback_level_from_retries() {
-        assert!(matches!(FallbackLevel::from_retries(0), FallbackLevel::Initial));
-        assert!(matches!(FallbackLevel::from_retries(1), FallbackLevel::Degraded));
-        assert!(matches!(FallbackLevel::from_retries(2), FallbackLevel::Minimal));
-        assert!(matches!(FallbackLevel::from_retries(3), FallbackLevel::Template));
+        assert!(matches!(
+            FallbackLevel::from_retries(0),
+            FallbackLevel::Initial
+        ));
+        assert!(matches!(
+            FallbackLevel::from_retries(1),
+            FallbackLevel::Degraded
+        ));
+        assert!(matches!(
+            FallbackLevel::from_retries(2),
+            FallbackLevel::Minimal
+        ));
+        assert!(matches!(
+            FallbackLevel::from_retries(3),
+            FallbackLevel::Template
+        ));
     }
 
     #[test]
     fn test_generate_content_fallback() {
-        let minimal = SmartFallback::generate_content_fallback("Rust", FallbackLevel::Minimal, None);
+        let minimal =
+            SmartFallback::generate_content_fallback("Rust", FallbackLevel::Minimal, None);
         assert!(minimal.contains("Rust"));
         assert!(minimal.contains("##"));
     }

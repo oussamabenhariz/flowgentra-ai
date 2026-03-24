@@ -8,10 +8,12 @@
 //! - Integrate distributed tracing for workflow execution.
 //! - Provide health check endpoints for production deployments.
 
-/// Example: log a state transition
-/// tracing::info!("Transitioned from {:?} to {:?}", old_state, new_state);
-
 /// Example: health check stub
+///
+/// ```ignore
+/// // Example: log a state transition
+/// // tracing::info!("Transitioned from {:?} to {:?}", old_state, new_state);
+/// ```
 pub fn health_check() -> bool {
     // Implement real health logic (e.g., DB, LLM, etc.)
     true
@@ -25,10 +27,9 @@ pub fn health_check() -> bool {
 // - Document handler contracts (fields read/written).
 // - Use clear error types and never panic in handlers or runtime.
 // - Compose handlers for complex logic, don't overload one function.
-/// Runtime for typed state engine
-
-use crate::core::state::State;
 use crate::core::reducer::ReducerConfig;
+/// Runtime for typed state engine
+use crate::core::state::State;
 
 /// Merge a partial state update into the current state using per-field reducers.
 ///
@@ -72,7 +73,9 @@ use crate::core::error::{FlowgentraError, Result};
 use crate::core::graph::Graph;
 use crate::core::llm::{create_llm_client, LLMClient};
 use crate::core::mcp::{DefaultMCPClient, MCPClient};
-use crate::core::memory::{CheckpointMetadata, Checkpointer, GenericCheckpointer, MemoryCheckpointer};
+use crate::core::memory::{
+    CheckpointMetadata, Checkpointer, GenericCheckpointer, MemoryCheckpointer,
+};
 use crate::core::middleware::ExecutionContext as MiddlewareContext;
 use crate::core::middleware::MiddlewarePipeline;
 use crate::core::node::{Edge, EdgeCondition, Node, NodeFunction};
@@ -87,7 +90,7 @@ use std::time::Instant;
 // Execution Context
 // =============================================================================
 
-    pub struct ExecutionContext<T: State> {
+pub struct ExecutionContext<T: State> {
     /// Name of the node being executed
     pub node_name: String,
 
@@ -175,12 +178,21 @@ impl<T: State> AgentRuntime<T> {
             .graph
             .nodes
             .iter()
-            .filter(|n| matches!(n.node_type.as_deref(), Some("supervisor") | Some("orchestrator")))
+            .filter(|n| {
+                matches!(
+                    n.node_type.as_deref(),
+                    Some("supervisor") | Some("orchestrator")
+                )
+            })
             .flat_map(|n| {
                 n.config
                     .get("children")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default()
             })
             .collect();
@@ -191,7 +203,8 @@ impl<T: State> AgentRuntime<T> {
             if supervisor_children.contains(&node_config.name) {
                 continue;
             }
-            let placeholder_fn: NodeFunction<T> = Box::new(|state| Box::pin(async move { Ok(state) }));
+            let placeholder_fn: NodeFunction<T> =
+                Box::new(|state| Box::pin(async move { Ok(state) }));
             let is_planner = node_config.handler == "builtin::planner"
                 || node_config.node_type.as_deref() == Some("planner");
             let node = if is_planner {
@@ -387,11 +400,7 @@ impl<T: State> AgentRuntime<T> {
 
     /// Execute with a thread id for checkpointing. When a checkpointer is set, state is
     /// loaded from the last checkpoint for this thread (if any) and saved after each node.
-    pub async fn execute_with_thread(
-        &self,
-        thread_id: &str,
-        initial_state: T,
-    ) -> Result<T> {
+    pub async fn execute_with_thread(&self, thread_id: &str, initial_state: T) -> Result<T> {
         self.execute_impl(initial_state, Some(thread_id)).await
     }
 
@@ -451,9 +460,11 @@ impl<T: State> AgentRuntime<T> {
             total_steps += current_nodes.len();
 
             if total_steps > recursion_limit {
-                return Err(crate::core::error::FlowgentraError::RecursionLimitExceeded {
-                    limit: recursion_limit,
-                });
+                return Err(
+                    crate::core::error::FlowgentraError::RecursionLimitExceeded {
+                        limit: recursion_limit,
+                    },
+                );
             }
 
             let node_count = current_nodes.len();
@@ -486,7 +497,7 @@ impl<T: State> AgentRuntime<T> {
                 // ║ Recommendation: For production, ALWAYS use SharedState                 ║
                 // ║ Example at: flowgentra-ai/examples/state_graph_react_agent.rs            ║
                 // ╚════════════════════════════════════════════════════════════════════════╝
-                let state_shared = Arc::new(state);  // No clone - wrap as-is
+                let state_shared = Arc::new(state); // No clone - wrap as-is
                 let futures_with_names: Vec<_> = current_nodes
                     .iter()
                     .filter(|n| *n != "END")
@@ -512,10 +523,7 @@ impl<T: State> AgentRuntime<T> {
                             Ok::<_, FlowgentraError>((name, out))
                         })
                             as std::pin::Pin<
-                                Box<
-                                    dyn std::future::Future<Output = Result<(String, T)>>
-                                        + Send,
-                                >,
+                                Box<dyn std::future::Future<Output = Result<(String, T)>> + Send>,
                             >
                     })
                     .collect();
@@ -676,7 +684,9 @@ impl<T: State> AgentRuntime<T> {
                         // If evaluation middleware flagged this node for retry, re-execute
                         // up to max_retries times (from config.evaluation).
                         let retry_key = format!("__node_retry_needed__{}", node_name);
-                        let max_retries = self.config.evaluation
+                        let max_retries = self
+                            .config
+                            .evaluation
                             .as_ref()
                             .filter(|e| e.enabled)
                             .map(|e| e.max_retries)

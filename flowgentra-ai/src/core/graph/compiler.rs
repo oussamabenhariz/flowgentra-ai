@@ -568,7 +568,8 @@ impl GraphCompiler {
 
             if let Some(neighbors) = self.adjacency.get(&node) {
                 for neighbor in neighbors {
-                    let degree = in_degree.get_mut(neighbor)
+                    let degree = in_degree
+                        .get_mut(neighbor)
                         .expect("Neighbor must exist in in_degree map (invalid graph structure)");
                     *degree -= 1;
 

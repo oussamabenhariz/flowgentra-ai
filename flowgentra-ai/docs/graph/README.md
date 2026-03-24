@@ -1,681 +1,377 @@
-# Graph Building and Conditional Routing Guide
+# Graph Engine Guide
 
-Learn how to build custom agent workflows using graphs and conditional routing.
+Build custom workflows as directed graphs with nodes, edges, conditional routing, subgraphs, and parallel execution.
 
-## Overview
+## Two Graph Systems
 
-Instead of hardcoding `Node A → Node B → Node C`, FlowgentraAI lets you:
-- **Build graphs programmatically** using `GraphBuilder`
-- **Define conditional routing** to make dynamic decisions
-- **Route based on state** to create intelligent workflows
+FlowgentraAI provides two ways to build graphs:
 
-## Building Graphs with GraphBuilder
+| System | API | Best For |
+|--------|-----|----------|
+| **StateGraph** | Programmatic Rust builder | Custom workflows with full type safety |
+| **Config-driven** | YAML config files | Declarative workflows loaded at runtime |
 
-### The Simplest Graph
-
-```rust
-use flowgentra_ai::prelude::*;
-
-#[register_handler]
-pub async fn handler1(state: State) -> Result<State> {
-    Ok(state)
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let graph = GraphBuilder::new()
-        .add_node("step1", handler1)
-        .add_edge("START", "step1")
-        .add_edge("step1", "END")
-        .build()?;
-    
-    Ok(())
-}
-```
-
-This creates:
-```
-START → step1 → END
-```
-
-### Adding Multiple Nodes
-
-```rust
-#[register_handler]
-pub async fn validate(state: State) -> Result<State> {
-    Ok(state)
-}
-
-#[register_handler]
-pub async fn process(state: State) -> Result<State> {
-    Ok(state)
-}
-
-#[register_handler]
-pub async fn output(state: State) -> Result<State> {
-    Ok(state)
-}
-
-let graph = GraphBuilder::new()
-    .add_node("validate", validate)
-    .add_node("process", process)
-    .add_node("output", output)
-    .add_edge("START", "validate")
-    .add_edge("validate", "process")
-    .add_edge("process", "output")
-    .add_edge("output", "END")
-    .build()?;
-```
-
-This creates:
-```
-START → validate → process → output → END
-```
-
-### Understanding Edges
-
-An edge connects two nodes. Use these special node names:
-- `START` - Entry point (start of the graph)
-- `END` - Exit point (end of the graph)
-- Any other name - User-defined handler node
-
-```rust
-// Valid edges
-.add_edge("START", "validate")      // Start to first node
-.add_edge("validate", "process")    // Node to node
-.add_edge("process", "output")      // Last node to another
-.add_edge("output", "END")          // Last node to end
-
-// Invalid - wouldn't work as expected:
-.add_edge("handler1", "handler2")
-.add_edge("handler1", "handler2")   // No END!
-```
+This guide covers both. The StateGraph API is recommended for most use cases.
 
 ---
 
-## Conditional Routing
+## StateGraph Builder
 
-### Basic Conditional Routing
+### Basic Graph
+
+```rust
+use flowgentra_ai::core::state_graph::StateGraphBuilder;
+use flowgentra_ai::core::state::PlainState;
+
+async fn step_a(mut state: PlainState) -> Result<PlainState> {
+    state.set("processed", json!(true));
+    Ok(state)
+}
+
+async fn step_b(mut state: PlainState) -> Result<PlainState> {
+    state.set("output", json!("done"));
+    Ok(state)
+}
+
+let graph = StateGraphBuilder::new()
+    .add_fn("step_a", step_a)
+    .add_fn("step_b", step_b)
+    .set_entry_point("step_a")
+    .add_edge("step_a", "step_b")
+    .add_edge("step_b", "__end__")
+    .compile()?;
+
+let result = graph.run(PlainState::new()).await?;
+```
+
+### Conditional Routing
 
 Route to different nodes based on state:
 
 ```rust
-use flowgentra_ai::prelude::*;
-
-let graph = GraphBuilder::new()
-    .add_node("validate", validate_handler)
-    .add_node("simple_process", simple_handler)
-    .add_node("complex_process", complex_handler)
-    .add_node("output", output_handler)
-    // Normal path: validate → output (no condition needed)
-    .add_edge("START", "validate")
-    
-    // Conditional: from validate, choose based on state
-    .add_edge_with_condition(
-        "validate",
-        "simple_process",
-        Condition::compare("complexity", ComparisonOp::LessThan, 5)
-    )
-    .add_edge_with_condition(
-        "validate",
-        "complex_process",
-        Condition::compare("complexity", ComparisonOp::GreaterOrEqual, 5)
-    )
-    
-    // Both paths converge at output
-    .add_edge("simple_process", "output")
-    .add_edge("complex_process", "output")
-    .add_edge("output", "END")
-    .build()?;
+let graph = StateGraphBuilder::new()
+    .add_fn("classify", classify)
+    .add_fn("simple", handle_simple)
+    .add_fn("complex", handle_complex)
+    .set_entry_point("classify")
+    .add_conditional_edge("classify", |state| {
+        let score = state.get("score")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if score > 70 {
+            Ok("complex".into())
+        } else {
+            Ok("simple".into())
+        }
+    })
+    .add_edge("simple", "__end__")
+    .add_edge("complex", "__end__")
+    .compile()?;
 ```
 
-This creates:
-```
-                     ┌─→ simple_process ─┐
-                     │                    ↓
-START → validate ←──┤                   output → END
-                     │                    ↑
-                     └─→ complex_process ┘
-```
+### Async Conditional Edges
 
-### How It Works
-
-1. When execution reaches a node with conditional edges
-2. Check each condition against current state
-3. Take the edge where condition is `true`
-4. If multiple conditions are `true`, first one is used
-5. If no conditions are `true`, execution stops (error)
-
----
-
-## Condition Types
-
-### 1. Compare Values
+When routing decisions need async operations (API calls, DB lookups):
 
 ```rust
-// Equal to
-Condition::compare("status", ComparisonOp::Equal, "approved")
-
-// Not equal to
-Condition::compare("status", ComparisonOp::NotEqual, "rejected")
-
-// Greater than (numbers)
-Condition::compare("score", ComparisonOp::GreaterThan, 80)
-
-// Less than
-Condition::compare("confidence", ComparisonOp::LessThan, 0.5)
-
-// Greater or equal
-Condition::compare("priority", ComparisonOp::GreaterOrEqual, 3)
-
-// Less or equal
-Condition::compare("level", ComparisonOp::LessOrEqual, 5)
-```
-
-### 2. Field Existence
-
-```rust
-// Check if field exists
-Condition::field_exists("result")
-
-// Can be combined with others
-```
-
-### 3. Field Type Checks
-
-```rust
-Condition::field_type("value", FieldTypeCheck::String)
-Condition::field_type("count", FieldTypeCheck::Number)
-Condition::field_type("items", FieldTypeCheck::Array)
-Condition::field_type("config", FieldTypeCheck::Object)
-```
-
-### 4. Combine Conditions
-
-```rust
-// AND - all must be true
-Condition::and(vec![
-    Condition::compare("status", ComparisonOp::Equal, "ready"),
-    Condition::compare("score", ComparisonOp::GreaterThan, 75),
-])
-
-// OR - at least one must be true
-Condition::or(vec![
-    Condition::compare("expedited", ComparisonOp::Equal, true),
-    Condition::compare("priority", ComparisonOp::GreaterOrEqual, "high"),
-])
-
-// NOT - negation
-Condition::not_condition(
-    Condition::compare("status", ComparisonOp::Equal, "error")
+builder.add_async_conditional_edge(
+    "check_status",
+    Box::new(|state| {
+        Box::pin(async move {
+            // Call an external service to decide routing
+            let status = check_external_api(&state).await?;
+            Ok(status.next_step)
+        })
+    })
 )
-
-// Complex: (A AND B) OR C
-Condition::or(vec![
-    Condition::and(vec![
-        Condition::compare("method", ComparisonOp::Equal, "auto"),
-        Condition::compare("approved", ComparisonOp::Equal, true),
-    ]),
-    Condition::compare("manual_override", ComparisonOp::Equal, true),
-])
-```
-
-### 5. Custom Conditions
-
-```rust
-// Custom predicate function
-Condition::custom("is_weekend", |state| {
-    if let Some(day) = state.get("day_of_week").and_then(|v| v.as_str()) {
-        day == "Saturday" || day == "Sunday"
-    } else {
-        false
-    }
-})
 ```
 
 ---
 
-## Real-World Routing Examples
+## Subgraph Composition
 
-### Example 1: Support Ticket Routing
-
-Route support tickets based on priority:
+Nest an entire compiled graph as a single node inside a parent graph:
 
 ```rust
-let graph = GraphBuilder::new()
-    // All tickets enter here
-    .add_node("categorize", categorize_handler)
-    
-    // Route by priority
-    .add_node("urgent_team", urgent_handler)
-    .add_node("standard_team", standard_handler)
-    .add_node("feedback_team", feedback_handler)
-    
-    // Acknowledge regardless of path
-    .add_node("send_confirmation", confirm_handler)
-    
-    .add_edge("START", "categorize")
-    
-    // Route to appropriate team
-    .add_edge_with_condition(
-        "categorize",
-        "urgent_team",
-        Condition::compare("priority", ComparisonOp::Equal, "critical")
-    )
-    .add_edge_with_condition(
-        "categorize",
-        "standard_team",
-        Condition::compare("priority", ComparisonOp::Equal, "normal")
-    )
-    .add_edge_with_condition(
-        "categorize",
-        "feedback_team",
-        Condition::compare("priority", ComparisonOp::Equal, "low")
-    )
-    
-    // All paths converge
-    .add_edge("urgent_team", "send_confirmation")
-    .add_edge("standard_team", "send_confirmation")
-    .add_edge("feedback_team", "send_confirmation")
-    
-    .add_edge("send_confirmation", "END")
-    .build()?;
+use flowgentra_ai::core::state_graph::SubgraphNode;
+
+// Build the inner graph
+let validation_graph = StateGraphBuilder::new()
+    .add_fn("check_format", check_format)
+    .add_fn("check_content", check_content)
+    .set_entry_point("check_format")
+    .add_edge("check_format", "check_content")
+    .add_edge("check_content", "__end__")
+    .compile()?;
+
+// Use it as a node in a parent graph
+let pipeline = StateGraphBuilder::new()
+    .add_subgraph("validate", validation_graph)
+    .add_fn("process", process_data)
+    .add_fn("output", format_output)
+    .set_entry_point("validate")
+    .add_edge("validate", "process")
+    .add_edge("process", "output")
+    .add_edge("output", "__end__")
+    .compile()?;
 ```
 
-### Example 2: Data Validation Pipeline
-
-Validate input and route based on errors:
-
-```rust
-let graph = GraphBuilder::new()
-    .add_node("validate_schema", validate_schema_handler)
-    .add_node("validate_business_rules", validate_rules_handler)
-    .add_node("normalize", normalize_handler)
-    .add_node("send_error", error_handler)
-    .add_node("process_data", process_handler)
-    
-    .add_edge("START", "validate_schema")
-    
-    // If schema invalid, send error
-    .add_edge_with_condition(
-        "validate_schema",
-        "send_error",
-        Condition::compare("valid", ComparisonOp::Equal, false)
-    )
-    
-    // If schema valid, check business rules
-    .add_edge_with_condition(
-        "validate_schema",
-        "validate_business_rules",
-        Condition::compare("valid", ComparisonOp::Equal, true)
-    )
-    
-    // If business rules invalid, send error
-    .add_edge_with_condition(
-        "validate_business_rules",
-        "send_error",
-        Condition::compare("valid", ComparisonOp::Equal, false)
-    )
-    
-    // If business rules valid, normalize
-    .add_edge_with_condition(
-        "validate_business_rules",
-        "normalize",
-        Condition::compare("valid", ComparisonOp::Equal, true)
-    )
-    
-    // Both error and success paths go to END
-    .add_edge("send_error", "END")
-    .add_edge("normalize", "process_data")
-    .add_edge("process_data", "END")
-    .build()?;
-```
-
-### Example 3: Branching Based on User Type
-
-```rust
-let graph = GraphBuilder::new()
-    .add_node("identify_user", identify_handler)
-    
-    // Different flows for different user types
-    .add_node("admin_dashboard", admin_handler)
-    .add_node("user_dashboard", user_handler)
-    .add_node("guest_dashboard", guest_handler)
-    
-    .add_node("finalize", finalize_handler)
-    
-    .add_edge("START", "identify_user")
-    
-    // Route by user type
-    .add_edge_with_condition(
-        "identify_user",
-        "admin_dashboard",
-        Condition::compare("role", ComparisonOp::Equal, "admin")
-    )
-    .add_edge_with_condition(
-        "identify_user",
-        "user_dashboard",
-        Condition::compare("role", ComparisonOp::Equal, "user")
-    )
-    .add_edge_with_condition(
-        "identify_user",
-        "guest_dashboard",
-        Condition::compare("role", ComparisonOp::Equal, "guest")
-    )
-    
-    // All paths converge
-    .add_edge("admin_dashboard", "finalize")
-    .add_edge("user_dashboard", "finalize")
-    .add_edge("guest_dashboard", "finalize")
-    
-    .add_edge("finalize", "END")
-    .build()?;
-```
+This keeps complex logic encapsulated. Each subgraph is a self-contained unit.
 
 ---
 
-## Using GraphBuilder with Config Files
+## Parallel Execution
 
-You can mix both approaches:
-
-### Programmatic (GraphBuilder)
+Run multiple branches concurrently and merge results:
 
 ```rust
-let graph = GraphBuilder::new()
-    .add_node("step1", handler1)
-    .add_node("step2", handler2)
-    .add_edge("START", "step1")
-    .add_edge("step1", "step2")
-    .add_edge("step2", "END")
-    .build()?;
+use flowgentra_ai::core::runtime::parallel::{ParallelExecutor, JoinType, MergeStrategy};
+use std::time::Duration;
 
-let agent = Agent::new(graph)?;
-agent.run().await?;
+let executor = ParallelExecutor::new()
+    .with_join_type(JoinType::WaitAll)         // Wait for all branches
+    .with_merge_strategy(MergeStrategy::Merge) // Deep merge results
+    .with_timeout(Duration::from_secs(30))     // Timeout per branch
+    .with_continue_on_error(true);             // Don't fail if one branch errors
+
+let result = executor.execute(branches, initial_state).await?;
 ```
 
-### Config File (YAML)
+### Join Strategies
 
-Create `config.yaml`:
+| Strategy | Behavior |
+|----------|----------|
+| `WaitAll` | Wait for every branch to complete |
+| `WaitAny` | Return as soon as any branch finishes |
+| `WaitCount(n)` | Return after `n` branches complete |
+| `WaitTimeout` | Return whatever completes within the timeout |
+
+---
+
+## Graph Export
+
+Visualize your graph structure in multiple formats:
+
+```rust
+let graph = builder.compile()?;
+
+// Graphviz DOT format
+let dot = graph.to_dot();
+println!("{}", dot);
+// digraph { "step_a" -> "step_b"; "step_b" -> "__end__"; }
+
+// Mermaid format (paste into GitHub Markdown)
+let mermaid = graph.to_mermaid();
+println!("{}", mermaid);
+// graph TD; step_a --> step_b; step_b --> __end__;
+
+// JSON format (for custom tooling)
+let json = graph.to_json();
+```
+
+Render DOT output with Graphviz (`dot -Tpng graph.dot -o graph.png`) or paste Mermaid into any Markdown renderer.
+
+---
+
+## Human-in-the-Loop
+
+Pause execution before or after a node for human review:
+
+```rust
+let graph = StateGraphBuilder::new()
+    .add_fn("draft", draft_email)
+    .add_fn("send", send_email)
+    .set_entry_point("draft")
+    .interrupt_before("send")  // Pause before sending
+    .add_edge("draft", "send")
+    .add_edge("send", "__end__")
+    .compile()?;
+
+// First run: executes "draft", then pauses
+let partial = graph.run(state).await?;
+
+// Human reviews and edits the draft...
+let mut edited = partial.clone();
+edited.set("draft_body", json!("Revised email body"));
+
+// Resume with the edited state
+let final_result = graph.resume_with_state("thread-1", edited).await?;
+```
+
+You can also use `interrupt_after("node_name")` to pause after a node completes.
+
+---
+
+## Config-Driven Graphs
+
+Define workflows in YAML and load them at runtime:
 
 ```yaml
 graph:
   nodes:
-    - name: "step1"
-      handler: "handler1"
-    - name: "step2"
-      handler: "handler2"
-  
+    - name: validate
+      handler: handlers::validate_input
+    - name: process
+      handler: handlers::process_data
+    - name: output
+      handler: handlers::format_output
+
   edges:
     - from: START
-      to: step1
-    - from: step1
-      to: step2
-    - from: step2
+      to: validate
+    - from: validate
+      to: process
+    - from: process
+      to: output
+    - from: output
       to: END
 ```
-
-Then load:
 
 ```rust
 let agent = from_config_path("config.yaml")?;
 agent.run().await?;
 ```
 
----
-
-## Config File Conditional Routing
-
-In `config.yaml`, use conditions in edges:
+### Conditional Edges in YAML
 
 ```yaml
-graph:
-  nodes:
-    - name: "validate"
-      handler: "validate_input"
-    - name: "process_simple"
-      handler: "process_simple"
-    - name: "process_complex"
-      handler: "process_complex"
-    - name: "output"
-      handler: "format_output"
-  
-  edges:
-    - from: START
-      to: validate
-    
-    # Conditional routing based on complexity
-    - from: validate
-      to: process_simple
-      condition:
-        field: "complexity"
-        operator: "<"
-        value: 5
-    
-    - from: validate
-      to: process_complex
-      condition:
-        field: "complexity"
-        operator: ">="
-        value: 5
-    
-    - from: process_simple
-      to: output
-    
-    - from: process_complex
-      to: output
-    
-    - from: output
-      to: END
+edges:
+  - from: classify
+    to: simple_handler
+    condition:
+      field: "complexity"
+      operator: "<"
+      value: 5
+
+  - from: classify
+    to: complex_handler
+    condition:
+      field: "complexity"
+      operator: ">="
+      value: 5
+```
+
+---
+
+## MessageGraphBuilder
+
+A convenience wrapper for chat-focused workflows. Automatically manages a `"messages"` array in state with append semantics.
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let graph = MessageGraphBuilder::new()
+    .add_fn("echo", |state: &PlainState| {
+        let messages = MessageGraphBuilder::get_messages(state);
+        let last = messages.last().map(|m| m.content.clone()).unwrap_or_default();
+        let mut s = state.clone();
+        s = MessageGraphBuilder::add_message(s, Message::assistant(format!("Echo: {}", last)));
+        Box::pin(async move { Ok(s) })
+    })
+    .set_entry_point("echo")
+    .add_edge("echo", "__end__")
+    .compile()?;
+
+// Create state with initial messages
+let state = MessageGraphBuilder::initial_state(vec![Message::user("Hello")]);
+let result = graph.invoke(state).await?;
+
+let messages = MessageGraphBuilder::get_messages(&result);
+assert_eq!(messages[1].content, "Echo: Hello");
+```
+
+Helper functions:
+- `MessageGraphBuilder::initial_state(messages)` -- create state with initial messages
+- `MessageGraphBuilder::get_messages(state)` -- extract messages from state
+- `MessageGraphBuilder::add_message(state, message)` -- append a message to state
+- `MessageGraphBuilder::last_message(state)` -- get the most recent message
+
+---
+
+## ToolNode
+
+Prebuilt components for ReAct-style tool execution patterns.
+
+### create_tool_node
+
+Creates a graph node that reads `tool_calls` from state, executes each one, writes results to `tool_results`, and appends tool result messages:
+
+```rust
+use flowgentra_ai::prelude::*;
+use std::sync::Arc;
+
+let tool_node = create_tool_node(Arc::new(|name, args| {
+    Box::pin(async move {
+        match name.as_str() {
+            "calculator" => {
+                let a = args.get("a").and_then(|v| v.as_i64()).unwrap_or(0);
+                let b = args.get("b").and_then(|v| v.as_i64()).unwrap_or(0);
+                Ok(format!("{}", a + b))
+            }
+            "search" => Ok("Search results here".to_string()),
+            _ => Err(format!("Unknown tool: {}", name)),
+        }
+    })
+}));
+
+builder.add_node("tools", tool_node);
+```
+
+### tools_condition
+
+Router function for conditional edges. Routes to the tool node when tool calls are present, or to `"__end__"` when there are none:
+
+```rust
+builder.add_conditional_edge("agent", tools_condition("tools"));
+// If state has tool_calls → route to "tools"
+// If no tool_calls → route to "__end__"
+```
+
+### store_tool_calls
+
+Helper to extract tool calls from an LLM response and store them in state:
+
+```rust
+let response = llm.chat_with_tools(messages, &tools).await?;
+let state = store_tool_calls(state, &response);
+// state now has "tool_calls" and "last_response" keys
+```
+
+### Typical ReAct Loop
+
+```rust
+let graph = StateGraphBuilder::new()
+    .add_fn("agent", agent_fn)         // LLM generates response + tool calls
+    .add_node("tools", tool_node)       // Execute tool calls
+    .set_entry_point("agent")
+    .add_conditional_edge("agent", tools_condition("tools"))
+    .add_edge("tools", "agent")         // Loop back after tool execution
+    .compile()?;
+```
+
+---
+
+## Placeholder Nodes
+
+Config-driven nodes that haven't been bound to a handler are marked as placeholders. If execution reaches a placeholder node, it returns a clear error instead of silently passing through:
+
+```
+ExecutionError: Node 'unregistered_handler' is a placeholder and cannot be executed.
+Register a handler for this node before running the graph.
 ```
 
 ---
 
 ## Best Practices
 
-### ✅ Do's
-
-1. **Name nodes clearly** - `validate_input` not `step1`
-   ```rust
-   .add_node("validate_input", validate_handler)   // ✅ Good
-   .add_node("s1", handler)                          // ❌ Bad
-   ```
-
-2. **Make conditions clear and testable**
-   ```rust
-   // ✅ Clear and maintainable
-   Condition::compare("status", ComparisonOp::Equal, "approved")
-   
-   // ❌ Complex and hard to debug
-   Condition::and(vec![...multiple nested conditions...])
-   ```
-
-3. **Always route all paths to END**
-   ```rust
-   // ✅ All paths lead to END
-   .add_edge("handler1", "END")
-   .add_edge("handler2", "END")
-   
-   // ❌ Missing path - graph is incomplete
-   .add_edge("handler1", "END")
-   // handler2 doesn't lead anywhere!
-   ```
-
-4. **Test each path independently**
-   ```rust
-   #[tokio::test]
-   async fn test_valid_path() {
-       let mut state = State::new();
-       state.set("complexity", json!(3));
-       // Should take simple path
-   }
-   
-   #[tokio::test]
-   async fn test_complex_path() {
-       let mut state = State::new();
-       state.set("complexity", json!(10));
-       // Should take complex path
-   }
-   ```
-
-### ❌ Don'ts
-
-1. **Don't forget to add edges**
-   ```rust
-   let graph = GraphBuilder::new()
-       .add_node("step1", handler1)
-       // Missing: add_edge("START", "step1")
-       // Missing: add_edge("step1", "END")
-       .build()?;  // Will fail!
-   ```
-
-2. **Don't create disconnected nodes**
-   ```rust
-   // ❌ "orphaned_node" is unreachable
-   .add_node("main_flow", handler1)
-   .add_node("orphaned_node", handler2)
-   .add_edge("START", "main_flow")
-   .add_edge("main_flow", "END")
-   ```
-
-3. **Don't use vague condition names**
-   ```rust
-   // ❌ What does "flag" mean?
-   Condition::compare("flag", ComparisonOp::Equal, true)
-   
-   // ✅ Clear
-   Condition::compare("needs_approval", ComparisonOp::Equal, true)
-   ```
-
-4. **Don't create circular flows without explicit intent**
-   ```rust
-   // ❌ Accidental infinite loop
-   .add_edge("handler1", "handler2")
-   .add_edge("handler2", "handler1")  // Oops!
-   
-   // ✅ Explicit retry logic
-   .add_edge_with_condition(
-       "handler1",
-       "handler1",  // Intentional retry
-       Condition::compare("retry_needed", ComparisonOp::Equal, true)
-   )
-   ```
+1. **Name nodes clearly** -- `validate_input` not `step1`
+2. **Always terminate paths** -- Every path should reach `__end__` (StateGraph) or `END` (config)
+3. **Keep conditions simple** -- Complex routing logic belongs in a dedicated classifier node
+4. **Test each path** -- Write tests with state that triggers each branch
+5. **Use subgraphs for reuse** -- Extract repeated patterns into subgraphs
+6. **Export for debugging** -- Use `to_dot()` or `to_mermaid()` to visualize complex graphs
 
 ---
 
-## Debugging Graphs
-
-### Inspect Graph Structure
-
-```rust
-let graph = GraphBuilder::new()
-    .add_node("step1", handler1)
-    .add_node("step2", handler2)
-    .add_edge("START", "step1")
-    .add_edge("step1", "step2")
-    .add_edge("step2", "END")
-    .build()?;
-
-// Print nodes
-for node in graph.nodes() {
-    println!("Node: {}", node.name);
-}
-
-// Print edges
-for edge in graph.edges() {
-    println!("Edge: {} → {}", edge.from, edge.to);
-}
-```
-
-### Print Execution Path
-
-```rust
-#[register_handler]
-pub async fn debug_handler(mut state: State) -> Result<State> {
-    println!("📍 Current node: {}", state.get("current_node")?);
-    println!("State: {:#?}", state);
-    Ok(state)
-}
-
-// Add debug handler at key points
-let graph = GraphBuilder::new()
-    .add_node("step1", handler1)
-    .add_node("debug1", debug_handler)
-    .add_node("step2", handler2)
-    .add_edge("START", "step1")
-    .add_edge("step1", "debug1")
-    .add_edge("debug1", "step2")
-    .add_edge("step2", "END")
-    .build()?;
-```
-
----
-
-## Common Patterns
-
-### Pattern: Multi-way Routing
-
-Routes to 3+ different paths based on conditions:
-
-```rust
-.add_edge_with_condition(
-    "categorize",
-    "path_a",
-    Condition::compare("type", ComparisonOp::Equal, "A")
-)
-.add_edge_with_condition(
-    "categorize",
-    "path_b",
-    Condition::compare("type", ComparisonOp::Equal, "B")
-)
-.add_edge_with_condition(
-    "categorize",
-    "path_c",
-    Condition::compare("type", ComparisonOp::Equal, "C")
-)
-```
-
-### Pattern: Diamond (Split and Merge)
-
-One node → many nodes → one node:
-
-```rust
-.add_edge("validate", "path_a")
-.add_edge("validate", "path_b")
-.add_edge("path_a", "merge")
-.add_edge("path_b", "merge")
-```
-
-### Pattern: Sequential with Error Exit
-
-Normal path + error path:
-
-```rust
-.add_edge_with_condition(
-    "process",
-    "output",
-    Condition::compare("success", ComparisonOp::Equal, true)
-)
-.add_edge_with_condition(
-    "process",
-    "error_handler",
-    Condition::compare("success", ComparisonOp::Equal, false)
-)
-.add_edge("output", "END")
-.add_edge("error_handler", "END")
-```
-
----
-
-## Summary
-
-| Feature | Example |
-|---------|---------|
-| **Add node** | `.add_node("name", handler)` |
-| **Add edge** | `.add_edge("from", "to")` |
-| **Conditional edge** | `.add_edge_with_condition("from", "to", condition)` |
-| **Compare values** | `Condition::compare("field", Op::Equal, value)` |
-| **Combine conditions** | `Condition::and(vec![...])` or `Condition::or(vec![...])` |
-| **Field exists** | `Condition::field_exists("field")` |
-| **Custom condition** | `Condition::custom("name", predicate_fn)` |
-
-Now you can build sophisticated, dynamic workflows with conditional routing! Start with simple graphs and gradually add complexity.
+See [state/README.md](../state/README.md) for state management details.
+See [FEATURES.md](../FEATURES.md) for the complete feature list.

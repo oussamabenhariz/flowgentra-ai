@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::state::State;
 use super::error::Result;
+use crate::core::state::State;
 
 /// Checkpoint metadata
 #[derive(Debug, Clone)]
@@ -31,12 +31,7 @@ pub struct Checkpoint<S: State> {
 }
 
 impl<S: State> Checkpoint<S> {
-    pub fn new(
-        thread_id: String,
-        step: usize,
-        node_name: String,
-        state: S,
-    ) -> Self {
+    pub fn new(thread_id: String, step: usize, node_name: String, state: S) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -78,6 +73,7 @@ pub trait Checkpointer<S: State>: Send + Sync {
 /// In-memory checkpointer (default, for testing and single-session use)
 pub struct InMemoryCheckpointer<S: State> {
     /// thread_id -> step -> Checkpoint
+    #[allow(clippy::type_complexity)]
     storage: Arc<RwLock<HashMap<String, HashMap<usize, Checkpoint<S>>>>>,
 }
 
@@ -124,14 +120,12 @@ impl<S: State + Send + Sync> Checkpointer<S> for InMemoryCheckpointer<S> {
 
     async fn load_latest(&self, thread_id: &str) -> Result<Option<Checkpoint<S>>> {
         let storage = self.storage.read().await;
-        Ok(storage
-            .get(thread_id)
-            .and_then(|steps| {
-                steps
-                    .iter()
-                    .max_by_key(|(step, _)| *step)
-                    .map(|(_, cp)| cp.clone())
-            }))
+        Ok(storage.get(thread_id).and_then(|steps| {
+            steps
+                .iter()
+                .max_by_key(|(step, _)| *step)
+                .map(|(_, cp)| cp.clone())
+        }))
     }
 
     async fn list_checkpoints(&self, thread_id: &str) -> Result<Vec<(usize, i64)>> {
@@ -168,8 +162,8 @@ impl<S: State + Send + Sync> Checkpointer<S> for InMemoryCheckpointer<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::core::state::PlainState;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_in_memory_checkpointer() {

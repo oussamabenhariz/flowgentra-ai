@@ -34,13 +34,19 @@ pub type ToolExecutorFn = Arc<dyn Fn(&str, &str) -> String + Send + Sync>;
 /// - Otherwise → OpenAI (default)
 fn resolve_provider(model: &str) -> LLMProvider {
     let lower = model.to_lowercase();
-    if lower.starts_with("mistral") || lower.starts_with("pixtral") || lower.starts_with("codestral") {
+    if lower.starts_with("mistral")
+        || lower.starts_with("pixtral")
+        || lower.starts_with("codestral")
+    {
         LLMProvider::Mistral
     } else if lower.starts_with("gpt") || lower.starts_with("o1") || lower.starts_with("o3") {
         LLMProvider::OpenAI
     } else if lower.starts_with("claude") {
         LLMProvider::Anthropic
-    } else if lower.starts_with("llama") || lower.starts_with("mixtral") || lower.starts_with("gemma") {
+    } else if lower.starts_with("llama")
+        || lower.starts_with("mixtral")
+        || lower.starts_with("gemma")
+    {
         LLMProvider::Groq
     } else {
         LLMProvider::OpenAI
@@ -229,10 +235,7 @@ impl AgentReasoningNode {
         }
 
         // User message: combine input with tool listing
-        let user_message = format!(
-            "Available Tools:\n{}\n\nUser Query: {}",
-            tools_str, input
-        );
+        let user_message = format!("Available Tools:\n{}\n\nUser Query: {}", tools_str, input);
         messages.push(Message::user(&user_message));
 
         info!(
@@ -243,9 +246,10 @@ impl AgentReasoningNode {
         );
 
         // Call the LLM
-        let response = client.chat(messages).await.map_err(|e| {
-            FlowgentraError::LLMError(format!("LLM call failed: {}", e))
-        })?;
+        let response = client
+            .chat(messages)
+            .await
+            .map_err(|e| FlowgentraError::LLMError(format!("LLM call failed: {}", e)))?;
 
         let response_text = response.content.clone();
         debug!(response = %response_text, "LLM response received");
@@ -361,9 +365,7 @@ impl ConversationalNode {
             .and_then(|v| v.as_str().map(|s| s.to_string()))
             .unwrap_or_default();
 
-        let mut messages = vec![
-            Message::system(&self.config.system_prompt),
-        ];
+        let mut messages = vec![Message::system(&self.config.system_prompt)];
 
         // Include conversation history for multi-turn context
         if let Some(history) = state.get("conversation_history") {
@@ -388,9 +390,10 @@ impl ConversationalNode {
             "Calling LLM (conversational)"
         );
 
-        let response = client.chat(messages).await.map_err(|e| {
-            FlowgentraError::LLMError(format!("LLM call failed: {}", e))
-        })?;
+        let response = client
+            .chat(messages)
+            .await
+            .map_err(|e| FlowgentraError::LLMError(format!("LLM call failed: {}", e)))?;
 
         state.set("response", serde_json::json!(response.content));
 
@@ -498,9 +501,15 @@ mod tests {
 
     #[test]
     fn test_resolve_provider() {
-        assert!(matches!(resolve_provider("mistral-medium"), LLMProvider::Mistral));
+        assert!(matches!(
+            resolve_provider("mistral-medium"),
+            LLMProvider::Mistral
+        ));
         assert!(matches!(resolve_provider("gpt-4"), LLMProvider::OpenAI));
-        assert!(matches!(resolve_provider("claude-3-opus"), LLMProvider::Anthropic));
+        assert!(matches!(
+            resolve_provider("claude-3-opus"),
+            LLMProvider::Anthropic
+        ));
         assert!(matches!(resolve_provider("llama-3-70b"), LLMProvider::Groq));
     }
 }

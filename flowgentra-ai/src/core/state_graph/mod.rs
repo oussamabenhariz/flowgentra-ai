@@ -20,21 +20,29 @@
 //! - **Ergonomic**: Builder pattern for graph construction
 //! - **Observable**: Checkpointing and logging at every step
 
-pub mod error;
-pub mod node;
-pub mod edge;
 pub mod checkpoint;
+pub mod edge;
+pub mod error;
 pub mod executor;
 pub mod file_checkpointer;
+pub mod message_graph;
+pub mod node;
+pub mod tool_node;
 
 // Re-export public API
-pub use error::{StateGraphError, Result};
-pub use node::{Node, FunctionNode, UpdateNode, StateUpdate, MergeStrategy};
-pub use edge::{Edge, FixedEdge, START, END};
 pub use checkpoint::{Checkpoint, Checkpointer, InMemoryCheckpointer};
-pub use file_checkpointer::FileCheckpointer;
+pub use edge::{Edge, FixedEdge, END, START};
+pub use error::{Result, StateGraphError};
 pub use executor::{StateGraph, StateGraphBuilder, SubgraphNode};
+pub use file_checkpointer::FileCheckpointer;
+pub use message_graph::MessageGraphBuilder;
+pub use node::{FunctionNode, MergeStrategy, Node, StateUpdate, UpdateNode};
+pub use tool_node::{create_tool_node, store_tool_calls, tools_condition};
 
 // Re-export common types
-pub type NodeFn<S> = Box<dyn Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>> + Send + Sync>;
+pub type NodeFn<S> = Box<
+    dyn Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>>
+        + Send
+        + Sync,
+>;
 pub type RouterFn<S> = Box<dyn Fn(&S) -> Result<String> + Send + Sync>;

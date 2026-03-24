@@ -1,36 +1,38 @@
 # Dynamic Planning Guide
 
-Let the LLM decide what to do next instead of hardcoding the workflow path.
+Let the LLM decide what step to execute next instead of hardcoding the workflow path.
 
-## Problem with Hardcoded Workflows
+## The Problem
 
-```
-Traditional approach:
-START → check_power → check_network → check_software → END
-
-What if power is fine but network is offline?
-The workflow doesn't adapt!
-```
-
-## Solution: Dynamic Planning
+Traditional workflows are rigid:
 
 ```
-Adaptive approach:
-START → [LLM decides] → check_power → [LLM decides] → [more checks] → END
-
-The LLM sees the state and decides:
-"Power is fine, let me check network next"
+START -> check_power -> check_network -> check_software -> END
 ```
+
+What if power is fine but the problem is the network? The workflow runs unnecessary steps and can't adapt.
+
+## The Solution
+
+With dynamic planning, the LLM inspects the current state and decides what to do next:
+
+```
+START -> [LLM picks] -> check_power -> [LLM picks] -> check_network -> [LLM picks] -> END
+```
+
+The LLM sees "power is fine" and skips ahead to "check network." When it finds the issue, it goes straight to fixing it.
+
+---
 
 ## Setup
 
-### Basic Configuration
+### Basic
 
 ```yaml
 graph:
   planner:
     enabled: true
-    max_plan_steps: 5        # Max replanning iterations
+    max_plan_steps: 5
 ```
 
 ### Full Configuration
@@ -42,163 +44,95 @@ graph:
     max_plan_steps: 10
     prompt_template: |
       You are a troubleshooting expert.
-      
+
       Current state: {current_state}
       Available actions: {available_nodes}
-      
-      What should we do next?
-      Respond with ONLY the node name.
+
+      What should we do next? Respond with ONLY the node name.
 ```
 
 ## How It Works
 
-```
-1. Agent in state: {issue: "device won't start"}
-2. Planner: "Let's check power first" → check_power
-3. Result: {issue: "...", power: "OK"}
-4. Planner: "Power's fine, check network" → check_network
-5. Result: {issue: "...", power: "OK", network: "DOWN"}
-6. Planner: "Found the problem!" → fix_network
-7. Result: {issue: "...", power: "OK", network: "OK"} → END
-```
+1. Agent enters the planner with current state: `{issue: "device won't start"}`
+2. LLM decides: "Let's check power first" -> routes to `check_power`
+3. After `check_power`: `{issue: "...", power: "OK"}`
+4. LLM decides: "Power is fine, check network" -> routes to `check_network`
+5. After `check_network`: `{issue: "...", power: "OK", network: "DOWN"}`
+6. LLM decides: "Found it! Fix the network" -> routes to `fix_network`
+7. Done.
 
-## Configuration
+---
 
-### Nodes Available to Planner
-
-```yaml
-graph:
-  nodes:
-    - name: check_power
-      handler: handlers::check_power
-    
-    - name: check_network
-      handler: handlers::check_network
-    
-    - name: check_storage
-      handler: handlers::check_storage
-    
-    - name: run_diagnostics
-      handler: handlers::run_diagnostics
-  
-  edges:
-    - from: START
-      to: planner
-    
-    - from: planner
-      to: [check_power, check_network, check_storage, run_diagnostics]
-    
-    - from: [check_power, check_network, check_storage, run_diagnostics]
-      to: planner
-    
-    - from: planner
-      to: END
-```
-
-## Custom Planner Prompts
+## Example: Support Agent
 
 ```yaml
 graph:
   planner:
     enabled: true
     max_plan_steps: 5
-    prompt_template: |
-      You are a customer support specialist.
-      
-      Customer issue: {current_state.customer_issue}
-      Already tried: {current_state.tried}
-      
-      What support action should we try next?
-      - escalate_to_specialist
-      - send_documentation
-      - schedule_callback
-      - provide_workaround
-      
-      Choose one node:
+
+  nodes:
+    - name: check_faq
+      handler: handlers::check_faq
+    - name: search_kb
+      handler: handlers::search_knowledge_base
+    - name: suggest_fix
+      handler: handlers::suggest_workaround
+    - name: escalate
+      handler: handlers::escalate_to_specialist
+
+  edges:
+    - from: START
+      to: planner
+    - from: planner
+      to: [check_faq, search_kb, suggest_fix, escalate]
+    - from: [check_faq, search_kb, suggest_fix, escalate]
+      to: planner
+    - from: planner
+      to: END
 ```
 
-## Use Cases
-
-### Troubleshooting
-
-```yaml
-nodes:
-  - name: check_hardware
-  - name: check_drivers
-  - name: check_software
-  - name: run_diagnostics
-  - name: escalate
-```
-
-### Customer Support
-
-```yaml
-nodes:
-  - name: check_faq
-  - name: search_knowledge_base
-  - name: suggest_workaround
-  - name: escalate_to_specialist
-```
-
-### Data Processing
-
-```yaml
-nodes:
-  - name: validate_data
-  - name: transform_data
-  - name: enrich_data
-  - name: store_results
-  - name: notify_user
-```
-
-## Controlling Planner Behavior
-
-### Limit Planning Steps
-
-```yaml
-planner:
-  max_plan_steps: 3  # Max 3 planning decisions
-```
-
-### Control Available Options
-
-```yaml
-planner:
-  available_nodes: [check_power, check_network]  # Limit choices
-```
-
-### Custom Decision Logic
-
-```rust
-pub async fn planner_wrapper(mut state: State) -> Result<State> {
-    let current_state = state.get("current_state")?;
-    
-    // Custom logic to select next node
-    let next_node = my_logic(&current_state);
-    
-    state.set("next_node", json!(next_node));
-    Ok(state)
-}
-```
-
-## Best Practices
-
-1. Use clear, descriptive node names
-2. Document what each node does
-3. Don't give too many options (keeps planner focused)
-4. Show progress in state so planner can see what happened
-5. Always have an escalate or abort option
-6. Test locally first
-
-## Debugging Planner
-
-```rust
-// See what planner decided
-let plan = agent.get_plan()?;
-println!("Selected node: {}", plan.next_node);
-println!("Reason: {}", plan.reasoning);
-```
+The planner can try the FAQ first, then search the knowledge base, suggest a fix, or escalate -- adapting to each situation.
 
 ---
 
-See [configuration/CONFIG_GUIDE.md](../configuration/CONFIG_GUIDE.md) for complete reference.
+## Combining with StateGraph
+
+You can also implement planning logic directly in a StateGraph using conditional edges:
+
+```rust
+let graph = StateGraphBuilder::new()
+    .add_fn("plan", plan_next_step)
+    .add_fn("check_power", check_power)
+    .add_fn("check_network", check_network)
+    .add_fn("fix", apply_fix)
+    .set_entry_point("plan")
+    .add_conditional_edge("plan", |state| {
+        Ok(state.get("next_action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("__end__")
+            .to_string())
+    })
+    .add_edge("check_power", "plan")   // Loop back to planner
+    .add_edge("check_network", "plan")
+    .add_edge("fix", "__end__")
+    .compile()?;
+```
+
+For async planning decisions (e.g., calling an LLM to decide), use `add_async_conditional_edge`.
+
+---
+
+## Best Practices
+
+1. **Use descriptive node names** -- the LLM reads them to decide routing
+2. **Limit choices** -- don't give the planner too many options (5-7 max)
+3. **Set max_plan_steps** -- prevents infinite loops
+4. **Include an escape hatch** -- always have an "escalate" or "finish" option
+5. **Show progress in state** -- the planner needs to see what's already been tried
+6. **Test with deterministic inputs** -- verify the planner picks sensible routes
+
+---
+
+See [graph/README.md](../graph/README.md) for conditional edge details.
+See [FEATURES.md](../FEATURES.md) for the complete feature list.

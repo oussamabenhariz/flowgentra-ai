@@ -31,6 +31,7 @@ use crate::core::state_graph::{StateGraph, StateGraphError};
 /// ```
 pub struct Supervisor<S: State> {
     agents: HashMap<String, Arc<StateGraph<S>>>,
+    #[allow(clippy::type_complexity)]
     router: Box<dyn Fn(&S) -> super::super::state_graph::error::Result<String> + Send + Sync>,
     max_rounds: usize,
     finish_marker: String,

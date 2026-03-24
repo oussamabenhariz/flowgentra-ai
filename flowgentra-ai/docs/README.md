@@ -22,19 +22,24 @@ docs/
 |
 |-- graph/                       Graph engine & compiler
 |   SubgraphNode, ParallelExecutor, async conditional edges,
-|   graph export (DOT / Mermaid / JSON), human-in-the-loop
+|   graph export (DOT / Mermaid / JSON), human-in-the-loop,
+|   MessageGraphBuilder, ToolNode, tools_condition
 |
 |-- llm/                         LLM providers & features
 |   OpenAI, Anthropic, Mistral, Groq, HuggingFace, Ollama,
-|   RetryLLMClient, token counting, cost tracking,
-|   structured output (ResponseFormat), Anthropic tool calling,
-|   HuggingFace real SSE streaming
+|   RetryLLMClient, CachedLLMClient, FallbackLLMClient,
+|   token counting, cost tracking, structured output,
+|   PromptTemplate, ChatPromptTemplate, FewShotPromptTemplate,
+|   OutputParser (JSON, List, Structured)
 |
 |-- rag/                         Retrieval-Augmented Generation
-|   PineconeStore, QdrantStore, ChromaStore, InMemoryStore
+|   PineconeStore, QdrantStore, ChromaStore, InMemoryStore,
+|   Text splitters, Retriever, HuggingFace embeddings,
+|   Cross-encoder reranker, Document loaders, Ingestion pipeline
 |
 |-- memory/                      Conversation history & checkpointing
-|   InMemoryCheckpointer, FileCheckpointer
+|   InMemoryCheckpointer, FileCheckpointer,
+|   TokenBufferMemory, SummaryMemory
 |
 |-- state/                       State management & data flow
 |   PlainState, SharedState, ScopedState,
@@ -83,6 +88,18 @@ docs/
 | Use async conditional edges                         | [graph/README.md](./graph/README.md)                               | 10 min    |
 | Enable RAG / vector search                          | [rag/README.md](./rag/README.md)                                  | 20 min    |
 | Use Pinecone or Qdrant as a vector store            | [rag/README.md](./rag/README.md)                                  | 15 min    |
+| Split documents into chunks                          | [rag/README.md](./rag/README.md)                                  | 10 min    |
+| Build an ingestion pipeline                          | [rag/README.md](./rag/README.md)                                  | 15 min    |
+| Use HuggingFace embeddings                           | [rag/README.md](./rag/README.md)                                  | 10 min    |
+| Rerank search results                                | [rag/README.md](./rag/README.md)                                  | 10 min    |
+| Build a chat-focused graph (MessageGraph)            | [graph/README.md](./graph/README.md)                               | 10 min    |
+| Add ReAct-style tool execution (ToolNode)            | [graph/README.md](./graph/README.md)                               | 15 min    |
+| Cache LLM responses                                  | [llm/README.md](./llm/README.md)                                  | 5 min     |
+| Set up LLM fallback providers                        | [llm/README.md](./llm/README.md)                                  | 10 min    |
+| Use prompt templates                                 | [llm/README.md](./llm/README.md)                                  | 10 min    |
+| Parse structured output from LLM responses           | [llm/README.md](./llm/README.md)                                  | 10 min    |
+| Use token-budget memory management                   | [memory/README.md](./memory/README.md)                             | 10 min    |
+| Summarize old conversation messages                  | [memory/README.md](./memory/README.md)                             | 10 min    |
 | Add conversation memory                             | [memory/README.md](./memory/README.md)                             | 10 min    |
 | Persist checkpoints to disk                         | [memory/README.md](./memory/README.md)                             | 10 min    |
 | Auto-evaluate and self-correct output               | [evaluation/README.md](./evaluation/README.md)                     | 15 min    |
@@ -156,6 +173,9 @@ The graph compiler is the heart of Flowgentra AI. Define nodes, edges, and condi
 | Async Conditional Edges    | Route execution with async functions that inspect state at runtime     |
 | Graph Export               | Serialize graph structure to DOT, Mermaid, or JSON for visualization   |
 | Human-in-the-Loop          | Interrupt execution before or after a node, resume with modified state |
+| MessageGraphBuilder        | Convenience wrapper for chat-focused graphs with message accumulation  |
+| ToolNode                   | Prebuilt node for automatic tool call execution from LLM responses     |
+| tools_condition            | Router that directs to tool node or end based on tool calls in state   |
 
 ### Agents and Multi-Agent Systems
 
@@ -177,6 +197,11 @@ The graph compiler is the heart of Flowgentra AI. Define nodes, edges, and condi
 | Anthropic Tool Calling     | Native `input_schema` format for Anthropic function calling            |
 | HuggingFace SSE Streaming  | Real server-sent-event streaming for HuggingFace models                |
 | ResponseFormat             | Structured output / JSON mode for deterministic parsing                |
+| CachedLLMClient            | Hash-based response caching to avoid redundant API calls               |
+| FallbackLLMClient          | Try multiple providers in sequence until one succeeds                  |
+| PromptTemplate             | String interpolation with `{variable}` syntax and partial formatting   |
+| ChatPromptTemplate         | Multi-message prompt builder with system/user/assistant templates      |
+| OutputParser               | Parse JSON, lists, and structured data from LLM text responses         |
 
 ### State Management
 
@@ -204,6 +229,14 @@ The graph compiler is the heart of Flowgentra AI. Define nodes, edges, and condi
 | QdrantStore                | Real REST API integration with Qdrant                                  |
 | ChromaStore                | ChromaDB vector store support                                          |
 | InMemoryStore              | Lightweight in-process store for development and testing               |
+| Text Splitters             | Recursive, Markdown, Code, HTML, and Token-based document chunking     |
+| Retriever                  | End-to-end pipeline: embed → search → rerank → dedup                   |
+| HuggingFace Embeddings     | Inference API + self-hosted TEI with auto dimension detection           |
+| Cross-Encoder Reranker     | HuggingFace cross-encoder model for result reranking                   |
+| Document Loaders           | Load PDF, text, Markdown, JSON, CSV, HTML files                        |
+| Ingestion Pipeline         | Load → split → embed → index in one call                               |
+| Hybrid Search              | Combine semantic + BM25 keyword matching                               |
+| RAG Evaluation             | Hit rate, MRR, and NDCG metrics for retrieval quality                  |
 
 ### Memory and Checkpointing
 
@@ -211,6 +244,8 @@ The graph compiler is the heart of Flowgentra AI. Define nodes, edges, and condi
 | -------------------------- | ---------------------------------------------------------------------- |
 | InMemoryCheckpointer       | Fast, ephemeral checkpoint storage                                     |
 | FileCheckpointer           | Persist checkpoints to disk as JSON for durable recovery               |
+| TokenBufferMemory          | Sliding window memory managed by token budget                          |
+| SummaryMemory              | LLM-based summarization of older conversation messages                 |
 
 ### Evaluation and Self-Correction
 
