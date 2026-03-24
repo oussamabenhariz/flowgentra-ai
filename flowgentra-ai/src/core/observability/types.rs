@@ -11,12 +11,16 @@ use std::collections::HashMap;
 pub type TokenUsage = LlmTokenUsage;
 
 
-/// Node timing metric
+/// Node timing metric with optional state snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeTiming {
     pub node_name: String,
     pub duration_ms: u64,
     pub start_time: DateTime<Utc>,
+    /// JSON state snapshot taken after this node executed.
+    /// Populated when observability middleware has `capture_state: true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_snapshot: Option<serde_json::Value>,
 }
 
 /// Failure snapshot for debugging

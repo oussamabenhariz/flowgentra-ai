@@ -33,7 +33,7 @@ pub use node::{Node, FunctionNode, UpdateNode, StateUpdate, MergeStrategy};
 pub use edge::{Edge, FixedEdge, START, END};
 pub use checkpoint::{Checkpoint, Checkpointer, InMemoryCheckpointer};
 pub use file_checkpointer::FileCheckpointer;
-pub use executor::{StateGraph, StateGraphBuilder};
+pub use executor::{StateGraph, StateGraphBuilder, SubgraphNode};
 
 // Re-export common types
 pub type NodeFn<S> = Box<dyn Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>> + Send + Sync>;

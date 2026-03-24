@@ -1,227 +1,329 @@
 # Flowgentra AI Documentation
 
-Welcome to the FlowgentraAI documentation! Everything you need to build AI agents is organized here.
+Welcome to the Flowgentra AI documentation. This is your starting point for building intelligent agents, multi-agent systems, and stateful workflows in Rust.
 
-## Documentation Structure
+Flowgentra AI is an agent framework inspired by LangGraph, designed to give you fine-grained control over graph-based execution, LLM orchestration, tool use, and state management -- all with the performance and safety guarantees of Rust.
+
+Whether you are wiring up your first chatbot or orchestrating a fleet of cooperating agents, this hub will point you to the right guide.
+
+---
+
+## Documentation Map
 
 ```
 docs/
-├── README.md (this file - main navigation)
-├── QUICKSTART.md (get running in 5 minutes)
-├── FEATURES.md (feature overview)
-├── config.yaml.template (config template to copy)
-│
-├── Feature Guides (organized by capability)
-│   ├── agents/              → Predefined agent types (ZeroShotReAct, FewShot, Conversational)
-│   ├── llm/              → Setup OpenAI, Anthropic, Mistral, Groq, HuggingFace, etc.
-│   ├── rag/              → Semantic search with vector stores
-│   ├── memory/           → Conversation history & checkpointing
-│   ├── evaluation/       → Auto-evaluation & self-correction
-│   ├── tools/            → Custom tools & MCP tools
-│   ├── state/            → State management & data flow
-│   ├── planning/         → Dynamic planning & adaptive workflows
-│   ├── handlers/         → Custom handler development
-│   ├── testing/          → Testing strategies & unit tests
-│   └── observability/    → Logging, tracing, monitoring
-│
-├── configuration/
-│   ├── CONFIG_GUIDE.md (complete config reference)
-│   └── CONFIG_FEATURES.md (config examples & patterns)
-│
-└── development/
-    └── DEVELOPER_GUIDE.md (advanced patterns & development)
+|-- README.md                    You are here
+|-- QUICKSTART.md                Get running in 5 minutes
+|-- FEATURES.md                  Full feature overview
+|-- config.yaml.template         Starter config to copy
+|
+|-- agents/                      Predefined agent types
+|   ZeroShotReAct, FewShotReAct, Conversational, Supervisor
+|
+|-- graph/                       Graph engine & compiler
+|   SubgraphNode, ParallelExecutor, async conditional edges,
+|   graph export (DOT / Mermaid / JSON), human-in-the-loop
+|
+|-- llm/                         LLM providers & features
+|   OpenAI, Anthropic, Mistral, Groq, HuggingFace, Ollama,
+|   RetryLLMClient, token counting, cost tracking,
+|   structured output (ResponseFormat), Anthropic tool calling,
+|   HuggingFace real SSE streaming
+|
+|-- rag/                         Retrieval-Augmented Generation
+|   PineconeStore, QdrantStore, ChromaStore, InMemoryStore
+|
+|-- memory/                      Conversation history & checkpointing
+|   InMemoryCheckpointer, FileCheckpointer
+|
+|-- state/                       State management & data flow
+|   PlainState, SharedState, ScopedState,
+|   JsonReducer, ReducerConfig, #[derive(State)]
+|
+|-- tools/                       Custom tools & MCP integration
+|   MCP SSE, Stdio, Docker, reconnecting client,
+|   MCP resources & prompts protocol
+|
+|-- evaluation/                  Auto-evaluation & self-correction
+|-- planning/                    Dynamic planning & adaptive workflows
+|-- handlers/                    Custom handler development
+|-- macros/                      Proc macros: #[node], #[register_handler], #[derive(State)]
+|-- observability/               Logging, tracing, monitoring
+|   Event broadcaster, OpenTelemetry (OTLP) export
+|
+|-- testing/                     Testing strategies & examples
+|-- configuration/               Complete config reference
+|   CONFIG_GUIDE.md, CONFIG_FEATURES.md
+|
+|-- development/                 Advanced patterns & internals
+    DEVELOPER_GUIDE.md
 ```
+
+---
 
 ## Quick Navigation
 
-### Get Started in 5 Minutes
-**[QUICKSTART.md](./QUICKSTART.md)** - Minimal example to get your first agent working
+### "I want to..." Table
 
-### Understand All Features
-**[FEATURES.md](./FEATURES.md)** - Overview of core features (memory, evaluation, RAG, MCP, etc.)
-
-### Configure Your Agent
-**[configuration/CONFIG_GUIDE.md](./configuration/CONFIG_GUIDE.md)** - Complete config.yaml reference  
-**[configuration/CONFIG_FEATURES.md](./configuration/CONFIG_FEATURES.md)** - Memory, evaluation, planner configs
-
-### Feature-Specific Guides
-| What I Want to Do | Guide |
-|---|---|
-| Use ZeroShotReAct, FewShot, or Conversational | [agents/README.md](./agents/README.md) |
-| Set up OpenAI, Claude, Mistral, Groq, HuggingFace... | [llm/README.md](./llm/README.md) |
-| Enable semantic search with RAG | [rag/README.md](./rag/README.md) |
-| Add conversation memory/checkpoints | [memory/README.md](./memory/README.md) |
-| Auto-grade & retry on low quality | [evaluation/README.md](./evaluation/README.md) |
-| Connect external tools & APIs | [tools/README.md](./tools/README.md) |
-| Understand data flow in workflows | [state/README.md](./state/README.md) |
-| Let LLM decide next step | [planning/README.md](./planning/README.md) |
-| Write custom handler functions | [handlers/README.md](./handlers/README.md) |
-| Write unit & integration tests | [testing/README.md](./testing/README.md) |
-| Monitor & debug execution | [observability/README.md](./observability/README.md) |
-
-### Build Custom Code
-**[development/DEVELOPER_GUIDE.md](./development/DEVELOPER_GUIDE.md)** - Advanced patterns and development  
-**[handlers/README.md](./handlers/README.md)** - Build handler functions
-
-### Template to Start
-**[config.yaml.template](./config.yaml.template)** - Copy this to create your config.yaml
-
----
-
-## Learning Path
-
-### Beginner (30 minutes)
-1. [QUICKSTART.md](./QUICKSTART.md) - 5 minute quickstart
-2. [config.yaml.template](./config.yaml.template) - Copy and customize
-3. [configuration/CONFIG_GUIDE.md](./configuration/CONFIG_GUIDE.md) - Understand options
-
-### Intermediate (2 hours)
-1. [FEATURES.md](./FEATURES.md) - Learn all capabilities
-2. Pick a feature: [llm/](./llm/), [rag/](./rag/), [memory/](./memory/), [evaluation/](./evaluation/)
-3. [handlers/README.md](./handlers/README.md) - Build custom handlers
-4. Check examples in `../examples/`
-
-### Advanced (1+ hours)
-1. [planning/README.md](./planning/README.md) - Dynamic workflows
-2. [state/README.md](./state/README.md) - State management
-3. [testing/README.md](./testing/README.md) - Testing strategies
-4. [development/DEVELOPER_GUIDE.md](./development/DEVELOPER_GUIDE.md) - Advanced patterns
-5. Run `cargo doc --open` - Full API docs
+| I want to...                                      | Start here                                                         | Est. time |
+| ------------------------------------------------- | ------------------------------------------------------------------ | --------- |
+| Get started quickly                                | [QUICKSTART.md](./QUICKSTART.md)                                   | 5 min     |
+| See every feature at a glance                      | [FEATURES.md](./FEATURES.md)                                       | 15 min    |
+| Create or customize config.yaml                    | [configuration/CONFIG_GUIDE.md](./configuration/CONFIG_GUIDE.md)   | 20 min    |
+| Use a predefined agent                             | [agents/README.md](./agents/README.md)                             | 15 min    |
+| Set up an LLM provider                             | [llm/README.md](./llm/README.md)                                  | 15 min    |
+| Add automatic retries to LLM calls                 | [llm/README.md](./llm/README.md)                                  | 10 min    |
+| Track token usage and costs                        | [llm/README.md](./llm/README.md)                                  | 10 min    |
+| Get structured JSON output from an LLM             | [llm/README.md](./llm/README.md)                                  | 10 min    |
+| Build a graph-based workflow                        | [graph/README.md](./graph/README.md)                               | 20 min    |
+| Compose subgraphs inside a parent graph             | [graph/README.md](./graph/README.md)                               | 15 min    |
+| Run branches in parallel and join results           | [graph/README.md](./graph/README.md)                               | 15 min    |
+| Export a graph to DOT, Mermaid, or JSON             | [graph/README.md](./graph/README.md)                               | 10 min    |
+| Add human-in-the-loop approval steps                | [graph/README.md](./graph/README.md)                               | 15 min    |
+| Use async conditional edges                         | [graph/README.md](./graph/README.md)                               | 10 min    |
+| Enable RAG / vector search                          | [rag/README.md](./rag/README.md)                                  | 20 min    |
+| Use Pinecone or Qdrant as a vector store            | [rag/README.md](./rag/README.md)                                  | 15 min    |
+| Add conversation memory                             | [memory/README.md](./memory/README.md)                             | 10 min    |
+| Persist checkpoints to disk                         | [memory/README.md](./memory/README.md)                             | 10 min    |
+| Auto-evaluate and self-correct output               | [evaluation/README.md](./evaluation/README.md)                     | 15 min    |
+| Connect tools and APIs                              | [tools/README.md](./tools/README.md)                               | 20 min    |
+| Use MCP with reconnection and resources             | [tools/README.md](./tools/README.md)                               | 15 min    |
+| Manage state with reducers and scoping              | [state/README.md](./state/README.md)                               | 15 min    |
+| Let the LLM decide the next step                    | [planning/README.md](./planning/README.md)                         | 15 min    |
+| Orchestrate multiple agents with a Supervisor       | [agents/README.md](./agents/README.md)                             | 20 min    |
+| Write custom handler functions                      | [handlers/README.md](./handlers/README.md)                         | 30 min    |
+| Use proc macros (#[node], #[register_handler])      | [macros/README.md](./macros/README.md)                             | 15 min    |
+| Monitor execution with real-time events             | [observability/README.md](./observability/README.md)               | 15 min    |
+| Export traces to OpenTelemetry                       | [observability/README.md](./observability/README.md)               | 15 min    |
+| Write tests for agents and workflows                | [testing/README.md](./testing/README.md)                           | 30 min    |
+| Learn advanced patterns                             | [development/DEVELOPER_GUIDE.md](./development/DEVELOPER_GUIDE.md) | 1 hour   |
+| Copy a starter config template                      | [config.yaml.template](./config.yaml.template)                     | 1 min     |
 
 ---
 
-## What You'll Learn
+## Learning Paths
 
-- **5 minutes**: Create and run your first agent
-- **30 minutes**: Configure memory, evaluation, and tools
-- **2 hours**: Build custom handlers and advanced workflows
-- **Advanced**: Dynamic planning, complex state management, testing
+### Beginner -- Your First Agent (30 minutes)
+
+Build a working agent from scratch with minimal configuration.
+
+1. [QUICKSTART.md](./QUICKSTART.md) -- Run a "hello world" agent in 5 minutes
+2. [config.yaml.template](./config.yaml.template) -- Copy the template and make it yours
+3. [configuration/CONFIG_GUIDE.md](./configuration/CONFIG_GUIDE.md) -- Understand the configuration options
+4. [agents/README.md](./agents/README.md) -- Pick a predefined agent type
+5. Browse the examples in `../examples/`
+
+### Intermediate -- Custom Workflows (2-3 hours)
+
+Go beyond predefined agents. Build multi-step workflows with tools, memory, and evaluation.
+
+1. [FEATURES.md](./FEATURES.md) -- Survey the full feature set
+2. [llm/README.md](./llm/README.md) -- Configure your LLM provider, enable retries and cost tracking
+3. [graph/README.md](./graph/README.md) -- Build graph-based workflows with conditional routing
+4. [state/README.md](./state/README.md) -- Manage data flow with reducers and scoped state
+5. [memory/README.md](./memory/README.md) -- Add checkpointing (in-memory or file-based)
+6. [tools/README.md](./tools/README.md) -- Wire up tools and MCP integrations
+7. [rag/README.md](./rag/README.md) -- Add retrieval-augmented generation
+8. [handlers/README.md](./handlers/README.md) -- Write your own handler functions
+9. [evaluation/README.md](./evaluation/README.md) -- Auto-grade output quality and retry
+
+### Advanced -- Production Systems (ongoing)
+
+Design production-grade agent architectures with multi-agent orchestration, observability, and testing.
+
+1. [graph/README.md](./graph/README.md) -- Subgraphs, parallel execution, human-in-the-loop
+2. [agents/README.md](./agents/README.md) -- Supervisor multi-agent orchestration
+3. [macros/README.md](./macros/README.md) -- Use `#[node]`, `#[register_handler]`, `#[derive(State)]`
+4. [observability/README.md](./observability/README.md) -- Event broadcasting and OpenTelemetry export
+5. [planning/README.md](./planning/README.md) -- Dynamic, LLM-driven planning
+6. [testing/README.md](./testing/README.md) -- Testing strategies for agents and graphs
+7. [development/DEVELOPER_GUIDE.md](./development/DEVELOPER_GUIDE.md) -- Advanced patterns, plugin system, middleware
+8. Run `cargo doc --open` for the full API reference
+
+---
+
+## Feature Highlights
+
+### Graph Engine
+
+The graph compiler is the heart of Flowgentra AI. Define nodes, edges, and conditional branches, then let the compiler validate and execute your workflow.
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Graph Compiler             | Validates structure, detects cycles, ensures reachability              |
+| SubgraphNode               | Compose entire graphs as single nodes inside a parent graph            |
+| ParallelExecutor           | Run branches concurrently with configurable join strategies            |
+| Async Conditional Edges    | Route execution with async functions that inspect state at runtime     |
+| Graph Export               | Serialize graph structure to DOT, Mermaid, or JSON for visualization   |
+| Human-in-the-Loop          | Interrupt execution before or after a node, resume with modified state |
+
+### Agents and Multi-Agent Systems
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| ZeroShotReAct              | Reason-and-act loop without examples                                   |
+| FewShotReAct               | Reason-and-act with in-context examples                                |
+| Conversational Agent       | Multi-turn dialogue with memory                                        |
+| Supervisor                 | Orchestrate multiple agents with intelligent routing                   |
+
+### LLM Integration
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Multi-Provider Support     | OpenAI, Anthropic, Mistral, Groq, Azure, HuggingFace, Ollama          |
+| RetryLLMClient             | Automatic retry with exponential backoff for transient failures        |
+| Token Counting             | Track input/output tokens and manage context window limits             |
+| Cost Tracking              | Estimate USD cost per LLM call based on provider pricing               |
+| Anthropic Tool Calling     | Native `input_schema` format for Anthropic function calling            |
+| HuggingFace SSE Streaming  | Real server-sent-event streaming for HuggingFace models                |
+| ResponseFormat             | Structured output / JSON mode for deterministic parsing                |
+
+### State Management
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| PlainState / SharedState   | Simple and thread-safe state containers                                |
+| ScopedState                | Namespaced state isolation per node                                    |
+| JsonReducer                | Per-field merge strategies via ReducerConfig                           |
+| #[derive(State)]           | Derive macro for ergonomic state definitions                           |
+
+### Tools and MCP
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Custom Tools               | Define tools as Rust functions with typed schemas                      |
+| MCP Transports             | SSE, Stdio, and Docker-based MCP connections                          |
+| Reconnecting Client        | Factory-pattern MCP client that auto-reconnects on failure             |
+| MCP Resources and Prompts  | Full MCP protocol support including resources and prompt templates     |
+
+### Retrieval-Augmented Generation
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| PineconeStore              | Real REST API integration with Pinecone                                |
+| QdrantStore                | Real REST API integration with Qdrant                                  |
+| ChromaStore                | ChromaDB vector store support                                          |
+| InMemoryStore              | Lightweight in-process store for development and testing               |
+
+### Memory and Checkpointing
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| InMemoryCheckpointer       | Fast, ephemeral checkpoint storage                                     |
+| FileCheckpointer           | Persist checkpoints to disk as JSON for durable recovery               |
+
+### Evaluation and Self-Correction
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Auto-Evaluation            | LLM-powered quality grading of agent output                           |
+| Self-Correction            | Automatic retry loop when evaluation falls below threshold             |
+
+### Planning
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Dynamic Planning           | LLM-driven step selection based on current state                       |
+| Adaptive Workflows         | Plans that evolve as new information becomes available                  |
+
+### Observability
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Event Broadcaster          | Real-time execution events delivered via broadcast channel             |
+| OpenTelemetry Export       | OTLP-compatible spans for distributed tracing                          |
+| Logging and Tracing        | Configurable log levels with structured output                         |
+
+### Macros
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| #[node]                    | Proc macro that generates node factory functions                       |
+| #[register_handler]        | Register handler functions for the graph runtime                       |
+| #[derive(State)]           | Derive state traits automatically                                      |
+
+### Infrastructure
+
+| Feature                    | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Plugin System              | Extend the framework with custom plugins                               |
+| Middleware Pipeline         | Composable middleware for logging, caching, rate limiting, auth        |
+| Graph Validation           | Compile-time and runtime structural checks                             |
 
 ---
 
 ## Key Concepts
 
 ### config.yaml
-The required configuration file that defines:
-- Your LLM provider (OpenAI, Anthropic, etc.)
-- Your workflow (nodes and edges)
-- State schema
-- Tools, RAG, middleware, monitoring
 
-**Rule**: You MUST create `config.yaml` in your project root.
+Every Flowgentra AI project starts with a configuration file that declares your LLM provider, workflow graph, state schema, tools, and middleware. Copy the template to get started:
+
+```bash
+cp docs/config.yaml.template config.yaml
+```
 
 ### Handlers
-Async Rust functions that process your agent's state:
+
+Handlers are async Rust functions that process state at each node of the graph:
+
 ```rust
 pub async fn my_handler(mut state: State) -> Result<State> {
-    // Read, process, update state
+    // Read from state, call an LLM, update state
     Ok(state)
 }
 ```
 
-### State
-A JSON object that flows through your agent's workflow:
+### State Flow
+
+State is a JSON-compatible object that moves through the graph. Each handler receives the current state, transforms it, and passes it to the next node:
+
 ```
-START → Handler1 → Handler2 → Handler3 → END
-  ↓       ↓        ↓        ↓       ↓
-State0 → State1 → State2 → State3 → State4
-```
-
----
-
-## Common Need → Documentation Map
-
-| I want to | File | Time |
-|-----------|------|------|
-| Get started quickly | [QUICKSTART.md](./QUICKSTART.md) | 5 min |
-| Learn about features | [FEATURES.md](./FEATURES.md) | 20 min |
-| Create config.yaml | [configuration/CONFIG_GUIDE.md](./configuration/CONFIG_GUIDE.md) | 20 min |
-| **Use predefined agents** | [agents/README.md](./agents/README.md) | 15 min |
-| **Set up LLM providers** | [llm/README.md](./llm/README.md) | 15 min |
-| **Enable RAG/vector store** | [rag/README.md](./rag/README.md) | 20 min |
-| **Add conversation memory** | [memory/README.md](./memory/README.md) | 10 min |
-| **Auto-evaluate quality** | [evaluation/README.md](./evaluation/README.md) | 15 min |
-| **Connect tools & APIs** | [tools/README.md](./tools/README.md) | 20 min |
-| **Understand state flow** | [state/README.md](./state/README.md) | 15 min |
-| **Dynamic planning** | [planning/README.md](./planning/README.md) | 15 min |
-| Build custom handlers | [handlers/README.md](./handlers/README.md) | 30 min |
-| Write tests | [testing/README.md](./testing/README.md) | 30 min |
-| Monitor & trace | [observability/README.md](./observability/README.md) | 20 min |
-| Advanced patterns | [development/DEVELOPER_GUIDE.md](./development/DEVELOPER_GUIDE.md) | 1 hour |
-| Copy a template | [config.yaml.template](./config.yaml.template) | 1 min |
-
----
-
-## Cleanup Note
-
-The following files in the root of `flowgentra-ai/` should be removed (they've been moved to `docs/`):
-- `CONFIG_FEATURES.md` → moved to `docs/configuration/CONFIG_FEATURES.md`
-- `CONFIG_GUIDE.md` → moved to `docs/configuration/CONFIG_GUIDE.md`
-- `DEVELOPER_GUIDE.md` → moved to `docs/development/DEVELOPER_GUIDE.md`
-- `DOCUMENTATION.md` → superseded by this `README.md`
-- `DOCS_SUMMARY.md` → superseded by this `README.md`
-- `FEATURES.md` → moved to `docs/FEATURES.md`
-- `QUICKSTART.md` → moved to `docs/QUICKSTART.md`
-- `config.yaml.template` → moved to `docs/config.yaml.template`
-
-**To clean up**, run from the `flowgentra-ai` directory:
-```bash
-rm CONFIG_FEATURES.md CONFIG_GUIDE.md DEVELOPER_GUIDE.md \
-   DOCUMENTATION.md DOCS_SUMMARY.md FEATURES.md QUICKSTART.md \
-   config.yaml.template
+START --> Node A --> Node B --> Node C --> END
+         state0     state1     state2     state3
 ```
 
-Or delete them manually from your file explorer.
-
----
-
-## Feature Highlights
-
-Memory & Checkpointing - Save conversation history and resume workflows  
-Auto-Evaluation - LLM grades output quality and retries automatically  
-Dynamic Planning - LLM decides next step based on state (no hardcoding)  
-RAG - Semantic search over your documents (Pinecone, Weaviate, Chroma)  
-MCP Tools - Connect external services and APIs  
-Multiple LLMs - OpenAI, Anthropic, Mistral, Groq, Azure, HuggingFace, Ollama  
-State Management - Type-safe data flow through your workflow  
-Middleware - Logging, caching, rate limiting, tracing
+With JsonReducer and ScopedState, you have fine-grained control over how state fields are merged and which nodes can see which data.
 
 ---
 
 ## Need Help?
 
-Quick question? Check the file that matches your topic above.  
-Not sure where to start? Begin with [QUICKSTART.md](./QUICKSTART.md).  
-Want to learn a specific feature? Browse the feature-specific guides.  
-Building something advanced? Read [development/DEVELOPER_GUIDE.md](./development/DEVELOPER_GUIDE.md).
+**Not sure where to start?** Open [QUICKSTART.md](./QUICKSTART.md) and follow along.
+
+**Looking for a specific feature?** Use the navigation table above to jump directly to the right guide.
+
+**Building something advanced?** The [Developer Guide](./development/DEVELOPER_GUIDE.md) covers internals, plugin authoring, and production patterns.
+
+**Want the full API reference?** Run `cargo doc --open` from the project root.
 
 ---
 
 ## File Reference
 
 **Core Guides**
-- **README.md** - Main navigation (you are here)
-- **QUICKSTART.md** - 5-minute quickstart
-- **FEATURES.md** - Feature overview
-- **config.yaml.template** - Template configuration file
 
-**Feature Guides** (pick what you need)
-- **agents/** - Predefined agent types (ZeroShotReAct, FewShot, Conversational)
-- **llm/** - LLM provider setup & configuration
-- **rag/** - RAG & vector store setup
-- **memory/** - Conversation memory & checkpointing
-- **evaluation/** - Auto-evaluation & self-correction
-- **tools/** - Custom tools & MCP integration
-- **state/** - State management & data flow
-- **planning/** - Dynamic planning & routing
-- **handlers/** - Custom handler development
-- **testing/** - Testing strategies & examples
-- **observability/** - Monitoring & tracing
+- `README.md` -- Main documentation hub (you are here)
+- `QUICKSTART.md` -- Five-minute quickstart
+- `FEATURES.md` -- Complete feature overview
+- `config.yaml.template` -- Starter configuration template
 
-**Configuration & Development**
-- **configuration/** - Complete config reference
-- **development/** - Advanced development guide
+**Feature Guides**
 
----
+- `agents/` -- Predefined agents and Supervisor multi-agent orchestration
+- `graph/` -- Graph engine, subgraphs, parallel execution, export, human-in-the-loop
+- `llm/` -- LLM providers, retries, token counting, cost tracking, structured output
+- `rag/` -- RAG with Pinecone, Qdrant, Chroma, and in-memory stores
+- `memory/` -- Conversation memory, in-memory and file-based checkpointing
+- `state/` -- State management, reducers, scoped state
+- `tools/` -- Custom tools, MCP integration, reconnecting client, resources and prompts
+- `evaluation/` -- Auto-evaluation and self-correction
+- `planning/` -- Dynamic and adaptive planning
+- `handlers/` -- Custom handler development
+- `macros/` -- Proc macros: `#[node]`, `#[register_handler]`, `#[derive(State)]`
+- `observability/` -- Event broadcasting, OpenTelemetry export, logging
+- `testing/` -- Testing strategies and examples
 
-Happy building!
+**Configuration and Development**
+
+- `configuration/` -- Complete config.yaml reference and examples
+- `development/` -- Advanced patterns, plugin system, middleware internals

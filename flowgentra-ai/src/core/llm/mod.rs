@@ -72,6 +72,47 @@ impl TokenUsage {
             total_tokens: self.total_tokens + other.total_tokens,
         }
     }
+
+    /// Estimate the cost in USD for this token usage based on model pricing.
+    ///
+    /// Returns `None` if the model is not in the pricing table.
+    pub fn estimated_cost(&self, model: &str) -> Option<f64> {
+        let (input_per_m, output_per_m) = model_pricing(model)?;
+        let cost = (self.prompt_tokens as f64 * input_per_m
+            + self.completion_tokens as f64 * output_per_m)
+            / 1_000_000.0;
+        Some(cost)
+    }
+}
+
+/// Returns (input_price_per_million_tokens, output_price_per_million_tokens) in USD.
+pub fn model_pricing(model: &str) -> Option<(f64, f64)> {
+    let m = model.to_lowercase();
+    match m.as_str() {
+        // OpenAI
+        s if s.starts_with("gpt-4o-mini") => Some((0.15, 0.60)),
+        s if s.starts_with("gpt-4o") => Some((2.50, 10.00)),
+        s if s.starts_with("gpt-4-turbo") => Some((10.00, 30.00)),
+        "gpt-4" => Some((30.00, 60.00)),
+        s if s.starts_with("gpt-3.5-turbo") => Some((0.50, 1.50)),
+        s if s.starts_with("o1-mini") => Some((3.00, 12.00)),
+        s if s.starts_with("o1") => Some((15.00, 60.00)),
+        s if s.starts_with("o3-mini") => Some((1.10, 4.40)),
+        // Anthropic
+        s if s.contains("claude-3-5-sonnet") || s.contains("claude-sonnet-4") => Some((3.00, 15.00)),
+        s if s.contains("claude-3-5-haiku") || s.contains("claude-haiku-4") => Some((0.80, 4.00)),
+        s if s.contains("claude-3-opus") || s.contains("claude-opus-4") => Some((15.00, 75.00)),
+        s if s.contains("claude-3-sonnet") => Some((3.00, 15.00)),
+        s if s.contains("claude-3-haiku") => Some((0.25, 1.25)),
+        // Mistral
+        s if s.contains("mistral-large") => Some((2.00, 6.00)),
+        s if s.contains("mistral-small") => Some((0.20, 0.60)),
+        s if s.contains("mistral-medium") => Some((2.70, 8.10)),
+        // Groq (pricing varies, these are estimates)
+        s if s.contains("llama-3") => Some((0.05, 0.08)),
+        s if s.contains("mixtral") => Some((0.24, 0.24)),
+        _ => None,
+    }
 }
 
 // Re-export provider-specific clients
@@ -85,6 +126,7 @@ mod mistral;
 mod ollama;
 mod openai;
 mod retry;
+pub mod token_counter;
 
 pub use adapter::{HttpLLMClient, ProviderAdapter};
 pub use anthropic::AnthropicClient;
@@ -213,6 +255,28 @@ impl LLMProvider {
 // LLM Configuration
 // =============================================================================
 
+/// Response format for structured output.
+///
+/// When set to `Json`, providers that support `response_format` will include
+/// `{ "type": "json_object" }` in the API request, guaranteeing valid JSON output.
+/// For providers without native support, a system-prompt fallback is used.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Default text output
+    #[default]
+    Text,
+    /// Force JSON output (OpenAI `json_object`, Anthropic prompt-based)
+    Json,
+    /// JSON output constrained to a specific JSON Schema (OpenAI `json_schema`)
+    JsonSchema {
+        /// A name for the schema (required by OpenAI)
+        name: String,
+        /// The JSON Schema the output must conform to
+        schema: serde_json::Value,
+    },
+}
+
 /// Configuration for LLM integration
 ///
 /// Contains all settings needed to connect to and use an LLM provider.
@@ -241,6 +305,10 @@ pub struct LLMConfig {
     /// Use environment variable syntax like `${OPENAI_API_KEY}`
     pub api_key: String,
 
+    /// Response format — set to `Json` or `JsonSchema` for structured output
+    #[serde(default)]
+    pub response_format: ResponseFormat,
+
     /// Provider-specific parameters
     #[serde(default)]
     pub extra_params: HashMap<String, serde_json::Value>,
@@ -267,6 +335,7 @@ impl LLMConfig {
             max_tokens: None,
             top_p: None,
             api_key,
+            response_format: ResponseFormat::default(),
             extra_params: HashMap::new(),
         }
     }
@@ -286,6 +355,12 @@ impl LLMConfig {
     /// Set the nucleus sampling parameter (top_p)
     pub fn with_top_p(mut self, top_p: f32) -> Self {
         self.top_p = Some(top_p.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set the response format for structured output
+    pub fn with_response_format(mut self, format: ResponseFormat) -> Self {
+        self.response_format = format;
         self
     }
 

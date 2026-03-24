@@ -156,7 +156,7 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
         let steps = self.scan_steps(thread_id).await?;
         let mut results = Vec::new();
         for step in steps {
-            if let Some(cp) = self.load(thread_id, step).await? {
+            if let Some(cp) = <Self as Checkpointer<S>>::load(self, thread_id, step).await? {
                 results.push((cp.step, cp.timestamp));
             }
         }
@@ -194,14 +194,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cp = FileCheckpointer::new(tmp.path()).unwrap();
 
-        let mut state = PlainState::new();
-        state.set("key", serde_json::json!("value"));
+        let state = PlainState::from_json(serde_json::json!({"key": "value"})).unwrap();
 
         let checkpoint =
             Checkpoint::new("thread1".to_string(), 0, "node1".to_string(), state);
         cp.save(&checkpoint).await.unwrap();
 
-        let loaded = cp.load("thread1", 0).await.unwrap().unwrap();
+        let loaded: Checkpoint<PlainState> = cp.load("thread1", 0).await.unwrap().unwrap();
         assert_eq!(loaded.node_name, "node1");
         assert_eq!(loaded.state.get("key"), Some(&serde_json::json!("value")));
     }
@@ -223,7 +222,7 @@ mod tests {
             cp.save(&checkpoint).await.unwrap();
         }
 
-        let latest = cp.load_latest("thread1").await.unwrap().unwrap();
+        let latest: Checkpoint<PlainState> = cp.load_latest("thread1").await.unwrap().unwrap();
         assert_eq!(latest.step, 2);
     }
 
@@ -236,7 +235,8 @@ mod tests {
         let checkpoint = Checkpoint::new("t1".to_string(), 0, "n1".to_string(), state);
         cp.save(&checkpoint).await.unwrap();
 
-        cp.delete("t1", 0).await.unwrap();
-        assert!(cp.load("t1", 0).await.unwrap().is_none());
+        <FileCheckpointer as Checkpointer<PlainState>>::delete(&cp, "t1", 0).await.unwrap();
+        let deleted: Option<Checkpoint<PlainState>> = cp.load("t1", 0).await.unwrap();
+        assert!(deleted.is_none());
     }
 }

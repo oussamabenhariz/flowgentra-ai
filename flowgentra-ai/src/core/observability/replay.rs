@@ -72,4 +72,36 @@ impl ReplayMode {
     pub fn is_complete(&self) -> bool {
         self.current_step >= self.trace.node_timings.len()
     }
+
+    /// Get the state snapshot at the current step (if captured).
+    pub fn current_state(&self) -> Option<&serde_json::Value> {
+        self.trace
+            .node_timings
+            .get(self.current_step)
+            .and_then(|t| t.state_snapshot.as_ref())
+    }
+
+    /// Get the state snapshot at a specific step.
+    pub fn state_at(&self, step: usize) -> Option<&serde_json::Value> {
+        self.trace
+            .node_timings
+            .get(step)
+            .and_then(|t| t.state_snapshot.as_ref())
+    }
+
+    /// Compare state between two steps (returns changed keys).
+    pub fn diff_states(&self, step_a: usize, step_b: usize) -> Option<Vec<String>> {
+        let a = self.state_at(step_a)?;
+        let b = self.state_at(step_b)?;
+        let a_obj = a.as_object()?;
+        let b_obj = b.as_object()?;
+
+        let mut changed = Vec::new();
+        for key in a_obj.keys().chain(b_obj.keys()).collect::<std::collections::HashSet<_>>() {
+            if a_obj.get(key) != b_obj.get(key) {
+                changed.push(key.clone());
+            }
+        }
+        Some(changed)
+    }
 }

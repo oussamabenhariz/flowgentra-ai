@@ -341,36 +341,90 @@ impl LLMClient for HuggingFaceClient {
         &self,
         messages: Vec<Message>,
     ) -> crate::core::error::Result<tokio::sync::mpsc::Receiver<String>> {
+        use futures::StreamExt;
+
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let client = self.clone();
-        let messages_clone = messages.clone();
 
-        // Spawn background task for streaming
         tokio::spawn(async move {
-            match client.chat(messages_clone).await {
-                Ok(msg) => {
-                    // Send the complete message as-is (buffered streaming simulation)
-                    // HuggingFace API doesn't support true streaming in all modes,
-                    // so we send the complete response in chunks
-                    let chunks: Vec<&str> = msg
-                        .content
-                        .split_whitespace()
-                        .collect();
-                    
-                    for chunk in chunks {
-                        if tx.send(chunk.to_string()).await.is_err() {
-                            // Receiver dropped, stop sending
-                            break;
-                        }
-                        // Small delay to simulate streaming
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                    }
-                }
+            // Build payload with stream: true
+            let mut payload = client.build_payload(messages);
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("stream".to_string(), json!(true));
+            }
+
+            let mut request = client
+                .client
+                .post(client.get_endpoint())
+                .header("Content-Type", "application/json");
+
+            if !client.config.api_key.is_empty() {
+                request = request.header("Authorization", format!("Bearer {}", client.config.api_key));
+            }
+
+            let response = match request.json(&payload).send().await {
+                Ok(r) => r,
                 Err(e) => {
-                    // Send error message through channel
-                    let _ = tx
-                        .send(format!("ERROR: {}", e))
-                        .await;
+                    let _ = tx.send(format!("ERROR: {}", e)).await;
+                    return;
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                let _ = tx.send(format!("ERROR: {} {}", status, error_text)).await;
+                return;
+            }
+
+            // Read SSE stream from the response body
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(bytes) => {
+                        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                        // Process complete SSE lines
+                        while let Some(line_end) = buffer.find('\n') {
+                            let line = buffer[..line_end].trim().to_string();
+                            buffer = buffer[line_end + 1..].to_string();
+
+                            if let Some(data) = line.strip_prefix("data:") {
+                                let data = data.trim();
+                                if data == "[DONE]" {
+                                    return;
+                                }
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                                    // TGI SSE format: {"token": {"text": "..."}}
+                                    // Inference API format: {"generated_text": "..."} or choices-based
+                                    let token_text = parsed
+                                        .get("token")
+                                        .and_then(|t| t.get("text"))
+                                        .and_then(|t| t.as_str())
+                                        .or_else(|| {
+                                            parsed
+                                                .get("choices")
+                                                .and_then(|c| c.get(0))
+                                                .and_then(|c| c.get("delta"))
+                                                .and_then(|d| d.get("content"))
+                                                .and_then(|c| c.as_str())
+                                        });
+
+                                    if let Some(text) = token_text {
+                                        if tx.send(text.to_string()).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(format!("ERROR: {}", e)).await;
+                        return;
+                    }
                 }
             }
         });

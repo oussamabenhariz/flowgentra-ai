@@ -44,6 +44,8 @@ mod types;
 pub mod visualization;
 pub mod graph_visualizer;
 pub mod ui;
+pub mod events;
+pub mod otel;
 
 pub use middleware::{ObservabilityMiddleware, TOKEN_USAGE_STATE_KEY};
 pub use replay::ReplayMode;
@@ -54,6 +56,7 @@ pub use graph_visualizer::{
     StateGraphVisualizer, StateGraphVisualization, StateGraphNode, StateGraphEdge,
     NodeType, NodeExecutionStatus, ExecutionStatistics, NodeStatistics,
 };
+pub use events::{EventBroadcaster, ExecutionEvent};
 
 use crate::core::llm::TokenUsage;
 use crate::core::state::State;

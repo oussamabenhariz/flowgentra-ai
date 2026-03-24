@@ -47,27 +47,29 @@ pub struct BranchResult<T: State> {
     pub error: Option<String>,
 }
 
-/// Manager for parallel branch execution
+/// Manager for parallel branch execution.
+///
+/// Executes multiple async branches concurrently with configurable
+/// join strategies, timeouts, and merge behavior.
+///
+/// # Example
+/// ```ignore
+/// let executor = ParallelExecutor::new()
+///     .with_join_type(JoinType::WaitAll)
+///     .with_merge_strategy(MergeStrategy::Combine)
+///     .with_timeout(Duration::from_secs(30));
+///
+/// let result = executor.execute(state, branches).await?;
+/// ```
 pub struct ParallelExecutor {
-    /// How to join the branches
-    #[allow(dead_code)]
     join_type: JoinType,
-
-    /// Overall timeout for all branches
-    #[allow(dead_code)]
     timeout: Option<Duration>,
-
-    /// Whether to continue on branch error
-    #[allow(dead_code)]
     continue_on_error: bool,
-
-    /// Merge strategy for results
-    #[allow(dead_code)]
     merge_strategy: MergeStrategy,
 }
 
 impl ParallelExecutor {
-    /// Create a new parallel executor
+    /// Create a new parallel executor with default settings.
     pub fn new() -> Self {
         ParallelExecutor {
             join_type: JoinType::WaitAll,
@@ -77,9 +79,81 @@ impl ParallelExecutor {
         }
     }
 
-    // ...existing code...
+    /// Set the join strategy.
+    pub fn with_join_type(mut self, join_type: JoinType) -> Self {
+        self.join_type = join_type;
+        self
+    }
+
+    /// Set the merge strategy for combining branch results.
+    pub fn with_merge_strategy(mut self, strategy: MergeStrategy) -> Self {
+        self.merge_strategy = strategy;
+        self
+    }
+
+    /// Set an overall timeout for parallel execution.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Set whether to continue when a branch errors.
+    pub fn with_continue_on_error(mut self, continue_on_error: bool) -> Self {
+        self.continue_on_error = continue_on_error;
+        self
+    }
+
+    /// Execute multiple branches in parallel and merge the results.
+    ///
+    /// Each branch is an async function that takes the initial state and
+    /// returns a named `BranchResult`. All branches run concurrently;
+    /// results are collected per the join strategy and merged per the
+    /// merge strategy.
+    pub async fn execute<T: State + Default + Send + Sync + 'static>(
+        &self,
+        initial_state: T,
+        branches: Vec<(String, Box<dyn Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>> + Send + Sync>)>,
+    ) -> Result<T> {
+        let mut join_set: JoinSet<BranchResult<T>> = JoinSet::new();
+
+        for (name, func) in branches {
+            let state_clone = initial_state.clone();
+            let branch_name = name.clone();
+            join_set.spawn(async move {
+                let start = std::time::Instant::now();
+                match func(state_clone).await {
+                    Ok(result_state) => BranchResult {
+                        branch_name,
+                        state: result_state,
+                        duration: start.elapsed(),
+                        success: true,
+                        error: None,
+                    },
+                    Err(e) => BranchResult {
+                        branch_name,
+                        state: T::empty(),
+                        duration: start.elapsed(),
+                        success: false,
+                        error: Some(e.to_string()),
+                    },
+                }
+            });
+        }
+
+        let results = self.collect_results(&mut join_set).await?;
+
+        if !self.continue_on_error {
+            if let Some(failed) = results.iter().find(|r| !r.success) {
+                return Err(FlowgentraError::ExecutionError(
+                    format!("Branch '{}' failed: {}", failed.branch_name, failed.error.as_deref().unwrap_or("unknown"))
+                ));
+            }
+        }
+
+        self.merge_results(&initial_state, &results)
+    }
+
     /// Collect results from all branches based on join strategy
-    #[allow(dead_code)]
     async fn collect_results<T: crate::core::state::State>(
         &self,
         join_set: &mut JoinSet<BranchResult<T>>,
@@ -179,7 +253,6 @@ impl ParallelExecutor {
     }
 
     /// Merge results from branches into a single state
-    #[allow(dead_code)]
     fn merge_results<T: crate::core::state::State>(&self, initial_state: &T, results: &[BranchResult<T>]) -> Result<T> {
         let merged = initial_state.clone();
 

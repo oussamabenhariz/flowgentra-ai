@@ -47,6 +47,46 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
         self
     }
 
+    /// Add a node from an async closure, without needing to manually wrap in
+    /// `Arc::new(FunctionNode::new(...))`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let graph = StateGraph::builder()
+    ///     .add_fn("greet", |state: &PlainState| {
+    ///         let mut s = state.clone();
+    ///         Box::pin(async move {
+    ///             PlainState::set(&mut s, "greeting", json!("hello"));
+    ///             Ok(s)
+    ///         })
+    ///     })
+    ///     .set_entry_point("greet")
+    ///     .add_edge("greet", END)
+    ///     .compile()?;
+    /// ```
+    pub fn add_fn<F>(self, name: impl Into<String>, func: F) -> Self
+    where
+        F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S>> + Send>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        use super::node::FunctionNode;
+        let name = name.into();
+        let node = Arc::new(FunctionNode::new(name.clone(), func));
+        self.add_node(name, node)
+    }
+
+    /// Add a compiled subgraph as a node.
+    ///
+    /// The subgraph runs to completion when this node executes,
+    /// receiving the parent state and returning the result state.
+    pub fn add_subgraph(self, name: impl Into<String>, subgraph: StateGraph<S>) -> Self {
+        let name = name.into();
+        let node = Arc::new(SubgraphNode::new(name.clone(), subgraph));
+        self.add_node(name, node)
+    }
+
     /// Add a fixed edge (A → B)
     pub fn add_edge(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
         self.edges.push(Edge::Fixed(FixedEdge::new(from, to)));
@@ -60,6 +100,19 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
         router: RouterFn<S>,
     ) -> Self {
         self.edges.push(Edge::Conditional {
+            from: from.into(),
+            router,
+        });
+        self
+    }
+
+    /// Add an async conditional edge (for routers that need async operations).
+    pub fn add_async_conditional_edge(
+        mut self,
+        from: impl Into<String>,
+        router: super::edge::AsyncRouterFn<S>,
+    ) -> Self {
+        self.edges.push(Edge::AsyncConditional {
             from: from.into(),
             router,
         });
@@ -134,7 +187,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
                         return Err(StateGraphError::NodeNotFound(fixed_edge.to.clone()));
                     }
                 }
-                Edge::Conditional { from, .. } => {
+                Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
                     if from != START && !self.nodes.contains_key(from) {
                         return Err(StateGraphError::NodeNotFound(from.clone()));
                     }
@@ -166,6 +219,35 @@ impl<S: State> Default for StateGraphBuilder<S> {
     }
 }
 
+/// A node that delegates execution to a compiled subgraph.
+///
+/// This allows composing `StateGraph` instances: a parent graph can contain
+/// child graphs as nodes, enabling modular workflow composition.
+pub struct SubgraphNode<S: State> {
+    name: String,
+    subgraph: Arc<StateGraph<S>>,
+}
+
+impl<S: State + Send + Sync + 'static> SubgraphNode<S> {
+    pub fn new(name: impl Into<String>, subgraph: StateGraph<S>) -> Self {
+        Self {
+            name: name.into(),
+            subgraph: Arc::new(subgraph),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<S: State + Send + Sync + 'static> Node<S> for SubgraphNode<S> {
+    async fn execute(&self, state: &S) -> Result<S> {
+        self.subgraph.invoke(state.clone()).await
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 /// Compiled state graph ready for execution
 pub struct StateGraph<S: State> {
     nodes: HashMap<String, Arc<dyn Node<S>>>,
@@ -180,9 +262,19 @@ pub struct StateGraph<S: State> {
 }
 
 impl<S: State + Send + Sync + 'static> StateGraph<S> {
-    /// Build a new state graph using the builder pattern
+    /// Build a new state graph using the builder pattern.
     pub fn builder() -> StateGraphBuilder<S> {
         StateGraphBuilder::new()
+    }
+
+    /// Get a list of node names in this graph.
+    pub fn node_names(&self) -> Vec<String> {
+        self.nodes.keys().cloned().collect()
+    }
+
+    /// Get the entry point node name.
+    pub fn entry_point(&self) -> &str {
+        &self.entry_point
     }
 
     /// Execute the graph synchronously
@@ -342,6 +434,45 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         self.invoke_with_id(thread_id.to_string(), checkpoint.state).await
     }
 
+    /// Resume execution from a checkpoint with injected state modifications.
+    ///
+    /// This is the human-in-the-loop mechanism: execution pauses at a breakpoint,
+    /// the user modifies state (e.g., adds approval, corrects a value), and
+    /// execution resumes with the modified state.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Graph pauses at "review" node via interrupt_before
+    /// let err = graph.invoke(state).await.unwrap_err();
+    /// if let StateGraphError::InterruptedAtBreakpoint { node } = err {
+    ///     // User provides input
+    ///     let mut updates = PlainState::new();
+    ///     updates.set("approved", json!(true));
+    ///     updates.set("reviewer_notes", json!("looks good"));
+    ///
+    ///     let result = graph.resume_with_state("thread-123", updates).await?;
+    /// }
+    /// ```
+    pub async fn resume_with_state(
+        &self,
+        thread_id: &str,
+        state_updates: S,
+    ) -> Result<S> {
+        let checkpoint = self.checkpointer
+            .load_latest(thread_id)
+            .await?
+            .ok_or_else(|| StateGraphError::ResumeFailed(
+                "No checkpoint found".to_string(),
+            ))?;
+
+        // Merge the user's state updates into the checkpointed state
+        let mut merged_state = checkpoint.state;
+        // Use State::merge to apply updates
+        merged_state.merge(state_updates);
+
+        self.invoke_with_id(thread_id.to_string(), merged_state).await
+    }
+
     /// Get execution history for a thread
     pub async fn history(&self, thread_id: &str) -> Result<Vec<(usize, String)>> {
         let checkpoints = self.checkpointer.list_checkpoints(thread_id).await?;
@@ -354,6 +485,109 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// Clear all checkpoints for a thread
     pub async fn clear_history(&self, thread_id: &str) -> Result<()> {
         self.checkpointer.delete_thread(thread_id).await
+    }
+
+    // =========================================================================
+    // Graph Export / Serialization
+    // =========================================================================
+
+    /// Export the graph structure as a Graphviz DOT string.
+    pub fn to_dot(&self) -> String {
+        let mut dot = String::from("digraph StateGraph {\n  rankdir=LR;\n");
+        dot.push_str("  node [shape=box style=rounded];\n\n");
+
+        // START → entry point
+        dot.push_str(&format!("  \"__start__\" [label=\"START\" shape=ellipse];\n"));
+        dot.push_str(&format!("  \"__end__\" [label=\"END\" shape=ellipse];\n"));
+        dot.push_str(&format!("  \"__start__\" -> \"{}\";\n", self.entry_point));
+
+        // Node declarations
+        for name in self.nodes.keys() {
+            dot.push_str(&format!("  \"{}\";\n", name));
+        }
+
+        // Edges
+        for edge in &self.edges {
+            match edge {
+                Edge::Fixed(fe) => {
+                    let from = if fe.from == START { "__start__" } else { &fe.from };
+                    let to = if fe.to == END { "__end__" } else { &fe.to };
+                    dot.push_str(&format!("  \"{}\" -> \"{}\";\n", from, to));
+                }
+                Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
+                    let from_label = if from == START { "__start__" } else { from.as_str() };
+                    for target_name in self.nodes.keys() {
+                        dot.push_str(&format!(
+                            "  \"{}\" -> \"{}\" [style=dashed label=\"?\"];\n",
+                            from_label, target_name
+                        ));
+                    }
+                    dot.push_str(&format!(
+                        "  \"{}\" -> \"__end__\" [style=dashed label=\"?\"];\n",
+                        from_label
+                    ));
+                }
+            }
+        }
+
+        dot.push_str("}\n");
+        dot
+    }
+
+    /// Export the graph structure as a Mermaid diagram string.
+    pub fn to_mermaid(&self) -> String {
+        let mut out = String::from("graph LR\n");
+        out.push_str("  __start__((START))\n");
+        out.push_str("  __end__((END))\n");
+        out.push_str(&format!("  __start__ --> {}\n", self.entry_point));
+
+        for name in self.nodes.keys() {
+            out.push_str(&format!("  {}[{}]\n", name, name));
+        }
+
+        for edge in &self.edges {
+            match edge {
+                Edge::Fixed(fe) => {
+                    let from = if fe.from == START { "__start__" } else { &fe.from };
+                    let to = if fe.to == END { "__end__" } else { &fe.to };
+                    out.push_str(&format!("  {} --> {}\n", from, to));
+                }
+                Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
+                    let from_label = if from == START { "__start__" } else { from.as_str() };
+                    for target_name in self.nodes.keys() {
+                        out.push_str(&format!("  {} -.->|?| {}\n", from_label, target_name));
+                    }
+                    out.push_str(&format!("  {} -.->|?| __end__\n", from_label));
+                }
+            }
+        }
+
+        out
+    }
+
+    /// Export the graph structure as a JSON value for programmatic use.
+    pub fn to_json(&self) -> serde_json::Value {
+        let nodes: Vec<String> = self.nodes.keys().cloned().collect();
+        let edges: Vec<serde_json::Value> = self.edges.iter().map(|edge| {
+            match edge {
+                Edge::Fixed(fe) => serde_json::json!({
+                    "type": "fixed",
+                    "from": fe.from,
+                    "to": fe.to,
+                }),
+                Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => serde_json::json!({
+                    "type": "conditional",
+                    "from": from,
+                }),
+            }
+        }).collect();
+
+        serde_json::json!({
+            "nodes": nodes,
+            "edges": edges,
+            "entry_point": self.entry_point,
+            "max_steps": self.max_steps,
+        })
     }
 }
 

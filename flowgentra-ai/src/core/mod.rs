@@ -21,7 +21,7 @@
 //! - **[runtime]** - Execution engine that orchestrates node execution
 //! - **[evaluation]** - Auto-evaluation, scoring, grading, and self-correction
 //! - **[agent]** - High-level API for easy agent creation and execution
-mod reducer;
+pub mod reducer;
 
 //
 // ## Architecture
@@ -70,6 +70,7 @@ pub mod validation;
 pub use graph::routing;
 pub use node::{advanced_nodes, builtin_nodes, nodes_trait};
 pub use runtime::{context, parallel};
+pub use reducer::{JsonReducer, ReducerConfig};
 pub use state_graph::{FunctionNode, InMemoryCheckpointer, StateGraph, StateGraphBuilder, StateGraphError, StateUpdate, START, END};
 pub use utils::visualization;
 pub use utils::{debug, tracing};

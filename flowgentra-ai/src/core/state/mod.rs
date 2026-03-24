@@ -417,6 +417,10 @@ pub(crate) use state_validation::*;
 pub mod shared;
 pub use shared::SharedState;
 
+// Scoped/namespaced state per node
+pub mod scoped;
+pub use scoped::ScopedState;
+
 // LangGraph-style memory management
 pub mod state_management;
 pub use state_management::{CompressionManager, CustomState, MessageHistory};

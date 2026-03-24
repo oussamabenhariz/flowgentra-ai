@@ -162,3 +162,49 @@ pub fn register_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+/// Attribute macro to turn an `async fn(&S) -> Result<S>` into a `FunctionNode`.
+///
+/// Generates a factory function `{name}_node()` that returns
+/// `Arc<FunctionNode<S, _>>` for use with `StateGraphBuilder::add_node`.
+///
+/// # Example
+///
+/// ```ignore
+/// use flowgentra_ai_macros::node;
+///
+/// #[node]
+/// async fn summarize(state: &PlainState) -> flowgentra_ai::core::state_graph::error::Result<PlainState> {
+///     let mut s = state.clone();
+///     s.set("summary", serde_json::json!("done"));
+///     Ok(s)
+/// }
+///
+/// // Use: graph.add_node("summarize", summarize_node())
+/// ```
+#[proc_macro_attribute]
+pub fn node(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+    let func_name = &input.sig.ident;
+    let node_factory_name = format_ident!("{}_node", func_name);
+    let node_name_str = func_name.to_string();
+
+    let expanded = quote! {
+        #input
+
+        /// Auto-generated node factory for use with `StateGraphBuilder::add_node`.
+        pub fn #node_factory_name() -> std::sync::Arc<
+            flowgentra_ai::core::state_graph::node::FunctionNode<
+                _,
+                impl Fn(&_) -> std::pin::Pin<Box<dyn std::future::Future<Output = flowgentra_ai::core::state_graph::error::Result<_>> + Send>> + Send + Sync,
+            >
+        > {
+            std::sync::Arc::new(flowgentra_ai::core::state_graph::node::FunctionNode::new(
+                #node_name_str,
+                |state| Box::pin(#func_name(state)),
+            ))
+        }
+    };
+
+    TokenStream::from(expanded)
+}

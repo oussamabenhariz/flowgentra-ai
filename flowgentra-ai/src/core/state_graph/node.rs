@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 
 use crate::core::state::State;
+use crate::core::reducer::ReducerConfig;
 use super::error::Result;
 
 /// Represents a partial state update (only the fields that changed)
@@ -92,13 +93,16 @@ where
     }
 }
 
-/// A simpler node backed by an async function that returns a state update
+/// A simpler node backed by an async function that returns a state update.
+///
+/// Supports per-field reducers via `ReducerConfig` and merge strategies.
 pub struct UpdateNode<S: State, F>
 where
     F: Fn(&S) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StateUpdate<S>>> + Send>> + Send + Sync,
 {
     name: String,
     func: F,
+    reducer_config: ReducerConfig,
     _phantom: std::marker::PhantomData<S>,
 }
 
@@ -110,6 +114,17 @@ where
         Self {
             name: name.into(),
             func,
+            reducer_config: ReducerConfig::new(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Create an UpdateNode with per-field reducer configuration.
+    pub fn with_reducers(name: impl Into<String>, func: F, reducer_config: ReducerConfig) -> Self {
+        Self {
+            name: name.into(),
+            func,
+            reducer_config,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -122,12 +137,32 @@ where
 {
     async fn execute(&self, state: &S) -> Result<S> {
         let update = (self.func)(state).await?;
-        // For now, just merge the update into the state
-        // In reality, you'd apply reducers here per the state schema
-        let merged_state = state.clone();
-        // TODO: Apply merge strategy and per-field reducers
-        merged_state.merge(update.partial_state);
-        Ok(merged_state)
+
+        match update.merge_strategy {
+            MergeStrategy::Replace => {
+                // Replace entire state with the partial update
+                Ok(update.partial_state)
+            }
+            MergeStrategy::Default | MergeStrategy::Merge => {
+                // Apply per-field reducers via JSON merge
+                let current_value = state.to_value();
+                let update_value = update.partial_state.to_value();
+
+                let merged_value = if matches!(update.merge_strategy, MergeStrategy::Merge) {
+                    // Deep merge ignoring reducer config
+                    crate::core::reducer::deep_merge_values(&current_value, &update_value)
+                } else {
+                    // Apply per-field reducers (Default strategy)
+                    self.reducer_config.merge_values(&current_value, &update_value)
+                };
+
+                S::from_json(merged_value).map_err(|e| {
+                    super::error::StateGraphError::TypeError(format!(
+                        "Failed to deserialize merged state: {}", e
+                    ))
+                })
+            }
+        }
     }
 
     fn name(&self) -> &str {

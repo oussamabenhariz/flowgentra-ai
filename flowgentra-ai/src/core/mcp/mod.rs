@@ -386,6 +386,72 @@ pub struct MCPTool {
     pub input_schema: serde_json::Value,
 }
 
+/// An MCP resource (per the MCP spec `resources/list` response).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCPResource {
+    /// Unique URI for this resource (e.g., "file:///path/to/file")
+    pub uri: String,
+    /// Human-readable name
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Description of what this resource contains
+    #[serde(default)]
+    pub description: Option<String>,
+    /// MIME type of the resource content
+    #[serde(alias = "mimeType", default)]
+    pub mime_type: Option<String>,
+}
+
+/// Content of a read resource.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCPResourceContent {
+    pub uri: String,
+    #[serde(alias = "mimeType", default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub blob: Option<String>,
+}
+
+/// An MCP prompt template (per the MCP spec `prompts/list` response).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCPPrompt {
+    /// Unique name for this prompt
+    pub name: String,
+    /// Description of what the prompt does
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Arguments the prompt accepts
+    #[serde(default)]
+    pub arguments: Vec<MCPPromptArgument>,
+}
+
+/// An argument for an MCP prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCPPromptArgument {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// Result of getting a prompt (rendered messages).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCPPromptResult {
+    #[serde(default)]
+    pub description: Option<String>,
+    pub messages: Vec<MCPPromptMessage>,
+}
+
+/// A message in a rendered prompt result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCPPromptMessage {
+    pub role: String,
+    pub content: serde_json::Value,
+}
+
 /// MCP protocol version supported by this implementation.
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -471,6 +537,46 @@ pub trait MCPClient: Send + Sync {
     /// Default implementation is a no-op for stateless HTTP clients.
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    // =========================================================================
+    // Resources protocol (MCP spec: resources/list, resources/read)
+    // =========================================================================
+
+    /// List available resources from the MCP server.
+    /// Default returns an empty list (server may not support resources).
+    async fn list_resources(&self) -> Result<Vec<MCPResource>> {
+        Ok(vec![])
+    }
+
+    /// Read a resource by URI.
+    /// Default returns NotImplemented.
+    async fn read_resource(&self, _uri: &str) -> Result<MCPResourceContent> {
+        Err(FlowgentraError::MCPError(
+            "resources/read not supported by this MCP client".to_string(),
+        ))
+    }
+
+    // =========================================================================
+    // Prompts protocol (MCP spec: prompts/list, prompts/get)
+    // =========================================================================
+
+    /// List available prompt templates from the MCP server.
+    /// Default returns an empty list.
+    async fn list_prompts(&self) -> Result<Vec<MCPPrompt>> {
+        Ok(vec![])
+    }
+
+    /// Get a rendered prompt by name, with arguments.
+    /// Default returns NotImplemented.
+    async fn get_prompt(
+        &self,
+        _name: &str,
+        _arguments: serde_json::Value,
+    ) -> Result<MCPPromptResult> {
+        Err(FlowgentraError::MCPError(
+            "prompts/get not supported by this MCP client".to_string(),
+        ))
     }
 }
 
@@ -684,6 +790,74 @@ impl MCPClient for DefaultMCPClient {
         }
         .instrument(tracing::info_span!("mcp_call_tool", mcp = %self.config.name, tool = %tool_name))
         .await
+    }
+
+    async fn list_resources(&self) -> Result<Vec<MCPResource>> {
+        let url = format!("{}/resources", self.config.uri);
+        let req = apply_auth(&self.config, self.client.get(&url));
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.json().await.map_err(|e| {
+                    FlowgentraError::MCPError(format!("Failed to parse resources: {}", e))
+                })
+            }
+            Ok(resp) if resp.status().as_u16() == 404 => Ok(vec![]),
+            Ok(resp) => Err(FlowgentraError::MCPError(format!(
+                "resources/list returned {}", resp.status()
+            ))),
+            Err(e) => Err(classify_reqwest_error(format!("resources/list failed: {}", e), &e)),
+        }
+    }
+
+    async fn read_resource(&self, uri: &str) -> Result<MCPResourceContent> {
+        let url = format!("{}/resources/read", self.config.uri);
+        let payload = serde_json::json!({ "uri": uri });
+        let req = apply_auth(&self.config, self.client.post(&url).json(&payload));
+        let resp = req.send().await.map_err(|e| {
+            classify_reqwest_error(format!("resources/read failed: {}", e), &e)
+        })?;
+        if !resp.status().is_success() {
+            return Err(FlowgentraError::MCPError(format!(
+                "resources/read returned {}", resp.status()
+            )));
+        }
+        resp.json().await.map_err(|e| {
+            FlowgentraError::MCPError(format!("Failed to parse resource content: {}", e))
+        })
+    }
+
+    async fn list_prompts(&self) -> Result<Vec<MCPPrompt>> {
+        let url = format!("{}/prompts", self.config.uri);
+        let req = apply_auth(&self.config, self.client.get(&url));
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.json().await.map_err(|e| {
+                    FlowgentraError::MCPError(format!("Failed to parse prompts: {}", e))
+                })
+            }
+            Ok(resp) if resp.status().as_u16() == 404 => Ok(vec![]),
+            Ok(resp) => Err(FlowgentraError::MCPError(format!(
+                "prompts/list returned {}", resp.status()
+            ))),
+            Err(e) => Err(classify_reqwest_error(format!("prompts/list failed: {}", e), &e)),
+        }
+    }
+
+    async fn get_prompt(&self, name: &str, arguments: serde_json::Value) -> Result<MCPPromptResult> {
+        let url = format!("{}/prompts/get", self.config.uri);
+        let payload = serde_json::json!({ "name": name, "arguments": arguments });
+        let req = apply_auth(&self.config, self.client.post(&url).json(&payload));
+        let resp = req.send().await.map_err(|e| {
+            classify_reqwest_error(format!("prompts/get failed: {}", e), &e)
+        })?;
+        if !resp.status().is_success() {
+            return Err(FlowgentraError::MCPError(format!(
+                "prompts/get returned {}", resp.status()
+            )));
+        }
+        resp.json().await.map_err(|e| {
+            FlowgentraError::MCPError(format!("Failed to parse prompt result: {}", e))
+        })
     }
 }
 
@@ -1486,5 +1660,97 @@ mod tests {
             .build();
 
         assert!(result.is_err());
+    }
+}
+
+// =============================================================================
+// Reconnecting MCP Client
+// =============================================================================
+
+/// MCP client wrapper that recreates the inner client on connection failure.
+///
+/// When an HTTP/SSE MCP server goes down and comes back, the `ReconnectingMCPClient`
+/// detects the failure and uses a factory to create a fresh client for the next attempt.
+///
+/// # Example
+/// ```ignore
+/// let config = MCPConfig::builder().name("tools").http("http://localhost:8000").build()?;
+/// let client = ReconnectingMCPClient::new(move || {
+///     Arc::new(DefaultMCPClient::new(config.clone())) as Arc<dyn MCPClient>
+/// });
+/// ```
+pub struct ReconnectingMCPClient<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> {
+    factory: F,
+    inner: tokio::sync::Mutex<Arc<dyn MCPClient>>,
+    max_reconnects: u32,
+}
+
+impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> ReconnectingMCPClient<F> {
+    pub fn new(factory: F) -> Self {
+        let inner = (factory)();
+        Self {
+            factory,
+            inner: tokio::sync::Mutex::new(inner),
+            max_reconnects: 3,
+        }
+    }
+
+    pub fn with_max_reconnects(mut self, max: u32) -> Self {
+        self.max_reconnects = max;
+        self
+    }
+
+    /// Try the operation; on connection error, recreate the client and retry.
+    async fn with_reconnect<T, Fut>(
+        &self,
+        op: impl Fn(Arc<dyn MCPClient>) -> Fut,
+    ) -> Result<T>
+    where
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let client = self.inner.lock().await.clone();
+        match op(client).await {
+            Ok(val) => Ok(val),
+            Err(e) if is_connection_error(&e) => {
+                tracing::warn!("MCP connection error, attempting reconnect: {}", e);
+                for attempt in 1..=self.max_reconnects {
+                    let new_client = (self.factory)();
+                    *self.inner.lock().await = new_client.clone();
+                    tracing::info!(attempt, "Reconnected MCP client");
+                    match op(new_client).await {
+                        Ok(val) => return Ok(val),
+                        Err(e) if is_connection_error(&e) && attempt < self.max_reconnects => {
+                            tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(e)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+fn is_connection_error(err: &FlowgentraError) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("connection") || msg.contains("timeout") || msg.contains("refused")
+        || msg.contains("reset") || msg.contains("broken pipe")
+}
+
+#[async_trait::async_trait]
+impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> MCPClient for ReconnectingMCPClient<F> {
+    async fn list_tools(&self) -> Result<Vec<MCPTool>> {
+        self.with_reconnect(|c| async move { c.list_tools().await }).await
+    }
+
+    async fn call_tool(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value> {
+        let name = name.to_string();
+        self.with_reconnect(move |c| {
+            let n = name.clone();
+            let a = args.clone();
+            async move { c.call_tool(&n, a).await }
+        }).await
     }
 }

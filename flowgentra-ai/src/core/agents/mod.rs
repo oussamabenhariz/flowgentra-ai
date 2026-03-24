@@ -30,6 +30,7 @@ mod few_shot_react;
 mod prompts;
 mod zero_shot_react;
 pub mod graph_nodes;
+pub mod supervisor;
 
 pub use builders::{AgentBuilder, AgentConfig};
 pub use conversational::ConversationalAgent;
@@ -37,6 +38,7 @@ pub use few_shot_react::FewShotReActAgent;
 pub use prompts::{PromptTemplates, SystemPrompts};
 pub use zero_shot_react::ZeroShotReActAgent;
 pub use graph_nodes::{AgentReasoningNode, ToolExecutorNode, ConversationalNode, reasoning_router};
+pub use supervisor::Supervisor;
 
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;

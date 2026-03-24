@@ -51,6 +51,23 @@ impl ExecutionTrace {
             node_name: node_name.to_string(),
             duration_ms,
             start_time,
+            state_snapshot: None,
+        });
+    }
+
+    /// Record a node execution with a state snapshot for replay.
+    pub fn record_node_with_state(
+        &mut self,
+        node_name: &str,
+        duration_ms: u64,
+        start_time: chrono::DateTime<Utc>,
+        state_snapshot: serde_json::Value,
+    ) {
+        self.node_timings.push(NodeTiming {
+            node_name: node_name.to_string(),
+            duration_ms,
+            start_time,
+            state_snapshot: Some(state_snapshot),
         });
     }
 

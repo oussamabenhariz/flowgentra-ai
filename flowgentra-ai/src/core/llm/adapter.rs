@@ -6,7 +6,7 @@
 //! This eliminates code duplication across provider files — each provider only
 //! needs to implement the adapter trait with its specific differences.
 
-use super::{LLMClient, LLMConfig, Message, MessageRole, ToolCall, ToolDefinition, TokenUsage};
+use super::{LLMClient, LLMConfig, Message, MessageRole, ResponseFormat, ToolCall, ToolDefinition, TokenUsage};
 use crate::core::error::FlowgentraError;
 use serde_json::{json, Value};
 
@@ -291,6 +291,26 @@ impl LLMClient for HttpLLMClient {
 // Helper: standard OpenAI-style message formatting
 // =============================================================================
 
+/// Apply `response_format` to an OpenAI-compatible payload if set.
+fn apply_openai_response_format(payload: &mut Value, config: &LLMConfig) {
+    match &config.response_format {
+        ResponseFormat::Text => {}
+        ResponseFormat::Json => {
+            payload["response_format"] = json!({"type": "json_object"});
+        }
+        ResponseFormat::JsonSchema { name, schema } => {
+            payload["response_format"] = json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "schema": schema,
+                    "strict": true,
+                }
+            });
+        }
+    }
+}
+
 /// Convert messages to the OpenAI-compatible JSON array format.
 /// Used by OpenAI, Mistral, Groq, Azure.
 pub fn openai_messages_payload(messages: &[Message]) -> Vec<Value> {
@@ -455,13 +475,15 @@ impl ProviderAdapter for OpenAICompatibleAdapter {
     }
 
     fn build_payload(&self, config: &LLMConfig, messages: &[Message]) -> Value {
-        json!({
+        let mut payload = json!({
             "model": config.model,
             "messages": openai_messages_payload(messages),
             "temperature": config.temperature.unwrap_or(0.7),
             "max_tokens": config.max_tokens.unwrap_or(2048),
             "top_p": config.top_p.unwrap_or(1.0),
-        })
+        });
+        apply_openai_response_format(&mut payload, config);
+        payload
     }
 
     fn build_payload_with_tools(
@@ -544,41 +566,30 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 
     fn build_payload(&self, config: &LLMConfig, messages: &[Message]) -> Value {
-        // Anthropic: extract system messages into a separate top-level param
-        let mut system_prompt = String::new();
-        let chat_messages: Vec<Value> = messages
-            .iter()
-            .filter_map(|m| {
-                if m.role == MessageRole::System {
-                    system_prompt = m.content.clone();
-                    None
-                } else {
-                    Some(json!({
-                        "role": match m.role {
-                            MessageRole::User => "user",
-                            MessageRole::Assistant => "assistant",
-                            _ => "user", // Tool messages sent as user
-                        },
-                        "content": m.content,
-                    }))
-                }
-            })
-            .collect();
+        anthropic_build_payload(config, messages)
+    }
 
-        let mut payload = json!({
-            "model": config.model,
-            "messages": chat_messages,
-            "max_tokens": config.max_tokens.unwrap_or(2048),
-        });
+    fn build_payload_with_tools(
+        &self,
+        config: &LLMConfig,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Value {
+        let mut payload = anthropic_build_payload(config, messages);
 
-        if !system_prompt.is_empty() {
-            payload["system"] = json!(system_prompt);
-        }
-        if let Some(temp) = config.temperature {
-            payload["temperature"] = json!(temp);
-        }
-        if let Some(top_p) = config.top_p {
-            payload["top_p"] = json!(top_p);
+        if !tools.is_empty() {
+            // Anthropic uses `input_schema` instead of OpenAI's `parameters`
+            let anthropic_tools: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                    })
+                })
+                .collect();
+            payload["tools"] = json!(anthropic_tools);
         }
 
         payload
@@ -592,12 +603,52 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 
     fn parse_response(&self, body: &Value) -> crate::core::error::Result<String> {
-        body.get("content")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("text"))
-            .and_then(|t| t.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| FlowgentraError::LLMError("Invalid Anthropic response format".to_string()))
+        // Anthropic returns content as an array of blocks.
+        // Look for the first `text` block.
+        let content = body
+            .get("content")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| FlowgentraError::LLMError("Invalid Anthropic response format".to_string()))?;
+
+        for block in content {
+            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                    return Ok(text.to_string());
+                }
+            }
+        }
+
+        // Fallback: if only tool_use blocks, return empty string
+        Ok(String::new())
+    }
+
+    fn parse_usage(&self, body: &Value) -> Option<TokenUsage> {
+        let usage = body.get("usage")?;
+        Some(TokenUsage {
+            prompt_tokens: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            completion_tokens: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            total_tokens: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
+                + usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        })
+    }
+
+    fn parse_tool_calls(&self, body: &Value) -> Option<Vec<ToolCall>> {
+        let content = body.get("content")?.as_array()?;
+
+        let calls: Vec<ToolCall> = content
+            .iter()
+            .filter_map(|block| {
+                if block.get("type")?.as_str()? != "tool_use" {
+                    return None;
+                }
+                let id = block.get("id")?.as_str()?.to_string();
+                let name = block.get("name")?.as_str()?.to_string();
+                let arguments = block.get("input").cloned().unwrap_or(json!({}));
+                Some(ToolCall { id, name, arguments })
+            })
+            .collect();
+
+        if calls.is_empty() { None } else { Some(calls) }
     }
 
     fn parse_stream_chunk(&self, chunk: &Value) -> Option<String> {
@@ -612,6 +663,69 @@ impl ProviderAdapter for AnthropicAdapter {
             None
         }
     }
+}
+
+/// Build the Anthropic messages payload (shared between build_payload and build_payload_with_tools).
+fn anthropic_build_payload(config: &LLMConfig, messages: &[Message]) -> Value {
+    let mut system_prompt = String::new();
+    let chat_messages: Vec<Value> = messages
+        .iter()
+        .filter_map(|m| {
+            if m.role == MessageRole::System {
+                system_prompt = m.content.clone();
+                None
+            } else {
+                Some(json!({
+                    "role": match m.role {
+                        MessageRole::User => "user",
+                        MessageRole::Assistant => "assistant",
+                        _ => "user",
+                    },
+                    "content": m.content,
+                }))
+            }
+        })
+        .collect();
+
+    // For JSON mode, append instruction to the system prompt
+    match &config.response_format {
+        ResponseFormat::Json => {
+            if !system_prompt.is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str(
+                "You must respond with valid JSON only. No markdown formatting, no explanations, just raw JSON."
+            );
+        }
+        ResponseFormat::JsonSchema { schema, .. } => {
+            if !system_prompt.is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str(&format!(
+                "You must respond with valid JSON matching this schema:\n{}\nNo markdown formatting, no explanations, just raw JSON.",
+                serde_json::to_string_pretty(schema).unwrap_or_default()
+            ));
+        }
+        ResponseFormat::Text => {}
+    }
+
+    let mut payload = json!({
+        "model": config.model,
+        "messages": chat_messages,
+        "max_tokens": config.max_tokens.unwrap_or(2048),
+    });
+
+    if !system_prompt.is_empty() {
+        payload["system"] = json!(system_prompt);
+    }
+    if let Some(temp) = config.temperature {
+        payload["temperature"] = json!(temp);
+    }
+    if let Some(top_p) = config.top_p {
+        payload["top_p"] = json!(top_p);
+    }
+
+    payload
 }
 
 // -----------------------------------------------------------------------------
@@ -740,12 +854,14 @@ impl ProviderAdapter for AzureAdapter {
 
     fn build_payload(&self, config: &LLMConfig, messages: &[Message]) -> Value {
         // Azure doesn't need the model field (it's in the URL via deployment ID)
-        json!({
+        let mut payload = json!({
             "messages": openai_messages_payload(messages),
             "temperature": config.temperature.unwrap_or(0.7),
             "max_tokens": config.max_tokens.unwrap_or(2048),
             "top_p": config.top_p.unwrap_or(1.0),
-        })
+        });
+        apply_openai_response_format(&mut payload, config);
+        payload
     }
 
     fn auth_headers(&self, config: &LLMConfig) -> Vec<(&'static str, String)> {

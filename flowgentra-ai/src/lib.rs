@@ -84,7 +84,7 @@ pub mod prelude {
             routing::{ComparisonOp, Condition, RoutingCondition},
             Graph, GraphBuilder,
         },
-        llm::{LLMConfig, LLMProvider, Message, MessageRole, ToolCall, ToolDefinition},
+        llm::{LLMConfig, LLMProvider, Message, MessageRole, ResponseFormat, ToolCall, ToolDefinition},
         mcp::MCPConfig,
         memory::{
             BufferWindowConfig, Checkpoint, CheckpointMetadata, Checkpointer, ConversationMemory,

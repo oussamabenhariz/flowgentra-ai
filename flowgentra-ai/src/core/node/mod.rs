@@ -373,6 +373,10 @@ pub struct Node<T: State> {
 
     /// Whether this node is a planner node (LLM-driven dynamic routing).
     pub(crate) is_planner: bool,
+
+    /// Whether this node still has a placeholder function (not yet registered).
+    /// If true, execution will return an error instead of silently passing through.
+    pub(crate) is_placeholder: bool,
 }
 
 impl<T: State> Node<T> {
@@ -389,6 +393,24 @@ impl<T: State> Node<T> {
             mcps,
             config,
             is_planner: false,
+            is_placeholder: false,
+        }
+    }
+
+    /// Create a placeholder node (identity function that will be replaced via `register_node`).
+    pub fn new_placeholder(
+        name: impl Into<String>,
+        function: NodeFunction<T>,
+        mcps: Vec<String>,
+        config: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Node {
+            name: name.into(),
+            function,
+            mcps,
+            config,
+            is_planner: false,
+            is_placeholder: true,
         }
     }
 
@@ -405,6 +427,7 @@ impl<T: State> Node<T> {
             mcps,
             config,
             is_planner: true,
+            is_placeholder: false,
         }
     }
 
@@ -412,7 +435,14 @@ impl<T: State> Node<T> {
     ///
     /// # Returns
     /// The updated state after node execution, or an error.
+    /// Returns an error if the node handler was never registered (still a placeholder).
     pub async fn execute(&self, state: T) -> crate::core::error::Result<T> {
+        if self.is_placeholder {
+            return Err(FlowgentraError::ExecutionError(format!(
+                "Node '{}' has no registered handler. Call register_node() before execution.",
+                self.name
+            )));
+        }
         (self.function)(state).await
     }
 }

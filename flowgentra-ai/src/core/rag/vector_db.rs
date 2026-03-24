@@ -66,6 +66,16 @@ impl RAGConfig {
         })
     }
 
+    pub fn qdrant(endpoint: &str, collection: &str, embedding_dim: usize) -> Result<Self, VectorStoreError> {
+        Ok(Self {
+            store_type: VectorStoreType::Qdrant,
+            api_key: None,
+            endpoint: Some(endpoint.to_string()),
+            index_name: collection.to_string(),
+            embedding_dim,
+        })
+    }
+
     pub fn memory(embedding_dim: usize) -> Result<Self, VectorStoreError> {
         Ok(Self {
             store_type: VectorStoreType::Memory,
@@ -396,9 +406,12 @@ impl VectorStoreBackend for InMemoryVectorStore {
 // Pinecone Implementation — NOT YET IMPLEMENTED
 // ============================================================================
 
+/// Pinecone vector store using the Pinecone REST API.
+///
+/// Requires `api_key` and `endpoint` (your Pinecone index host URL) in the config.
 pub struct PineconeStore {
-    #[allow(dead_code)]
     config: RAGConfig,
+    client: reqwest::Client,
 }
 
 impl PineconeStore {
@@ -408,45 +421,432 @@ impl PineconeStore {
                 "Config type must be Pinecone".to_string(),
             ));
         }
-        Ok(Self { config })
+        if config.api_key.is_none() {
+            return Err(VectorStoreError::ConfigError(
+                "Pinecone requires an api_key".to_string(),
+            ));
+        }
+        if config.endpoint.is_none() {
+            return Err(VectorStoreError::ConfigError(
+                "Pinecone requires an endpoint (your index host URL)".to_string(),
+            ));
+        }
+        Ok(Self {
+            config,
+            client: reqwest::Client::new(),
+        })
+    }
+
+    fn api_key(&self) -> &str {
+        self.config.api_key.as_deref().unwrap_or("")
+    }
+
+    fn base_url(&self) -> &str {
+        self.config.endpoint.as_deref().unwrap_or("https://api.pinecone.io")
     }
 }
 
-const PINECONE_NOT_IMPL: &str =
-    "PineconeStore is not yet implemented. Use ChromaStore or InMemoryVectorStore.";
-
 #[async_trait]
 impl VectorStoreBackend for PineconeStore {
-    async fn index(&self, _doc: Document) -> Result<(), VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+    async fn index(&self, doc: Document) -> Result<(), VectorStoreError> {
+        let embedding = doc.embedding.ok_or_else(|| {
+            VectorStoreError::EmbeddingError("Document must have an embedding to index".to_string())
+        })?;
+
+        let payload = serde_json::json!({
+            "vectors": [{
+                "id": doc.id,
+                "values": embedding,
+                "metadata": {
+                    "text": doc.text,
+                    "_meta": doc.metadata,
+                }
+            }],
+            "namespace": self.config.index_name,
+        });
+
+        let resp = self.client
+            .post(format!("{}/vectors/upsert", self.base_url()))
+            .header("Api-Key", self.api_key())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Pinecone upsert failed: {}", body)));
+        }
+        Ok(())
     }
 
     async fn search(
         &self,
-        _query_embedding: Vec<f32>,
-        _top_k: usize,
-        _filter: Option<MetadataFilter>,
+        query_embedding: Vec<f32>,
+        top_k: usize,
+        filter: Option<MetadataFilter>,
     ) -> Result<Vec<SearchResult>, VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+        let mut payload = serde_json::json!({
+            "vector": query_embedding,
+            "topK": top_k,
+            "includeMetadata": true,
+            "namespace": self.config.index_name,
+        });
+
+        if let Some(f) = filter {
+            payload["filter"] = serde_json::json!(f);
+        }
+
+        let resp = self.client
+            .post(format!("{}/query", self.base_url()))
+            .header("Api-Key", self.api_key())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Pinecone query failed: {}", body)));
+        }
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
+
+        let empty_vec = Vec::new();
+        let matches = data.get("matches").and_then(|m| m.as_array())
+            .unwrap_or(&empty_vec);
+
+        let results = matches.iter().filter_map(|m| {
+            let id = m.get("id")?.as_str()?.to_string();
+            let score = m.get("score")?.as_f64()? as f32;
+            let metadata = m.get("metadata").cloned().unwrap_or(serde_json::json!({}));
+            let text = metadata.get("text").and_then(|t| t.as_str())
+                .unwrap_or("").to_string();
+            let meta_map: HashMap<String, Value> = metadata.get("_meta")
+                .and_then(|m| serde_json::from_value(m.clone()).ok())
+                .unwrap_or_default();
+            Some(SearchResult { id, text, score, metadata: meta_map })
+        }).collect();
+
+        Ok(results)
     }
 
-    async fn delete(&self, _doc_id: &str) -> Result<(), VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+    async fn delete(&self, doc_id: &str) -> Result<(), VectorStoreError> {
+        let payload = serde_json::json!({
+            "ids": [doc_id],
+            "namespace": self.config.index_name,
+        });
+
+        let resp = self.client
+            .post(format!("{}/vectors/delete", self.base_url()))
+            .header("Api-Key", self.api_key())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Pinecone delete failed: {}", body)));
+        }
+        Ok(())
     }
 
-    async fn update(&self, _doc: Document) -> Result<(), VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+    async fn update(&self, doc: Document) -> Result<(), VectorStoreError> {
+        // Pinecone upsert is idempotent — updating is the same as indexing
+        self.index(doc).await
     }
 
-    async fn get(&self, _doc_id: &str) -> Result<Document, VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+    async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
+        let payload = serde_json::json!({
+            "ids": [doc_id],
+            "namespace": self.config.index_name,
+        });
+
+        let resp = self.client
+            .get(format!("{}/vectors/fetch", self.base_url()))
+            .header("Api-Key", self.api_key())
+            .query(&[("ids", doc_id), ("namespace", &self.config.index_name)])
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Pinecone fetch failed: {}", body)));
+        }
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
+
+        let vectors = data.get("vectors").and_then(|v| v.as_object())
+            .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
+
+        let vec_data = vectors.get(doc_id)
+            .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
+
+        let metadata = vec_data.get("metadata").cloned().unwrap_or(serde_json::json!({}));
+        let text = metadata.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let embedding = vec_data.get("values")
+            .and_then(|v| serde_json::from_value::<Vec<f32>>(v.clone()).ok());
+        let meta_map: HashMap<String, Value> = metadata.get("_meta")
+            .and_then(|m| serde_json::from_value(m.clone()).ok())
+            .unwrap_or_default();
+
+        let _ = payload; // suppress unused warning
+        Ok(Document { id: doc_id.to_string(), text, embedding, metadata: meta_map })
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+        // Pinecone doesn't have a list-all endpoint in the standard API.
+        // Users should track document IDs externally.
+        Err(VectorStoreError::NotImplemented(
+            "Pinecone does not support listing all documents. Track IDs externally.".into()
+        ))
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
-        Err(VectorStoreError::NotImplemented(PINECONE_NOT_IMPL.into()))
+        let payload = serde_json::json!({
+            "deleteAll": true,
+            "namespace": self.config.index_name,
+        });
+
+        let resp = self.client
+            .post(format!("{}/vectors/delete", self.base_url()))
+            .header("Api-Key", self.api_key())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Pinecone clear failed: {}", body)));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Qdrant Implementation
+// ============================================================================
+
+/// Qdrant vector store using the Qdrant REST API.
+///
+/// Requires `endpoint` (e.g., "http://localhost:6333") in the config.
+pub struct QdrantStore {
+    config: RAGConfig,
+    client: reqwest::Client,
+}
+
+impl QdrantStore {
+    pub async fn new(config: RAGConfig) -> Result<Self, VectorStoreError> {
+        if config.store_type != VectorStoreType::Qdrant {
+            return Err(VectorStoreError::ConfigError(
+                "Config type must be Qdrant".to_string(),
+            ));
+        }
+        if config.endpoint.is_none() {
+            return Err(VectorStoreError::ConfigError(
+                "Qdrant requires an endpoint".to_string(),
+            ));
+        }
+        Ok(Self {
+            config,
+            client: reqwest::Client::new(),
+        })
+    }
+
+    fn base_url(&self) -> &str {
+        self.config.endpoint.as_deref().unwrap_or("http://localhost:6333")
+    }
+
+    fn collection(&self) -> &str {
+        &self.config.index_name
+    }
+}
+
+#[async_trait]
+impl VectorStoreBackend for QdrantStore {
+    async fn index(&self, doc: Document) -> Result<(), VectorStoreError> {
+        let embedding = doc.embedding.ok_or_else(|| {
+            VectorStoreError::EmbeddingError("Document must have an embedding".to_string())
+        })?;
+
+        let mut payload_map = doc.metadata.clone();
+        payload_map.insert("text".to_string(), serde_json::json!(doc.text));
+
+        // Qdrant uses numeric or UUID point IDs. Use a hash of doc.id for numeric ID.
+        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc.id.as_bytes()).to_string();
+
+        let body = serde_json::json!({
+            "points": [{
+                "id": point_id,
+                "vector": embedding,
+                "payload": payload_map,
+            }]
+        });
+
+        let resp = self.client
+            .put(format!("{}/collections/{}/points", self.base_url(), self.collection()))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Qdrant upsert failed: {}", text)));
+        }
+        Ok(())
+    }
+
+    async fn search(
+        &self,
+        query_embedding: Vec<f32>,
+        top_k: usize,
+        filter: Option<MetadataFilter>,
+    ) -> Result<Vec<SearchResult>, VectorStoreError> {
+        let mut body = serde_json::json!({
+            "vector": query_embedding,
+            "limit": top_k,
+            "with_payload": true,
+        });
+
+        if let Some(f) = filter {
+            // Convert simple key-value filter to Qdrant filter format
+            let must: Vec<serde_json::Value> = f.iter().map(|(k, v)| {
+                serde_json::json!({
+                    "key": k,
+                    "match": { "value": v }
+                })
+            }).collect();
+            body["filter"] = serde_json::json!({ "must": must });
+        }
+
+        let resp = self.client
+            .post(format!("{}/collections/{}/points/search", self.base_url(), self.collection()))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Qdrant search failed: {}", text)));
+        }
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
+
+        let empty_vec2 = Vec::new();
+        let results_arr = data.get("result").and_then(|r| r.as_array())
+            .unwrap_or(&empty_vec2);
+
+        let results = results_arr.iter().filter_map(|r| {
+            let id = r.get("id")?.to_string().trim_matches('"').to_string();
+            let score = r.get("score")?.as_f64()? as f32;
+            let payload = r.get("payload").cloned().unwrap_or(serde_json::json!({}));
+            let text = payload.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            let mut meta: HashMap<String, Value> = serde_json::from_value(payload.clone()).unwrap_or_default();
+            meta.remove("text");
+            Some(SearchResult { id, text, score, metadata: meta })
+        }).collect();
+
+        Ok(results)
+    }
+
+    async fn delete(&self, doc_id: &str) -> Result<(), VectorStoreError> {
+        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc_id.as_bytes()).to_string();
+        let body = serde_json::json!({
+            "points": [point_id],
+        });
+
+        let resp = self.client
+            .post(format!("{}/collections/{}/points/delete", self.base_url(), self.collection()))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Qdrant delete failed: {}", text)));
+        }
+        Ok(())
+    }
+
+    async fn update(&self, doc: Document) -> Result<(), VectorStoreError> {
+        self.index(doc).await
+    }
+
+    async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
+        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, doc_id.as_bytes()).to_string();
+        let body = serde_json::json!({
+            "ids": [point_id],
+            "with_payload": true,
+            "with_vector": true,
+        });
+
+        let resp = self.client
+            .post(format!("{}/collections/{}/points", self.base_url(), self.collection()))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            return Err(VectorStoreError::NotFound(doc_id.to_string()));
+        }
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
+
+        let point = data.get("result").and_then(|r| r.as_array()).and_then(|a| a.first())
+            .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
+
+        let payload = point.get("payload").cloned().unwrap_or(serde_json::json!({}));
+        let text = payload.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let embedding = point.get("vector")
+            .and_then(|v| serde_json::from_value::<Vec<f32>>(v.clone()).ok());
+        let mut meta: HashMap<String, Value> = serde_json::from_value(payload).unwrap_or_default();
+        meta.remove("text");
+
+        Ok(Document { id: doc_id.to_string(), text, embedding, metadata: meta })
+    }
+
+    async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
+        Err(VectorStoreError::NotImplemented(
+            "Qdrant list-all requires scroll API. Use search with empty filter instead.".into()
+        ))
+    }
+
+    async fn clear(&self) -> Result<(), VectorStoreError> {
+        // Delete and recreate the collection
+        let _ = self.client
+            .delete(format!("{}/collections/{}", self.base_url(), self.collection()))
+            .send()
+            .await;
+
+        let body = serde_json::json!({
+            "vectors": {
+                "size": self.config.embedding_dim,
+                "distance": "Cosine"
+            }
+        });
+
+        let resp = self.client
+            .put(format!("{}/collections/{}", self.base_url(), self.collection()))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(VectorStoreError::ApiError(format!("Qdrant clear failed: {}", text)));
+        }
+        Ok(())
     }
 }
