@@ -68,7 +68,9 @@ fn api_key_env_var(provider: &LLMProvider) -> &'static str {
 }
 
 /// Create an LLM client from an PrebuiltAgentConfig.
-fn create_client_from_config(config: &PrebuiltAgentConfig) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
+fn create_client_from_config(
+    config: &PrebuiltAgentConfig,
+) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
     let provider = resolve_provider(&config.llm_model);
     let env_var = api_key_env_var(&provider);
     let api_key = std::env::var(env_var).unwrap_or_default();

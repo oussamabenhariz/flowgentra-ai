@@ -2,7 +2,7 @@
 ///
 /// General-purpose reasoning + action agent that works without examples.
 /// Best for open-ended tasks requiring flexible problem-solving.
-use super::{Agent, PrebuiltAgentConfig, AgentType, ToolSpec};
+use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
 

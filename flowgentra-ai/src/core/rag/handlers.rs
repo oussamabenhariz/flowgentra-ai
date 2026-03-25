@@ -86,8 +86,7 @@ impl RAGHandlers {
                                 state.set("embedding_dim", json!(dim));
                             }
                             Err(e) => {
-                                state
-                                    .set("error", json!(format!("Indexing failed: {}", e)));
+                                state.set("error", json!(format!("Indexing failed: {}", e)));
                             }
                         }
                     }

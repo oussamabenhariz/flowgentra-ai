@@ -164,7 +164,6 @@ pub enum OrchestrationStrategy {
     Custom(String),
 }
 
-
 /// Configuration for the Supervisor node.
 /// Parsed from YAML via `from_node_config` or constructed programmatically.
 #[derive(Debug, Clone, Serialize, Deserialize)]

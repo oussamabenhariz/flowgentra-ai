@@ -2,7 +2,7 @@
 ///
 /// Multi-turn dialogue agent with memory support.
 /// Maintains conversation history and context across multiple interactions.
-use super::{Agent, PrebuiltAgentConfig, AgentType, ToolSpec};
+use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
 use std::collections::VecDeque;

@@ -443,10 +443,7 @@ impl<T: crate::core::state::State> crate::core::node::PluggableNode<T> for Timeo
     fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
         Box::new(TimeoutNode {
             config: self.config.clone(),
-            inner_node: self
-                .inner_node
-                .as_ref()
-                .map(|n| n.clone_box()),
+            inner_node: self.inner_node.as_ref().map(|n| n.clone_box()),
         })
     }
 }

@@ -2,7 +2,7 @@
 ///
 /// Reasoning + action agent with example demonstrations.
 /// Provides better guidance through concrete examples of problem-solving.
-use super::{Agent, PrebuiltAgentConfig, AgentType, ToolSpec};
+use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
 
@@ -166,7 +166,10 @@ Output: (your answer here)"#,
 
 impl Default for FewShotReActAgent {
     fn default() -> Self {
-        Self::new(PrebuiltAgentConfig::new("few_shot_react", AgentType::FewShotReAct))
+        Self::new(PrebuiltAgentConfig::new(
+            "few_shot_react",
+            AgentType::FewShotReAct,
+        ))
     }
 }
 
