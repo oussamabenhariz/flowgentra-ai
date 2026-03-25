@@ -2,7 +2,7 @@
 ///
 /// Multi-turn dialogue agent with memory support.
 /// Maintains conversation history and context across multiple interactions.
-use super::{Agent, AgentConfig, AgentType, ToolSpec};
+use super::{Agent, PrebuiltAgentConfig, AgentType, ToolSpec};
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -36,14 +36,14 @@ impl Message {
 
 /// Conversational agent with memory
 pub struct ConversationalAgent {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
     tools: HashMap<String, ToolSpec>,
     history: VecDeque<Message>,
 }
 
 impl ConversationalAgent {
     /// Create new conversational agent
-    pub fn new(mut config: AgentConfig) -> Self {
+    pub fn new(mut config: PrebuiltAgentConfig) -> Self {
         let tools = config.tools.clone();
 
         // Enable memory by default for conversational agents
@@ -160,7 +160,7 @@ impl ConversationalAgent {
 
 impl Default for ConversationalAgent {
     fn default() -> Self {
-        Self::new(AgentConfig::new(
+        Self::new(PrebuiltAgentConfig::new(
             "conversational",
             AgentType::Conversational,
         ))
@@ -210,7 +210,7 @@ impl Agent for ConversationalAgent {
         ))
     }
 
-    fn config(&self) -> &AgentConfig {
+    fn config(&self) -> &PrebuiltAgentConfig {
         &self.config
     }
 
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_memory_trimming() {
-        let mut config = AgentConfig::new("test", AgentType::Conversational);
+        let mut config = PrebuiltAgentConfig::new("test", AgentType::Conversational);
         config.memory_steps = 3;
         let mut agent = ConversationalAgent::new(config);
 

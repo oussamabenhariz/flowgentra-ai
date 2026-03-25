@@ -18,7 +18,7 @@ use tracing::debug;
 
 /// Agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfig {
+pub struct PrebuiltAgentConfig {
     /// Agent name
     pub name: String,
 
@@ -58,7 +58,7 @@ pub struct AgentConfig {
     pub custom_params: HashMap<String, String>,
 }
 
-impl Default for AgentConfig {
+impl Default for PrebuiltAgentConfig {
     fn default() -> Self {
         Self {
             name: "agent".to_string(),
@@ -79,7 +79,7 @@ impl Default for AgentConfig {
     }
 }
 
-impl AgentConfig {
+impl PrebuiltAgentConfig {
     /// Create new agent configuration
     pub fn new(name: impl Into<String>, agent_type: AgentType) -> Self {
         Self {
@@ -93,7 +93,7 @@ impl AgentConfig {
 
 /// Graph-based agent that wraps StateGraph for predefined agent types
 pub struct GraphBasedAgent {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
     name: String,
     graph: StateGraph<SharedState>,
     /// Conversation history for multi-turn context: Vec<(role, content)>
@@ -103,7 +103,7 @@ pub struct GraphBasedAgent {
 impl GraphBasedAgent {
     /// Create a new graph-based agent
     pub fn new(
-        config: AgentConfig,
+        config: PrebuiltAgentConfig,
         tool_executor: Option<ToolExecutorFn>,
     ) -> Result<Self, FlowgentraError> {
         let name = config.name.clone();
@@ -126,7 +126,7 @@ impl GraphBasedAgent {
 
     /// Build a ZeroShotReAct agent graph
     fn build_zero_shot_react_graph(
-        config: &AgentConfig,
+        config: &PrebuiltAgentConfig,
         tool_executor: Option<ToolExecutorFn>,
     ) -> Result<StateGraph<SharedState>, FlowgentraError> {
         let agent_config = config.clone();
@@ -207,7 +207,7 @@ impl GraphBasedAgent {
 
     /// Build a FewShotReAct agent graph (similar to ZeroShotReAct but with examples)
     fn build_few_shot_react_graph(
-        config: &AgentConfig,
+        config: &PrebuiltAgentConfig,
         tool_executor: Option<ToolExecutorFn>,
     ) -> Result<StateGraph<SharedState>, FlowgentraError> {
         // For now, use same structure as ZeroShotReAct
@@ -217,7 +217,7 @@ impl GraphBasedAgent {
 
     /// Build a Conversational agent graph
     fn build_conversational_graph(
-        config: &AgentConfig,
+        config: &PrebuiltAgentConfig,
     ) -> Result<StateGraph<SharedState>, FlowgentraError> {
         let config_clone = config.clone();
 
@@ -326,7 +326,7 @@ impl GraphBasedAgent {
     }
 
     /// Get config reference
-    pub fn config(&self) -> &AgentConfig {
+    pub fn config(&self) -> &PrebuiltAgentConfig {
         &self.config
     }
 
@@ -363,7 +363,7 @@ impl Agent for GraphBasedAgent {
         ))
     }
 
-    fn config(&self) -> &AgentConfig {
+    fn config(&self) -> &PrebuiltAgentConfig {
         &self.config
     }
 
@@ -380,7 +380,7 @@ impl Agent for GraphBasedAgent {
 
 /// Agent builder for fluent configuration
 pub struct AgentBuilder {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
     tool_executor: Option<ToolExecutorFn>,
 }
 
@@ -388,7 +388,7 @@ impl AgentBuilder {
     /// Create new agent builder
     pub fn new(agent_type: AgentType) -> Self {
         Self {
-            config: AgentConfig::new("agent", agent_type),
+            config: PrebuiltAgentConfig::new("agent", agent_type),
             tool_executor: None,
         }
     }
@@ -482,7 +482,7 @@ impl AgentBuilder {
     }
 
     /// Get configuration
-    pub fn config(&self) -> &AgentConfig {
+    pub fn config(&self) -> &PrebuiltAgentConfig {
         &self.config
     }
 
@@ -520,6 +520,12 @@ impl AgentBuilder {
     /// Use this when you need to call execute_input() for async LLM calls
     pub fn build_graph(self) -> Result<GraphBasedAgent, FlowgentraError> {
         GraphBasedAgent::new(self.config, self.tool_executor)
+    }
+}
+
+impl Default for AgentBuilder {
+    fn default() -> Self {
+        Self::new(AgentType::ZeroShotReAct)
     }
 }
 

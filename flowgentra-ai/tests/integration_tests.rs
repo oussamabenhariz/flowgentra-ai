@@ -71,7 +71,7 @@ fn test_graph_creation() {
 
 #[test]
 fn test_graph_builder() {
-    let _builder: GraphBuilder<SharedState> = GraphBuilder::new();
+    let _builder: StateGraphBuilder<SharedState> = StateGraphBuilder::new();
 }
 
 // ============================================================================

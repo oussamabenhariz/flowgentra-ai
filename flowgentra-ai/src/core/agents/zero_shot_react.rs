@@ -2,19 +2,19 @@
 ///
 /// General-purpose reasoning + action agent that works without examples.
 /// Best for open-ended tasks requiring flexible problem-solving.
-use super::{Agent, AgentConfig, AgentType, ToolSpec};
+use super::{Agent, PrebuiltAgentConfig, AgentType, ToolSpec};
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
 
 /// Zero-shot ReAct agent implementation
 pub struct ZeroShotReActAgent {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
     tools: HashMap<String, ToolSpec>,
 }
 
 impl ZeroShotReActAgent {
     /// Create new zero-shot ReAct agent
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
         let tools = config.tools.clone();
         Self { config, tools }
     }
@@ -91,7 +91,7 @@ Provide your reasoning and solution."#,
 
 impl Default for ZeroShotReActAgent {
     fn default() -> Self {
-        Self::new(AgentConfig::new(
+        Self::new(PrebuiltAgentConfig::new(
             "zero_shot_react",
             AgentType::ZeroShotReAct,
         ))
@@ -146,7 +146,7 @@ impl Agent for ZeroShotReActAgent {
         ))
     }
 
-    fn config(&self) -> &AgentConfig {
+    fn config(&self) -> &PrebuiltAgentConfig {
         &self.config
     }
 

@@ -32,7 +32,7 @@ mod prompts;
 pub mod supervisor;
 mod zero_shot_react;
 
-pub use builders::{AgentBuilder, AgentConfig};
+pub use builders::{AgentBuilder, GraphBasedAgent, PrebuiltAgentConfig};
 pub use conversational::ConversationalAgent;
 pub use few_shot_react::FewShotReActAgent;
 pub use graph_nodes::{reasoning_router, AgentReasoningNode, ConversationalNode, ToolExecutorNode};
@@ -86,7 +86,7 @@ pub trait Agent: Send + Sync {
     ) -> Result<String, FlowgentraError>;
 
     /// Get agent configuration
-    fn config(&self) -> &AgentConfig;
+    fn config(&self) -> &PrebuiltAgentConfig;
 
     /// Add tool to agent
     fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError>;

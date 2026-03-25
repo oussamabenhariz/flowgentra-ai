@@ -2,7 +2,7 @@
 ///
 /// Reasoning + action agent with example demonstrations.
 /// Provides better guidance through concrete examples of problem-solving.
-use super::{Agent, AgentConfig, AgentType, ToolSpec};
+use super::{Agent, PrebuiltAgentConfig, AgentType, ToolSpec};
 use crate::core::error::FlowgentraError;
 use std::collections::HashMap;
 
@@ -45,14 +45,14 @@ impl ExampleDemonstration {
 
 /// Few-shot ReAct agent with example demonstrations
 pub struct FewShotReActAgent {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
     tools: HashMap<String, ToolSpec>,
     examples: Vec<ExampleDemonstration>,
 }
 
 impl FewShotReActAgent {
     /// Create new few-shot ReAct agent
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
         let tools = config.tools.clone();
         Self {
             config,
@@ -166,7 +166,7 @@ Output: (your answer here)"#,
 
 impl Default for FewShotReActAgent {
     fn default() -> Self {
-        Self::new(AgentConfig::new("few_shot_react", AgentType::FewShotReAct))
+        Self::new(PrebuiltAgentConfig::new("few_shot_react", AgentType::FewShotReAct))
     }
 }
 
@@ -220,7 +220,7 @@ impl Agent for FewShotReActAgent {
         ))
     }
 
-    fn config(&self) -> &AgentConfig {
+    fn config(&self) -> &PrebuiltAgentConfig {
         &self.config
     }
 

@@ -45,7 +45,6 @@ pub mod reducer;
 // Core modules - organized by dependency layer
 pub mod agent;
 pub mod agents;
-pub mod builder;
 pub mod config;
 pub mod error;
 pub mod evaluation;

@@ -7,7 +7,7 @@
 //! - [`ConversationalNode`] — Simple LLM call for conversational agents
 //! - [`reasoning_router`] — Routes to tool executor or END based on LLM response
 
-use super::builders::AgentConfig;
+use super::builders::PrebuiltAgentConfig;
 use crate::core::error::FlowgentraError;
 use crate::core::llm::{LLMClient, LLMConfig, LLMProvider, Message};
 use crate::core::state::SharedState;
@@ -67,8 +67,8 @@ fn api_key_env_var(provider: &LLMProvider) -> &'static str {
     }
 }
 
-/// Create an LLM client from an AgentConfig.
-fn create_client_from_config(config: &AgentConfig) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
+/// Create an LLM client from an PrebuiltAgentConfig.
+fn create_client_from_config(config: &PrebuiltAgentConfig) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
     let provider = resolve_provider(&config.llm_model);
     let env_var = api_key_env_var(&provider);
     let api_key = std::env::var(env_var).unwrap_or_default();
@@ -156,7 +156,7 @@ pub fn parse_answer_tags(text: &str) -> Option<String> {
 // Format tools for the prompt
 // =============================================================================
 
-fn format_tools_for_prompt(config: &AgentConfig) -> String {
+fn format_tools_for_prompt(config: &PrebuiltAgentConfig) -> String {
     if config.tools.is_empty() {
         return "No tools available.".to_string();
     }
@@ -190,11 +190,11 @@ fn format_tools_for_prompt(config: &AgentConfig) -> String {
 /// - `pending_tool_name` — tool name (if action detected)
 /// - `pending_tool_args` — tool arguments (if action detected)
 pub struct AgentReasoningNode {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
 }
 
 impl AgentReasoningNode {
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
         Self { config }
     }
 
@@ -283,12 +283,12 @@ impl AgentReasoningNode {
 /// Reads `pending_tool_name` and `pending_tool_args` from state,
 /// calls the tool executor function, and stores the result in `tool_result`.
 pub struct ToolExecutorNode {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
     tool_executor: Option<ToolExecutorFn>,
 }
 
 impl ToolExecutorNode {
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
         Self {
             config,
             tool_executor: None,
@@ -349,11 +349,11 @@ impl ToolExecutorNode {
 
 /// Simple conversational node: system prompt + user input → LLM response.
 pub struct ConversationalNode {
-    config: AgentConfig,
+    config: PrebuiltAgentConfig,
 }
 
 impl ConversationalNode {
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
         Self { config }
     }
 

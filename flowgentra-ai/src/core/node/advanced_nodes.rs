@@ -242,6 +242,12 @@ pub enum JoinType {
     WaitTimeout,
 }
 
+impl Default for ParallelNodeConfig {
+    fn default() -> Self {
+        Self::new("_default")
+    }
+}
+
 impl ParallelNodeConfig {
     /// Create a new parallel node configuration
     pub fn new(name: impl Into<String>) -> Self {

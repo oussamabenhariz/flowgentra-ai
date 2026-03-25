@@ -56,7 +56,7 @@ pub use core::agent::{
 };
 pub use core::config::AgentConfig;
 pub use core::error::{FlowgentraError, Result};
-pub use core::graph::{Graph, GraphBuilder};
+pub use core::graph::Graph;
 pub use core::AgentRuntime;
 // These are re-exported via prelude; remove direct pub use to avoid unresolved import errors.
 pub use flowgentra_ai_macros::register_handler;
@@ -86,7 +86,7 @@ pub mod prelude {
         error::{FlowgentraError, Result},
         graph::{
             routing::{ComparisonOp, Condition, RoutingCondition},
-            Graph, GraphBuilder,
+            Graph,
         },
         llm::{
             CachedLLMClient, FallbackLLMClient, LLMConfig, LLMProvider, Message, MessageRole,
@@ -101,7 +101,10 @@ pub mod prelude {
         node::{Node, NodeFunction},
         runtime::{AgentRuntime, CloneStats, OptimizedState},
         state::{PlainState, SharedState, StateExt, TypedState},
-        state_graph::{create_tool_node, store_tool_calls, tools_condition, MessageGraphBuilder},
+        state_graph::{
+            create_tool_node, store_tool_calls, tools_condition, MessageGraphBuilder,
+            StateGraph, StateGraphBuilder,
+        },
         State,
     };
 
