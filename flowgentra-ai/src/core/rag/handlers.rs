@@ -47,7 +47,9 @@ impl RAGHandlers {
     pub fn index_handler(
         vector_store: Arc<VectorStore>,
         embeddings: Arc<Embeddings>,
-    ) -> impl Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
+    ) -> impl Fn(
+        DynState,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
            + Send
            + Sync
            + Clone
@@ -105,7 +107,9 @@ impl RAGHandlers {
         vector_store: Arc<VectorStore>,
         embeddings: Arc<Embeddings>,
         config: RAGNodeConfig,
-    ) -> impl Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
+    ) -> impl Fn(
+        DynState,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
            + Send
            + Sync
            + Clone
@@ -215,7 +219,9 @@ impl RAGHandlers {
         context_key: String,
         prompt_key: String,
         max_context_chars: Option<usize>,
-    ) -> impl Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
+    ) -> impl Fn(
+        DynState,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
            + Send
            + Sync
            + Clone

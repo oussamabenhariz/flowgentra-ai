@@ -242,7 +242,9 @@ impl DynState {
                 let k = key.into();
                 match guard.get_mut(&k) {
                     Some(c) => c.value = value,
-                    None => { guard.insert(k, Channel::last_value(value)); }
+                    None => {
+                        guard.insert(k, Channel::last_value(value));
+                    }
                 }
             }
             Err(poisoned) => {
@@ -251,7 +253,9 @@ impl DynState {
                 let mut g = poisoned.into_inner();
                 match g.get_mut(&k) {
                     Some(c) => c.value = value,
-                    None => { g.insert(k, Channel::last_value(value)); }
+                    None => {
+                        g.insert(k, Channel::last_value(value));
+                    }
                 }
             }
         }
@@ -262,9 +266,9 @@ impl DynState {
     /// If the field already has a value, it is preserved.
     pub fn register_channel(&self, schema: &FieldSchema) {
         if let Ok(mut guard) = self.inner.write() {
-            let entry = guard.entry(schema.name.clone()).or_insert_with(|| {
-                Channel::from_schema(schema)
-            });
+            let entry = guard
+                .entry(schema.name.clone())
+                .or_insert_with(|| Channel::from_schema(schema));
             // Update the reducer without disturbing the existing value.
             entry.channel_type = schema.channel_type.clone();
         }
@@ -284,9 +288,7 @@ impl DynState {
     /// Get a field and deserialize it to type `T`.
     pub fn get_typed<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<T> {
         self.get(key)
-            .ok_or_else(|| {
-                FlowgentraError::StateError(format!("Key '{}' not found in state", key))
-            })
+            .ok_or_else(|| FlowgentraError::StateError(format!("Key '{}' not found in state", key)))
             .and_then(|v| serde_json::from_value(v).map_err(FlowgentraError::from))
     }
 
@@ -359,7 +361,11 @@ impl DynState {
         self.inner
             .read()
             .ok()
-            .map(|g| g.iter().map(|(k, c)| (k.clone(), c.value.clone())).collect())
+            .map(|g| {
+                g.iter()
+                    .map(|(k, c)| (k.clone(), c.value.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -379,7 +385,11 @@ impl DynState {
         self.inner
             .read()
             .ok()
-            .map(|g| g.iter().map(|(k, c)| (k.clone(), c.value.clone())).collect())
+            .map(|g| {
+                g.iter()
+                    .map(|(k, c)| (k.clone(), c.value.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -408,11 +418,7 @@ impl DynState {
 impl DynState {
     /// Deep clone — new `Arc` wrapping an independent copy of all channels.
     pub fn deep_clone(&self) -> Self {
-        let cloned = self
-            .inner
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
+        let cloned = self.inner.read().unwrap_or_else(|p| p.into_inner()).clone();
         DynState {
             inner: Arc::new(RwLock::new(cloned)),
         }
@@ -435,7 +441,9 @@ impl DynState {
             for (k, v) in &snapshot.state {
                 match guard.get_mut(k) {
                     Some(c) => c.value = v.clone(),
-                    None => { guard.insert(k.clone(), Channel::last_value(v.clone())); }
+                    None => {
+                        guard.insert(k.clone(), Channel::last_value(v.clone()));
+                    }
                 }
             }
         }
@@ -450,18 +458,23 @@ impl DynState {
     where
         F: FnOnce(&mut HashMap<String, Value>),
     {
-        let mut guard = self.inner.write().map_err(|_| {
-            FlowgentraError::StateError("Failed to acquire write lock".to_string())
-        })?;
+        let mut guard = self
+            .inner
+            .write()
+            .map_err(|_| FlowgentraError::StateError("Failed to acquire write lock".to_string()))?;
         // Expose a temporary HashMap of only the values.
-        let mut value_map: HashMap<String, Value> =
-            guard.iter().map(|(k, c)| (k.clone(), c.value.clone())).collect();
+        let mut value_map: HashMap<String, Value> = guard
+            .iter()
+            .map(|(k, c)| (k.clone(), c.value.clone()))
+            .collect();
         f(&mut value_map);
         // Write back (preserving channel type for existing keys).
         for (k, v) in value_map {
             match guard.get_mut(&k) {
                 Some(c) => c.value = v,
-                None => { guard.insert(k, Channel::last_value(v)); }
+                None => {
+                    guard.insert(k, Channel::last_value(v));
+                }
             }
         }
         Ok(())
@@ -472,11 +485,14 @@ impl DynState {
     where
         F: FnOnce(&HashMap<String, Value>) -> R,
     {
-        let guard = self.inner.read().map_err(|_| {
-            FlowgentraError::StateError("Failed to acquire read lock".to_string())
-        })?;
-        let value_map: HashMap<String, Value> =
-            guard.iter().map(|(k, c)| (k.clone(), c.value.clone())).collect();
+        let guard = self
+            .inner
+            .read()
+            .map_err(|_| FlowgentraError::StateError("Failed to acquire read lock".to_string()))?;
+        let value_map: HashMap<String, Value> = guard
+            .iter()
+            .map(|(k, c)| (k.clone(), c.value.clone()))
+            .collect();
         Ok(f(&value_map))
     }
 }
@@ -493,9 +509,7 @@ impl DynState {
     }
 
     /// Get the configured LLM client stored in the `_llm_config` field.
-    pub fn get_llm_client(
-        &self,
-    ) -> Result<Arc<dyn crate::core::llm::LLMClient>> {
+    pub fn get_llm_client(&self) -> Result<Arc<dyn crate::core::llm::LLMClient>> {
         let config: crate::core::llm::LLMConfig = self.get_typed("_llm_config").map_err(|_| {
             FlowgentraError::ConfigError(
                 "LLM config not found in state. Make sure LLM is configured in config.yaml"
@@ -506,10 +520,7 @@ impl DynState {
     }
 
     /// Get an MCP client by name (config stored in `_mcp_configs`).
-    pub fn get_mcp_client(
-        &self,
-        name: &str,
-    ) -> Result<Arc<dyn crate::core::mcp::MCPClient>> {
+    pub fn get_mcp_client(&self, name: &str) -> Result<Arc<dyn crate::core::mcp::MCPClient>> {
         let configs: HashMap<String, crate::core::mcp::MCPConfig> =
             self.get_typed("_mcp_configs").map_err(|_| {
                 FlowgentraError::ConfigError("MCP configs not found in state".to_string())
@@ -528,9 +539,7 @@ impl DynState {
     }
 
     /// Get the first MCP client assigned to the current node.
-    pub fn get_node_mcp_client(
-        &self,
-    ) -> Result<Arc<dyn crate::core::mcp::MCPClient>> {
+    pub fn get_node_mcp_client(&self) -> Result<Arc<dyn crate::core::mcp::MCPClient>> {
         let name = self.get_node_mcps().into_iter().next().ok_or_else(|| {
             FlowgentraError::ConfigError("No MCPs assigned to this node".to_string())
         })?;
@@ -594,22 +603,17 @@ impl DynState {
         messages: Vec<crate::core::llm::Message>,
         max_iterations: usize,
     ) -> Result<crate::core::llm::Message> {
-        let name = self
-            .get_node_mcps()
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                FlowgentraError::ConfigError("No MCPs assigned to this node".to_string())
-            })?;
+        let name = self.get_node_mcps().into_iter().next().ok_or_else(|| {
+            FlowgentraError::ConfigError("No MCPs assigned to this node".to_string())
+        })?;
         self.chat_with_mcp_tools(&name, messages, max_iterations)
             .await
     }
 
     /// Get RAG config stored in `_rag_config`.
     pub fn get_rag_config(&self) -> Result<crate::core::config::RAGGraphConfig> {
-        self.get_typed("_rag_config").map_err(|_| {
-            FlowgentraError::ConfigError("RAG config not found in state".to_string())
-        })
+        self.get_typed("_rag_config")
+            .map_err(|_| FlowgentraError::ConfigError("RAG config not found in state".to_string()))
     }
 
     /// Get embeddings provider from RAG config.
@@ -672,9 +676,11 @@ impl DynState {
             index_name: config.vector_store.collection.clone(),
             embedding_dim: config.embedding_dimension(),
         };
-        crate::core::rag::ChromaStore::new(&rag_db_config).await.map_err(|e| {
-            FlowgentraError::ToolError(format!("Failed to connect to ChromaDB: {}", e))
-        })
+        crate::core::rag::ChromaStore::new(&rag_db_config)
+            .await
+            .map_err(|e| {
+                FlowgentraError::ToolError(format!("Failed to connect to ChromaDB: {}", e))
+            })
     }
 }
 

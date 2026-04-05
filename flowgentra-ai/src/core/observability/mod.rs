@@ -49,12 +49,12 @@ pub mod ui;
 pub mod visualization;
 
 pub use events::{EventBroadcaster, ExecutionEvent};
-pub use prometheus::{MetricsCollector, PrometheusExporter, record_llm_tokens};
 pub use graph_visualizer::{
     ExecutionStatistics, NodeExecutionStatus, NodeStatistics, NodeType, StateGraphEdge,
     StateGraphNode, StateGraphVisualization, StateGraphVisualizer,
 };
 pub use middleware::{ObservabilityMiddleware, TOKEN_USAGE_STATE_KEY};
+pub use prometheus::{record_llm_tokens, MetricsCollector, PrometheusExporter};
 pub use replay::ReplayMode;
 pub use trace::ExecutionTrace;
 pub use types::{FailureSnapshot, NodeTiming, PathSegment};

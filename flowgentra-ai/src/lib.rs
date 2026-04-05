@@ -70,8 +70,8 @@ pub use core::config::AgentConfig;
 pub use core::error::{FlowgentraError, Result};
 pub use core::graph::Graph;
 pub use core::AgentRuntime;
-pub use flowgentra_ai_macros::{register_handler, State};
 pub use flowgentra_ai_macros as macros;
+pub use flowgentra_ai_macros::{register_handler, State};
 
 /// Prelude module for commonly used types and macros.
 ///
@@ -107,24 +107,19 @@ pub mod prelude {
         node::{Node, NodeFunction},
         reducer::{Append, Max, MergeMap, Min, Overwrite, Reducer, Sum},
         runtime::{AgentRuntime, CloneStats, OptimizedState},
-        state::{
-            Context, State,
-        },
+        state::{Context, State},
         state_graph::{
-            create_tool_node, store_tool_calls, tools_condition, MessageGraphBuilder,
-            MessageState, MessageStateUpdate, StateGraph, StateGraphBuilder,
+            create_tool_node, node::FunctionNode, store_tool_calls, tools_condition,
+            MessageGraphBuilder, MessageState, MessageStateUpdate, StateGraph, StateGraphBuilder,
             ToolState, ToolStateUpdate,
-            node::FunctionNode,
         },
     };
 
     // Channel-based dynamic state
     pub use crate::core::state::{
-        DynState, DynStateUpdate,
-        Channel, ChannelType, FieldSchema, apply_channel_reducer,
-        StateSnapshot,
-        Checkpointer as StateCheckpointer, MemoryCheckpointer as StateMemoryCheckpointer,
-        FileCheckpointer as StateFileCheckpointer,
+        apply_channel_reducer, Channel, ChannelType, Checkpointer as StateCheckpointer, DynState,
+        DynStateUpdate, FieldSchema, FileCheckpointer as StateFileCheckpointer,
+        MemoryCheckpointer as StateMemoryCheckpointer, StateSnapshot,
     };
 
     pub use crate::core::rag::{
@@ -145,8 +140,8 @@ pub mod prelude {
 
     pub use crate::register_handler;
     // Macros for state definition and updates
-    pub use flowgentra_ai_macros::State;
     pub use crate::update;
+    pub use flowgentra_ai_macros::State;
 
     pub use crate::core::node::evaluation_node::evaluate_output_score;
 }

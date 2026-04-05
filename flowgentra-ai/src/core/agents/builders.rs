@@ -9,8 +9,8 @@ use super::{
 };
 use crate::core::error::FlowgentraError;
 use crate::core::mcp::MCPConfig;
-use crate::core::state::{DynState, DynStateUpdate};
 use crate::core::state::context::Context;
+use crate::core::state::{DynState, DynStateUpdate};
 use crate::core::state_graph::{FunctionNode, StateGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -137,20 +137,23 @@ impl GraphBasedAgent {
         }));
 
         // Create agent reasoning node (wraps the actual node logic)
-        let agent_node = Arc::new(FunctionNode::new("agent", move |state: &DynState, _ctx: &Context| {
-            let config = agent_config.clone();
-            let state = state.clone();
-            Box::pin(async move {
-                let reasoning_node = AgentReasoningNode::new(config);
-                reasoning_node.execute(&state).await.map_err(|e| {
-                    crate::core::state_graph::StateGraphError::ExecutionError {
-                        node: "agent".to_string(),
-                        reason: e.to_string(),
-                    }
-                })?;
-                Ok(DynStateUpdate::new())
-            })
-        }));
+        let agent_node = Arc::new(FunctionNode::new(
+            "agent",
+            move |state: &DynState, _ctx: &Context| {
+                let config = agent_config.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let reasoning_node = AgentReasoningNode::new(config);
+                    reasoning_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
 
         // Create tool executor node with the user-provided executor
         let tool_exec_fn = tool_executor.clone();
@@ -174,9 +177,10 @@ impl GraphBasedAgent {
         ));
 
         // Create end node (terminal node that just returns state)
-        let end_node = Arc::new(FunctionNode::new("END", |_state: &DynState, _ctx: &Context| {
-            Box::pin(async move { Ok(DynStateUpdate::new()) })
-        }));
+        let end_node = Arc::new(FunctionNode::new(
+            "END",
+            |_state: &DynState, _ctx: &Context| Box::pin(async move { Ok(DynStateUpdate::new()) }),
+        ));
 
         // Build the graph with routing
         let graph = StateGraph::<DynState>::builder()

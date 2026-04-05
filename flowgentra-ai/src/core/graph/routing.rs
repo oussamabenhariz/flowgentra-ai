@@ -359,13 +359,9 @@ impl Condition {
                 None => false,
             },
 
-            Condition::And(conditions) => {
-                conditions.iter().all(|c: &Condition| c.evaluate(state))
-            }
+            Condition::And(conditions) => conditions.iter().all(|c: &Condition| c.evaluate(state)),
 
-            Condition::Or(conditions) => {
-                conditions.iter().any(|c: &Condition| c.evaluate(state))
-            }
+            Condition::Or(conditions) => conditions.iter().any(|c: &Condition| c.evaluate(state)),
 
             Condition::Not(condition) => !condition.evaluate(state),
 

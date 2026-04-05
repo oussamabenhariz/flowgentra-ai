@@ -157,10 +157,7 @@ mod tests {
 
     #[test]
     fn test_last_message() {
-        let state = MessageState::new(vec![
-            Message::user("Hi"),
-            Message::assistant("Hello!"),
-        ]);
+        let state = MessageState::new(vec![Message::user("Hi"), Message::assistant("Hello!")]);
 
         let last = state.last_message().unwrap();
         assert!(last.is_assistant());
@@ -171,17 +168,23 @@ mod tests {
     async fn test_message_graph_compile() {
         use crate::core::state_graph::node::FunctionNode;
         let graph = MessageGraphBuilder::new()
-            .add_node("echo", Arc::new(FunctionNode::new("echo", |state: &MessageState, _ctx: &Context| {
-                let last = state
-                    .messages
-                    .last()
-                    .map(|m| m.content.clone())
-                    .unwrap_or_default();
-                Box::pin(async move {
-                    Ok(MessageStateUpdate::new()
-                        .messages(vec![Message::assistant(format!("Echo: {}", last))]))
-                })
-            })))
+            .add_node(
+                "echo",
+                Arc::new(FunctionNode::new(
+                    "echo",
+                    |state: &MessageState, _ctx: &Context| {
+                        let last = state
+                            .messages
+                            .last()
+                            .map(|m| m.content.clone())
+                            .unwrap_or_default();
+                        Box::pin(async move {
+                            Ok(MessageStateUpdate::new()
+                                .messages(vec![Message::assistant(format!("Echo: {}", last))]))
+                        })
+                    },
+                )),
+            )
             .set_entry_point("echo")
             .add_edge("echo", "__end__")
             .compile()

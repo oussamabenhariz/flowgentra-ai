@@ -65,8 +65,7 @@ pub use utils::tracing::{init_tracing, ExecutionEvent, ExecutionTrace as Tracing
 pub use validation::ValidationError;
 
 pub use advanced_nodes::{
-    JoinNodeConfig, JoinType, LoopNodeConfig, MergeStrategy, ParallelNodeConfig,
-    SubgraphNodeConfig,
+    JoinNodeConfig, JoinType, LoopNodeConfig, MergeStrategy, ParallelNodeConfig, SubgraphNodeConfig,
 };
 pub use context::ExecutionContext;
 pub use graph::Graph;

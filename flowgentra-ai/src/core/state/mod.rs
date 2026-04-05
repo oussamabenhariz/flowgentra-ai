@@ -48,7 +48,7 @@ pub use context::Context;
 
 // Channel primitives — ChannelType, FieldSchema, Channel, apply_channel_reducer
 pub mod channel;
-pub use channel::{Channel, ChannelType, FieldSchema, apply_channel_reducer};
+pub use channel::{apply_channel_reducer, Channel, ChannelType, FieldSchema};
 
 // StateSnapshot — immutable capture of state at a single step
 pub mod snapshot;
@@ -74,7 +74,7 @@ pub mod state_management;
 pub use state_management::{CompressionManager, CustomState, MessageHistory};
 
 // Removed modules (kept as empty files for compilation)
-pub mod shared;
-pub mod typed;
 pub mod scoped;
+pub mod shared;
 pub mod state_ext;
+pub mod typed;

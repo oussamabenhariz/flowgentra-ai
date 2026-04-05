@@ -120,11 +120,7 @@ impl MetricsCollector {
         }
     }
 
-    fn record_event(
-        &self,
-        event: &ExecutionEvent,
-        graph_start: &mut Option<std::time::Instant>,
-    ) {
+    fn record_event(&self, event: &ExecutionEvent, graph_start: &mut Option<std::time::Instant>) {
         match event {
             ExecutionEvent::GraphStarted { .. } => {
                 *graph_start = Some(std::time::Instant::now());
@@ -134,38 +130,40 @@ impl MetricsCollector {
                 duration_ms,
                 ..
             } => {
-                counter!(NODE_EXECUTIONS_TOTAL, "node" => node_name.clone(), "status" => "success").increment(1);
+                counter!(NODE_EXECUTIONS_TOTAL, "node" => node_name.clone(), "status" => "success")
+                    .increment(1);
                 histogram!(NODE_DURATION_SECONDS, "node" => node_name.clone())
                     .record(*duration_ms as f64 / 1_000.0);
             }
             ExecutionEvent::NodeFailed { node_name, .. } => {
-                counter!(NODE_EXECUTIONS_TOTAL, "node" => node_name.clone(), "status" => "failure").increment(1);
+                counter!(NODE_EXECUTIONS_TOTAL, "node" => node_name.clone(), "status" => "failure")
+                    .increment(1);
             }
             ExecutionEvent::GraphCompleted {
                 total_duration_ms, ..
             } => {
                 counter!(GRAPH_EXECUTIONS_TOTAL, "status" => "success").increment(1);
-                histogram!(GRAPH_DURATION_SECONDS)
-                    .record(*total_duration_ms as f64 / 1_000.0);
+                histogram!(GRAPH_DURATION_SECONDS).record(*total_duration_ms as f64 / 1_000.0);
             }
             ExecutionEvent::GraphFailed { .. } => {
                 counter!(GRAPH_EXECUTIONS_TOTAL, "status" => "failure").increment(1);
                 if let Some(start) = graph_start.take() {
-                    histogram!(GRAPH_DURATION_SECONDS)
-                        .record(start.elapsed().as_secs_f64());
+                    histogram!(GRAPH_DURATION_SECONDS).record(start.elapsed().as_secs_f64());
                 }
             }
             ExecutionEvent::LLMStreaming { node_name, .. } => {
                 counter!(LLM_STREAMING_CHUNKS_TOTAL, "node" => node_name.clone()).increment(1);
             }
             ExecutionEvent::ToolCalled { tool_name, .. } => {
-                counter!(TOOL_CALLS_TOTAL, "tool" => tool_name.clone(), "status" => "called").increment(1);
+                counter!(TOOL_CALLS_TOTAL, "tool" => tool_name.clone(), "status" => "called")
+                    .increment(1);
             }
             ExecutionEvent::ToolResult {
                 tool_name, success, ..
             } => {
                 let status = if *success { "success" } else { "failure" };
-                counter!(TOOL_CALLS_TOTAL, "tool" => tool_name.clone(), "status" => status).increment(1);
+                counter!(TOOL_CALLS_TOTAL, "tool" => tool_name.clone(), "status" => status)
+                    .increment(1);
             }
             _ => {}
         }

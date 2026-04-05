@@ -61,12 +61,7 @@ pub trait Checkpointer: Send + Sync {
 /// Trait for generic checkpoint saving.
 pub trait GenericCheckpointer: Send + Sync {
     /// Save state and metadata for the given thread.
-    fn save(
-        &self,
-        thread_id: &str,
-        state: &DynState,
-        metadata: &CheckpointMetadata,
-    ) -> Result<()>;
+    fn save(&self, thread_id: &str, state: &DynState, metadata: &CheckpointMetadata) -> Result<()>;
 }
 
 /// Combined trait for both loading and saving checkpoints (used for trait objects).
@@ -113,12 +108,7 @@ impl Checkpointer for MemoryCheckpointer {
 }
 
 impl GenericCheckpointer for MemoryCheckpointer {
-    fn save(
-        &self,
-        thread_id: &str,
-        state: &DynState,
-        metadata: &CheckpointMetadata,
-    ) -> Result<()> {
+    fn save(&self, thread_id: &str, state: &DynState, metadata: &CheckpointMetadata) -> Result<()> {
         let checkpoint = Checkpoint::new(state, metadata.clone())?;
         self.store
             .write()

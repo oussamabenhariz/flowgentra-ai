@@ -116,8 +116,11 @@ impl ParallelExecutor {
         branches: Vec<(
             String,
             Box<
-                dyn Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
-                    + Send
+                dyn Fn(
+                        DynState,
+                    ) -> std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Result<DynState>> + Send>,
+                    > + Send
                     + Sync,
             >,
         )>,

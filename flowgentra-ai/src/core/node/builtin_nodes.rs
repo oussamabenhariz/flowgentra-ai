@@ -370,7 +370,10 @@ impl TimeoutNode {
     }
 
     /// Set the inner node
-    pub fn with_inner_node(mut self, node: Box<dyn crate::core::node::PluggableNode<DynState>>) -> Self {
+    pub fn with_inner_node(
+        mut self,
+        node: Box<dyn crate::core::node::PluggableNode<DynState>>,
+    ) -> Self {
         self.inner_node = Some(node);
         self
     }

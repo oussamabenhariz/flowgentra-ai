@@ -359,14 +359,13 @@ impl Agent {
         >;
         for (condition_name, condition_fn) in conditions {
             let cond_name_clone = condition_name.clone();
-            let edge_condition: EdgeConditionFn =
-                std::sync::Arc::new(move |state: &DynState| {
-                    if condition_fn(state) {
-                        Ok(Some(cond_name_clone.clone()))
-                    } else {
-                        Ok(None)
-                    }
-                });
+            let edge_condition: EdgeConditionFn = std::sync::Arc::new(move |state: &DynState| {
+                if condition_fn(state) {
+                    Ok(Some(cond_name_clone.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
 
             let edges_to_register: Vec<String> = runtime
                 .graph()
@@ -857,8 +856,7 @@ fn from_config_path_impl(
             llm_client,
             prompt_template,
         ));
-        let arc_handler: ArcHandler<DynState> =
-            Arc::new(move |state| planner_fn.as_ref()(state));
+        let arc_handler: ArcHandler<DynState> = Arc::new(move |state| planner_fn.as_ref()(state));
         handlers_map.insert("__builtin_planner__".to_string(), arc_handler);
     }
 

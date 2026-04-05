@@ -404,7 +404,6 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     ) -> impl futures::Stream<Item = ExecutionEvent> + 'static {
         let _rx = self.broadcaster.subscribe();
 
-
         // Use a channel to bridge the broadcast receiver into a stream
         let (tx, rx_stream) = tokio::sync::mpsc::unbounded_channel::<ExecutionEvent>();
         let broadcaster = Arc::clone(&self.broadcaster);
@@ -453,8 +452,9 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// Execute the graph with a specific thread ID (for resuming from checkpoints)
     pub async fn invoke_with_id(&self, thread_id: String, initial_state: S) -> Result<S> {
         let graph_id = thread_id.clone();
-        self.broadcaster
-            .emit(ExecutionEvent::GraphStarted { graph_id: graph_id.clone() });
+        self.broadcaster.emit(ExecutionEvent::GraphStarted {
+            graph_id: graph_id.clone(),
+        });
 
         let graph_start = Instant::now();
 
@@ -568,11 +568,8 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                     let next_node = self.get_next_node(&current_node, &current_state).await?;
 
                     // Emit EdgeTraversed event
-                    self.broadcaster.edge_traversed(
-                        &current_node,
-                        &next_node,
-                        None,
-                    );
+                    self.broadcaster
+                        .edge_traversed(&current_node, &next_node, None);
 
                     if next_node == END {
                         self.middleware.execute_on_complete(&current_state).await;
@@ -644,11 +641,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     ///
     /// Human-in-the-loop: execution pauses at a breakpoint, the user modifies
     /// state via an update, and execution resumes.
-    pub async fn resume_with_update(
-        &self,
-        thread_id: &str,
-        state_update: S::Update,
-    ) -> Result<S> {
+    pub async fn resume_with_update(&self, thread_id: &str, state_update: S::Update) -> Result<S> {
         let checkpoint = self
             .checkpointer
             .load_latest(thread_id)
@@ -691,12 +684,20 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         for edge in &self.edges {
             match edge {
                 Edge::Fixed(fe) => {
-                    let from = if fe.from == START { "__start__" } else { &fe.from };
+                    let from = if fe.from == START {
+                        "__start__"
+                    } else {
+                        &fe.from
+                    };
                     let to = if fe.to == END { "__end__" } else { &fe.to };
                     dot.push_str(&format!("  \"{}\" -> \"{}\";\n", from, to));
                 }
                 Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
-                    let from_label = if from == START { "__start__" } else { from.as_str() };
+                    let from_label = if from == START {
+                        "__start__"
+                    } else {
+                        from.as_str()
+                    };
                     for target_name in self.nodes.keys() {
                         dot.push_str(&format!(
                             "  \"{}\" -> \"{}\" [style=dashed label=\"?\"];\n",
@@ -728,12 +729,20 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         for edge in &self.edges {
             match edge {
                 Edge::Fixed(fe) => {
-                    let from = if fe.from == START { "__start__" } else { &fe.from };
+                    let from = if fe.from == START {
+                        "__start__"
+                    } else {
+                        &fe.from
+                    };
                     let to = if fe.to == END { "__end__" } else { &fe.to };
                     out.push_str(&format!("  {} --> {}\n", from, to));
                 }
                 Edge::Conditional { from, .. } | Edge::AsyncConditional { from, .. } => {
-                    let from_label = if from == START { "__start__" } else { from.as_str() };
+                    let from_label = if from == START {
+                        "__start__"
+                    } else {
+                        from.as_str()
+                    };
                     for target_name in self.nodes.keys() {
                         out.push_str(&format!("  {} -.->|?| {}\n", from_label, target_name));
                     }

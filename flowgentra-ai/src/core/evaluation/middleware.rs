@@ -81,7 +81,10 @@ impl Default for AutoEvaluationMiddleware {
 #[async_trait::async_trait]
 impl Middleware<DynState> for AutoEvaluationMiddleware {
     /// Before node execution - prepare evaluation context
-    async fn before_node(&self, ctx: &mut MiddlewareContext<DynState>) -> MiddlewareResult<DynState> {
+    async fn before_node(
+        &self,
+        ctx: &mut MiddlewareContext<DynState>,
+    ) -> MiddlewareResult<DynState> {
         let node_name = &ctx.node_name;
 
         // Initialize evaluation history for this node if needed
@@ -95,7 +98,10 @@ impl Middleware<DynState> for AutoEvaluationMiddleware {
     }
 
     /// After node execution - evaluate and potentially retry
-    async fn after_node(&self, ctx: &mut MiddlewareContext<DynState>) -> MiddlewareResult<DynState> {
+    async fn after_node(
+        &self,
+        ctx: &mut MiddlewareContext<DynState>,
+    ) -> MiddlewareResult<DynState> {
         let node_name = &ctx.node_name;
 
         if !self.policy.enable_scoring

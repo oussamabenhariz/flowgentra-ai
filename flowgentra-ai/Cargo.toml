@@ -82,8 +82,6 @@ path = "src/lib.rs"
 name = "flowgentra-ai"
 path = "src/main.rs"
 
-[[bench]]
-name = "execution_benchmarks"
-harness = false
+
 
 

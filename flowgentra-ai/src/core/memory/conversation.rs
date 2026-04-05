@@ -94,7 +94,9 @@ impl InMemoryConversationMemory {
 
     /// Get system prompt as a message if configured.
     pub fn get_system_prompt(&self) -> Option<Message> {
-        self.system_prompt.as_ref().map(|prompt| Message::system(prompt.clone()))
+        self.system_prompt
+            .as_ref()
+            .map(|prompt| Message::system(prompt.clone()))
     }
 
     /// Get all initial messages.

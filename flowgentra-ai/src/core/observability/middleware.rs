@@ -86,7 +86,10 @@ impl Default for ObservabilityMiddleware {
 
 #[async_trait]
 impl Middleware<DynState> for ObservabilityMiddleware {
-    async fn before_node(&self, _ctx: &mut ExecutionContext<DynState>) -> MiddlewareResult<DynState> {
+    async fn before_node(
+        &self,
+        _ctx: &mut ExecutionContext<DynState>,
+    ) -> MiddlewareResult<DynState> {
         if let Some(ref name) = &self.agent_name {
             let mut trace = self.trace.write().await;
             if trace.agent_name.is_none() {

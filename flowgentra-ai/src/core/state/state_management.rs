@@ -29,8 +29,7 @@ impl MessageHistory {
     /// Load from a DynState field `messages`
     pub fn from_state(state: &DynState) -> Result<Self> {
         if let Some(messages_value) = state.get("messages") {
-            if let Ok(messages) =
-                serde_json::from_value::<Vec<MessageHistoryEntry>>(messages_value)
+            if let Ok(messages) = serde_json::from_value::<Vec<MessageHistoryEntry>>(messages_value)
             {
                 return Ok(MessageHistory { messages });
             }

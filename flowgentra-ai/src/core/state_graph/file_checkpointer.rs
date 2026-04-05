@@ -185,8 +185,8 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state_graph::message_graph::MessageState;
     use crate::core::llm::Message;
+    use crate::core::state_graph::message_graph::MessageState;
 
     #[tokio::test]
     async fn test_file_checkpointer_save_load() {

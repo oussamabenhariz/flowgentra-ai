@@ -46,10 +46,12 @@ pub type NodeFn<S> = Box<
     dyn Fn(
             &S,
             &crate::core::state::Context,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
-            <S as crate::core::state::State>::Update,
-        >> + Send>>
-        + Send
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<<S as crate::core::state::State>::Update>>
+                    + Send,
+            >,
+        > + Send
         + Sync,
 >;
 pub type RouterFn<S> = Box<dyn Fn(&S) -> Result<String> + Send + Sync>;

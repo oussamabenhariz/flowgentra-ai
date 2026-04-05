@@ -362,11 +362,19 @@ impl AgentRuntime {
 
     /// Execute with a thread id for checkpointing. When a checkpointer is set, state is
     /// loaded from the last checkpoint for this thread (if any) and saved after each node.
-    pub async fn execute_with_thread(&self, thread_id: &str, initial_state: DynState) -> Result<DynState> {
+    pub async fn execute_with_thread(
+        &self,
+        thread_id: &str,
+        initial_state: DynState,
+    ) -> Result<DynState> {
         self.execute_impl(initial_state, Some(thread_id)).await
     }
 
-    async fn execute_impl(&self, initial_state: DynState, thread_id: Option<&str>) -> Result<DynState> {
+    async fn execute_impl(
+        &self,
+        initial_state: DynState,
+        thread_id: Option<&str>,
+    ) -> Result<DynState> {
         // == STATE CLONING NOTES ==
         // This execution loop clones state at several points for correctness:
         // 1. Parallel frontier execution: Arc-wrapped single clone for shared access
@@ -485,7 +493,10 @@ impl AgentRuntime {
                             Ok::<_, FlowgentraError>((name, out))
                         })
                             as std::pin::Pin<
-                                Box<dyn std::future::Future<Output = Result<(String, DynState)>> + Send>,
+                                Box<
+                                    dyn std::future::Future<Output = Result<(String, DynState)>>
+                                        + Send,
+                                >,
                             >
                     })
                     .collect();

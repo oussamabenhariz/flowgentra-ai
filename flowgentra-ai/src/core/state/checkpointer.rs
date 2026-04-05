@@ -87,7 +87,10 @@ impl std::fmt::Debug for MemoryCheckpointer {
         let store = self.store.read().unwrap_or_else(|p| p.into_inner());
         let threads: usize = store.len();
         let total: usize = store.values().map(|v| v.len()).sum();
-        write!(f, "MemoryCheckpointer(threads={threads}, snapshots={total})")
+        write!(
+            f,
+            "MemoryCheckpointer(threads={threads}, snapshots={total})"
+        )
     }
 }
 
@@ -104,12 +107,7 @@ impl Checkpointer for MemoryCheckpointer {
     }
 
     fn load_latest(&self, thread_id: &str) -> Option<StateSnapshot> {
-        self.store
-            .read()
-            .ok()?
-            .get(thread_id)?
-            .last()
-            .cloned()
+        self.store.read().ok()?.get(thread_id)?.last().cloned()
     }
 
     fn load(&self, thread_id: &str, step_id: &str) -> Option<StateSnapshot> {
@@ -176,9 +174,16 @@ impl FileCheckpointer {
         // Replace path-unsafe characters in step_id with '_'
         let safe_step: String = step_id
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
-        self.thread_dir(thread_id).join(format!("{}.json", safe_step))
+        self.thread_dir(thread_id)
+            .join(format!("{}.json", safe_step))
     }
 }
 
@@ -332,8 +337,10 @@ mod tests {
     #[test]
     fn memory_thread_ids() {
         let cp = MemoryCheckpointer::new();
-        cp.save("thread-a", &make_snap("s1", "v", json!(1))).unwrap();
-        cp.save("thread-b", &make_snap("s1", "v", json!(2))).unwrap();
+        cp.save("thread-a", &make_snap("s1", "v", json!(1)))
+            .unwrap();
+        cp.save("thread-b", &make_snap("s1", "v", json!(2)))
+            .unwrap();
 
         let mut ids = cp.thread_ids();
         ids.sort();
@@ -347,8 +354,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let cp = FileCheckpointer::new(dir.path());
 
-        cp.save("t1", &make_snap("step-1", "val", json!("hello"))).unwrap();
-        cp.save("t1", &make_snap("step-2", "val", json!("world"))).unwrap();
+        cp.save("t1", &make_snap("step-1", "val", json!("hello")))
+            .unwrap();
+        cp.save("t1", &make_snap("step-2", "val", json!("world")))
+            .unwrap();
 
         let snap = cp.load_latest("t1").unwrap();
         assert_eq!(snap.get("val"), Some(&json!("world")));

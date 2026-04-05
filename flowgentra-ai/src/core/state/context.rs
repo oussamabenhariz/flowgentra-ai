@@ -113,10 +113,7 @@ impl Context {
     }
 
     /// Set arbitrary metadata.
-    pub fn with_metadata(
-        mut self,
-        metadata: HashMap<String, serde_json::Value>,
-    ) -> Self {
+    pub fn with_metadata(mut self, metadata: HashMap<String, serde_json::Value>) -> Self {
         self.metadata = metadata;
         self
     }
@@ -334,9 +331,7 @@ impl Context {
     }
 
     /// Get a ChromaDB vector store from the RAG config.
-    pub async fn get_rag_store(
-        &self,
-    ) -> crate::core::error::Result<crate::core::rag::ChromaStore> {
+    pub async fn get_rag_store(&self) -> crate::core::error::Result<crate::core::rag::ChromaStore> {
         let config = self.get_rag_config()?;
 
         let endpoint = config

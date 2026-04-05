@@ -43,7 +43,8 @@ where
     F: Fn(
             &S,
             &Context,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Update>> + Send>>
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Update>> + Send>>
         + Send
         + Sync,
 {
@@ -57,7 +58,8 @@ where
     F: Fn(
             &S,
             &Context,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Update>> + Send>>
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Update>> + Send>>
         + Send
         + Sync,
 {
@@ -76,7 +78,8 @@ where
     F: Fn(
             &S,
             &Context,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Update>> + Send>>
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<S::Update>> + Send>>
         + Send
         + Sync,
 {
