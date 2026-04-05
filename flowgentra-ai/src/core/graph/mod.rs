@@ -39,7 +39,7 @@
 
 use crate::core::error::Result;
 use crate::core::node::{Edge, Node};
-use crate::core::state::State;
+use crate::core::state::{DynState, State};
 use std::collections::{HashMap, VecDeque};
 
 /// Unique identifier for a node in the graph
@@ -680,7 +680,7 @@ impl<T: crate::core::state::State + Default> Default for Graph<T> {
 ///     .add_edge_with_condition("router", "high_confidence_path", condition)
 ///     .build();
 /// ```
-pub struct GraphBuilder<T: State> {
+pub struct GraphBuilder<T: State = DynState> {
     graph: Graph<T>,
 }
 
@@ -715,34 +715,8 @@ impl<T: State> GraphBuilder<T> {
 
     /// Add an edge between two nodes
     pub fn add_edge(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
-        let edge = crate::core::node::Edge::new(from, to, None);
+        let edge = Edge::<T>::new(from, to, None);
         self.graph.add_edge(edge);
-        self
-    }
-
-    /// Add an edge with a routing condition
-    pub fn add_edge_with_condition(
-        mut self,
-        from: impl Into<String>,
-        to: impl Into<String>,
-        condition: routing::RoutingCondition<T>,
-    ) -> Self {
-        let from_str = from.into();
-        let to_str = to.into();
-
-        // Convert RoutingCondition to EdgeCondition if using function-based
-        match condition {
-            routing::RoutingCondition::Function(f) => {
-                let edge = crate::core::node::Edge::<T>::new(from_str, to_str, Some(f));
-                self.graph.add_edge(edge);
-            }
-            routing::RoutingCondition::DSL(cond) => {
-                // For DSL-based conditions, create an edge and set the routing condition
-                let mut edge = crate::core::node::Edge::<T>::new(from_str, to_str, None);
-                edge.routing_condition = Some(cond);
-                self.graph.add_edge(edge);
-            }
-        }
         self
     }
 
@@ -755,7 +729,7 @@ impl<T: State> GraphBuilder<T> {
         let to_str = to_node.name.clone();
 
         self.graph.add_node(to_node);
-        let edge = crate::core::node::Edge::<T>::new(from_str, to_str, None);
+        let edge = Edge::<T>::new(from_str, to_str, None);
         self.graph.add_edge(edge);
         self
     }
@@ -787,6 +761,32 @@ impl<T: State> GraphBuilder<T> {
         let graph = self.graph;
         graph.validate()?;
         Ok(graph)
+    }
+}
+
+impl GraphBuilder<DynState> {
+    /// Add an edge with a routing condition (only available for DynState graphs)
+    pub fn add_edge_with_condition(
+        mut self,
+        from: impl Into<String>,
+        to: impl Into<String>,
+        condition: routing::RoutingCondition,
+    ) -> Self {
+        let from_str = from.into();
+        let to_str = to.into();
+
+        match condition {
+            routing::RoutingCondition::Function(f) => {
+                let edge = Edge::new(from_str, to_str, Some(f));
+                self.graph.add_edge(edge);
+            }
+            routing::RoutingCondition::DSL(cond) => {
+                let mut edge = Edge::new(from_str, to_str, None);
+                edge.routing_condition = Some(cond);
+                self.graph.add_edge(edge);
+            }
+        }
+        self
     }
 }
 

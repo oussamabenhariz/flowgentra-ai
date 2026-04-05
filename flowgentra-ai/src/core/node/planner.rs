@@ -18,7 +18,7 @@
 
 use crate::core::error::FlowgentraError;
 use crate::core::llm::{LLMClient, Message};
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -35,15 +35,15 @@ Rules:
 ///
 /// The planner expects `_current_node` and `_reachable_nodes` (JSON array of strings) in state.
 /// It sets `_next_node` with the chosen node name after calling the LLM.
-pub fn create_planner_handler<T: State>(
+pub fn create_planner_handler(
     llm_client: Arc<dyn LLMClient>,
     prompt_template: Option<String>,
-) -> super::NodeFunction<T> {
-    Box::new(move |state: T| {
+) -> super::NodeFunction<DynState> {
+    Box::new(move |state: DynState| {
         let client = Arc::clone(&llm_client);
         let template = prompt_template.clone();
         Box::pin(async move {
-            let _current = state.get_str("_current_node").unwrap_or("unknown");
+            let _current = state.get_str("_current_node").unwrap_or_else(|| "unknown".to_string());
             let reachable: Vec<String> = state
                 .get("_reachable_nodes")
                 .and_then(|v: serde_json::Value| serde_json::from_value(v.clone()).ok())

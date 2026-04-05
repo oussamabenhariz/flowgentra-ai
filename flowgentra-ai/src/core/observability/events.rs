@@ -45,6 +45,35 @@ pub enum ExecutionEvent {
         error: String,
         last_node: Option<String>,
     },
+    /// A streaming chunk from an LLM call inside a node.
+    ///
+    /// Emitted incrementally as the LLM produces tokens. Use
+    /// `EventBroadcaster::emit_llm_chunk()` from your handler.
+    LLMStreaming {
+        node_name: String,
+        /// The text chunk produced by the LLM (may be a single token or a few words).
+        chunk: String,
+        /// Running total of chunks emitted so far for this node.
+        chunk_index: usize,
+    },
+    /// An LLM streaming call finished for a node.
+    LLMStreamingCompleted {
+        node_name: String,
+        total_chunks: usize,
+    },
+    /// A tool was invoked by a node.
+    ToolCalled {
+        node_name: String,
+        tool_name: String,
+        args: Value,
+    },
+    /// A tool returned a result.
+    ToolResult {
+        node_name: String,
+        tool_name: String,
+        result: Value,
+        success: bool,
+    },
 }
 
 /// Event broadcaster for real-time execution monitoring.
@@ -72,6 +101,14 @@ pub struct EventBroadcaster {
     tx: broadcast::Sender<ExecutionEvent>,
 }
 
+impl std::fmt::Debug for EventBroadcaster {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventBroadcaster")
+            .field("subscribers", &self.tx.receiver_count())
+            .finish()
+    }
+}
+
 impl EventBroadcaster {
     /// Create a new broadcaster with the given channel capacity.
     pub fn new(capacity: usize) -> Self {
@@ -93,6 +130,105 @@ impl EventBroadcaster {
     /// Get the number of active subscribers.
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
+    }
+
+    /// Convenience: emit a `NodeStarted` event.
+    pub fn node_started(&self, node_name: impl Into<String>, step: usize) {
+        self.emit(ExecutionEvent::NodeStarted {
+            node_name: node_name.into(),
+            step,
+        });
+    }
+
+    /// Convenience: emit a `NodeCompleted` event.
+    pub fn node_completed(
+        &self,
+        node_name: impl Into<String>,
+        step: usize,
+        duration_ms: u64,
+        state_snapshot: Option<Value>,
+    ) {
+        self.emit(ExecutionEvent::NodeCompleted {
+            node_name: node_name.into(),
+            step,
+            duration_ms,
+            state_snapshot,
+        });
+    }
+
+    /// Convenience: emit a `NodeFailed` event.
+    pub fn node_failed(&self, node_name: impl Into<String>, step: usize, error: impl Into<String>) {
+        self.emit(ExecutionEvent::NodeFailed {
+            node_name: node_name.into(),
+            step,
+            error: error.into(),
+        });
+    }
+
+    /// Convenience: emit an `EdgeTraversed` event.
+    pub fn edge_traversed(
+        &self,
+        from: impl Into<String>,
+        to: impl Into<String>,
+        condition: Option<String>,
+    ) {
+        self.emit(ExecutionEvent::EdgeTraversed {
+            from: from.into(),
+            to: to.into(),
+            condition,
+        });
+    }
+
+    /// Emit an LLM token chunk for a node. Call this from inside handlers that
+    /// stream LLM output token-by-token.
+    ///
+    /// ```ignore
+    /// // Inside your handler:
+    /// if let Some(broadcaster) = ctx.event_broadcaster() {
+    ///     broadcaster.emit_llm_chunk("my_node", token, chunk_index);
+    /// }
+    /// ```
+    pub fn emit_llm_chunk(
+        &self,
+        node_name: impl Into<String>,
+        chunk: impl Into<String>,
+        chunk_index: usize,
+    ) {
+        self.emit(ExecutionEvent::LLMStreaming {
+            node_name: node_name.into(),
+            chunk: chunk.into(),
+            chunk_index,
+        });
+    }
+
+    /// Emit a `ToolCalled` event. Call this before invoking a tool in a handler.
+    pub fn tool_called(
+        &self,
+        node_name: impl Into<String>,
+        tool_name: impl Into<String>,
+        args: Value,
+    ) {
+        self.emit(ExecutionEvent::ToolCalled {
+            node_name: node_name.into(),
+            tool_name: tool_name.into(),
+            args,
+        });
+    }
+
+    /// Emit a `ToolResult` event. Call this after a tool returns in a handler.
+    pub fn tool_result(
+        &self,
+        node_name: impl Into<String>,
+        tool_name: impl Into<String>,
+        result: Value,
+        success: bool,
+    ) {
+        self.emit(ExecutionEvent::ToolResult {
+            node_name: node_name.into(),
+            tool_name: tool_name.into(),
+            result,
+            success,
+        });
     }
 }
 

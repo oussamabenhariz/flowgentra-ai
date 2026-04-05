@@ -1,7 +1,6 @@
 //! File-based checkpointer — persists state checkpoints as JSON files on disk.
 //!
 //! Each thread gets its own directory, and each checkpoint is a separate JSON file.
-//! This allows resuming graph execution across process restarts.
 //!
 //! # Directory layout
 //! ```text
@@ -26,7 +25,6 @@ pub struct FileCheckpointer {
 
 impl FileCheckpointer {
     /// Create a new file checkpointer rooted at the given directory.
-    /// Creates the directory if it doesn't exist.
     pub fn new(base_dir: impl AsRef<Path>) -> std::io::Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&base_dir)?;
@@ -42,7 +40,6 @@ impl FileCheckpointer {
             .join(format!("step_{:04}.json", step))
     }
 
-    /// Scan a thread directory for step numbers.
     async fn scan_steps(&self, thread_id: &str) -> Result<Vec<usize>> {
         let dir = self.thread_dir(thread_id);
         if !dir.exists() {
@@ -141,6 +138,7 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
             state,
             timestamp: file.timestamp,
             metadata: file.metadata,
+            schema_version: "1.0".to_string(),
         }))
     }
 
@@ -187,21 +185,22 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::PlainState;
+    use crate::core::state_graph::message_graph::MessageState;
+    use crate::core::llm::Message;
 
     #[tokio::test]
     async fn test_file_checkpointer_save_load() {
         let tmp = tempfile::tempdir().unwrap();
         let cp = FileCheckpointer::new(tmp.path()).unwrap();
 
-        let state = PlainState::from_json(serde_json::json!({"key": "value"})).unwrap();
+        let state = MessageState::new(vec![Message::user("hello")]);
 
         let checkpoint = Checkpoint::new("thread1".to_string(), 0, "node1".to_string(), state);
         cp.save(&checkpoint).await.unwrap();
 
-        let loaded: Checkpoint<PlainState> = cp.load("thread1", 0).await.unwrap().unwrap();
+        let loaded: Checkpoint<MessageState> = cp.load("thread1", 0).await.unwrap().unwrap();
         assert_eq!(loaded.node_name, "node1");
-        assert_eq!(loaded.state.get("key"), Some(&serde_json::json!("value")));
+        assert_eq!(loaded.state.messages.len(), 1);
     }
 
     #[tokio::test]
@@ -210,14 +209,13 @@ mod tests {
         let cp = FileCheckpointer::new(tmp.path()).unwrap();
 
         for step in 0..3 {
-            let mut state = PlainState::new();
-            state.set("step", serde_json::json!(step));
+            let state = MessageState::new(vec![Message::user(format!("step {}", step))]);
             let checkpoint =
                 Checkpoint::new("thread1".to_string(), step, format!("node_{}", step), state);
             cp.save(&checkpoint).await.unwrap();
         }
 
-        let latest: Checkpoint<PlainState> = cp.load_latest("thread1").await.unwrap().unwrap();
+        let latest: Checkpoint<MessageState> = cp.load_latest("thread1").await.unwrap().unwrap();
         assert_eq!(latest.step, 2);
     }
 
@@ -226,14 +224,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cp = FileCheckpointer::new(tmp.path()).unwrap();
 
-        let state = PlainState::new();
+        let state = MessageState::empty();
         let checkpoint = Checkpoint::new("t1".to_string(), 0, "n1".to_string(), state);
         cp.save(&checkpoint).await.unwrap();
 
-        <FileCheckpointer as Checkpointer<PlainState>>::delete(&cp, "t1", 0)
+        <FileCheckpointer as Checkpointer<MessageState>>::delete(&cp, "t1", 0)
             .await
             .unwrap();
-        let deleted: Option<Checkpoint<PlainState>> = cp.load("t1", 0).await.unwrap();
+        let deleted: Option<Checkpoint<MessageState>> = cp.load("t1", 0).await.unwrap();
         assert!(deleted.is_none());
     }
 }

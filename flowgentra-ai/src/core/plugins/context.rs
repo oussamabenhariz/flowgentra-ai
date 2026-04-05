@@ -1,4 +1,5 @@
 /// Plugin context providing access to runtime state and utilities
+use crate::core::state::DynState;
 use crate::prelude::*;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -9,8 +10,8 @@ use std::sync::Arc;
 /// and registration utilities.
 #[derive(Clone)]
 pub struct PluginContext {
-    /// Current execution state (use SharedState or PlainState wrapper)
-    pub state: Arc<crate::core::state::SharedState>,
+    /// Current execution state
+    pub state: Arc<DynState>,
     /// Graph being executed
     pub graph_info: Arc<GraphInfo>,
     /// Custom plugin data storage
@@ -28,9 +29,8 @@ pub struct GraphInfo {
 impl PluginContext {
     /// Create a new plugin context
     pub fn new() -> Self {
-        let plain_state = crate::core::state::PlainState::new();
         Self {
-            state: Arc::new(crate::core::state::SharedState::new(plain_state)),
+            state: Arc::new(DynState::new()),
             graph_info: Arc::new(GraphInfo {
                 node_count: 0,
                 edge_count: 0,
@@ -55,7 +55,7 @@ impl PluginContext {
     }
 
     /// Get current state
-    pub fn get_state(&self) -> Arc<crate::core::state::SharedState> {
+    pub fn get_state(&self) -> Arc<DynState> {
         Arc::clone(&self.state)
     }
 

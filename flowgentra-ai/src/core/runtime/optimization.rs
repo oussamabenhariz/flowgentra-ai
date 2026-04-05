@@ -109,12 +109,12 @@ pub mod strategies {
     /// - Default behavior, always safe
     pub struct StandardStateStrategy;
 
-    /// Use SharedState when:
+    /// Use DynState when:
     /// - State is very large (multiple MB of JSON)
     /// - Many nodes read without modifying
     /// - Checkpointing/resumability is critical
     /// - You accept slight overhead from mutex locks
-    pub struct SharedStateStrategy;
+    pub struct DynStateStrategy;
 
     /// Use OptimizedState when:
     /// - Mixed read/write patterns
@@ -126,11 +126,11 @@ pub mod strategies {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
+    use crate::core::state::DynState;
 
     #[test]
     fn test_optimized_state_no_clone_on_read() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let opt = OptimizedState::new(state);
 
         // Reading doesn't require ownership

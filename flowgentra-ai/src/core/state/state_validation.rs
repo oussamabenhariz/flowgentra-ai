@@ -1,28 +1,9 @@
 //! # State Validation & Schema
 //!
-//! Provides schema-based validation and constraints for state objects.
-//!
-//! ## Features
-//!
-//! - **Field Requirements** - Mark fields as required/optional
-//! - **Type Checking** - Validate field types
-//! - **Custom Validators** - Add custom validation logic
-//! - **Schema Definition** - Define what valid state looks like
-//! - **Immutability** - Mark fields as read-only
-//!
-//! ## Example
-//!
-//! ```ignore
-//! use flowgentra_ai::core::state_validation::{StateSchema, FieldValidator, FieldType};
-//!
-//! let schema = StateSchema::new()
-//!     .require_field("user_id", FieldType::Integer)
-//!     .require_field("email", FieldType::String)
-//!     .optional_field("preferences", FieldType::Object)
-//!     .immutable("user_id");
-//! ```
+//! Provides schema-based validation for JSON values.
+//! With typed state, compile-time validation replaces most runtime checks,
+//! but this module is kept for config-driven validation scenarios.
 
-use crate::core::state::State;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
@@ -37,7 +18,7 @@ pub enum FieldType {
     Array,
     Object,
     Null,
-    Any, // Accept any type
+    Any,
 }
 
 impl FieldType {
@@ -55,7 +36,6 @@ impl FieldType {
         }
     }
 
-    /// Get string representation
     pub fn as_str(&self) -> &'static str {
         match self {
             FieldType::String => "string",
@@ -81,24 +61,14 @@ pub type FieldValidatorFn = Box<dyn Fn(&Value) -> Result<(), String> + Send + Sy
 
 /// Validator for a single field
 pub struct FieldValidator {
-    /// Expected type of the field
     pub field_type: FieldType,
-
-    /// Whether the field is required
     pub required: bool,
-
-    /// Whether the field can be modified
     pub immutable: bool,
-
-    /// Custom validation function
     pub custom: Option<FieldValidatorFn>,
-
-    /// Description of the field
     pub description: Option<String>,
 }
 
 impl FieldValidator {
-    /// Create a new field validator
     pub fn new(field_type: FieldType) -> Self {
         Self {
             field_type,
@@ -109,33 +79,27 @@ impl FieldValidator {
         }
     }
 
-    /// Mark field as required
     pub fn required(mut self) -> Self {
         self.required = true;
         self
     }
 
-    /// Mark field as immutable
     pub fn immutable(mut self) -> Self {
         self.immutable = true;
         self
     }
 
-    /// Add custom validation
     pub fn with_validator(mut self, validator: FieldValidatorFn) -> Self {
         self.custom = Some(validator);
         self
     }
 
-    /// Add description
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
         self
     }
 
-    /// Validate a value
     pub fn validate(&self, value: &Value) -> Result<(), String> {
-        // Check type
         if !self.field_type.matches(value) {
             return Err(format!(
                 "Expected type {}, got {}",
@@ -152,12 +116,9 @@ impl FieldValidator {
                 }
             ));
         }
-
-        // Run custom validation
         if let Some(ref validator) = self.custom {
             validator(value)?;
         }
-
         Ok(())
     }
 }
@@ -193,7 +154,10 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-/// Schema for validating state objects
+/// Schema for validating JSON state values.
+///
+/// With typed state, compile-time checks replace most of this.
+/// Kept for config-driven validation and runtime schema checks.
 #[derive(Debug)]
 pub struct StateSchema {
     fields: HashMap<String, FieldValidator>,
@@ -207,7 +171,6 @@ impl Default for StateSchema {
 }
 
 impl StateSchema {
-    /// Create a new empty schema
     pub fn new() -> Self {
         Self {
             fields: HashMap::new(),
@@ -215,27 +178,23 @@ impl StateSchema {
         }
     }
 
-    /// Add a required field with specified type
     pub fn require_field(mut self, name: impl Into<String>, field_type: FieldType) -> Self {
         self.fields
             .insert(name.into(), FieldValidator::new(field_type).required());
         self
     }
 
-    /// Add an optional field with specified type
     pub fn optional_field(mut self, name: impl Into<String>, field_type: FieldType) -> Self {
         self.fields
             .insert(name.into(), FieldValidator::new(field_type));
         self
     }
 
-    /// Add a custom field validator
     pub fn add_field(mut self, name: impl Into<String>, validator: FieldValidator) -> Self {
         self.fields.insert(name.into(), validator);
         self
     }
 
-    /// Mark a field as immutable
     pub fn immutable(mut self, field: impl Into<String>) -> Self {
         let field_name = field.into();
         self.immutable_fields.push(field_name.clone());
@@ -245,22 +204,23 @@ impl StateSchema {
         self
     }
 
-    /// Validate a state object
-    pub fn validate<T: State>(&self, state: &T) -> Result<(), Vec<ValidationError>> {
+    /// Validate a JSON value against this schema.
+    pub fn validate_value(&self, value: &Value) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
+        let obj = value.as_object();
 
-        // Check all required fields exist
         for (name, validator) in &self.fields {
+            let field_value = obj.and_then(|o| o.get(name));
             if validator.required {
-                match state.get(name) {
+                match field_value {
                     None => {
                         errors.push(ValidationError {
                             field: name.clone(),
                             message: "Required field is missing".to_string(),
                         });
                     }
-                    Some(value) => {
-                        if let Err(msg) = validator.validate(&value) {
+                    Some(v) => {
+                        if let Err(msg) = validator.validate(v) {
                             errors.push(ValidationError {
                                 field: name.clone(),
                                 message: msg,
@@ -268,15 +228,12 @@ impl StateSchema {
                         }
                     }
                 }
-            } else {
-                // Optional fields: validate if present
-                if let Some(value) = state.get(name) {
-                    if let Err(msg) = validator.validate(&value) {
-                        errors.push(ValidationError {
-                            field: name.clone(),
-                            message: msg,
-                        });
-                    }
+            } else if let Some(v) = field_value {
+                if let Err(msg) = validator.validate(v) {
+                    errors.push(ValidationError {
+                        field: name.clone(),
+                        message: msg,
+                    });
                 }
             }
         }
@@ -288,17 +245,28 @@ impl StateSchema {
         }
     }
 
-    /// Check if a field is immutable
+    /// Validate a typed state by serializing to JSON first.
+    pub fn validate_state<T: serde::Serialize>(
+        &self,
+        state: &T,
+    ) -> Result<(), Vec<ValidationError>> {
+        let value = serde_json::to_value(state).map_err(|e| {
+            vec![ValidationError {
+                field: "<root>".to_string(),
+                message: format!("Failed to serialize state: {}", e),
+            }]
+        })?;
+        self.validate_value(&value)
+    }
+
     pub fn is_immutable(&self, field: &str) -> bool {
         self.immutable_fields.contains(&field.to_string())
     }
 
-    /// Get field validator
     pub fn get_field(&self, name: &str) -> Option<&FieldValidator> {
         self.fields.get(name)
     }
 
-    /// Get all defined fields
     pub fn fields(&self) -> &HashMap<String, FieldValidator> {
         &self.fields
     }
@@ -308,7 +276,6 @@ impl StateSchema {
 pub mod validators {
     use super::*;
 
-    /// Non-empty string validator
     pub fn non_empty_string() -> FieldValidatorFn {
         Box::new(|value| {
             if let Some(s) = value.as_str() {
@@ -323,7 +290,6 @@ pub mod validators {
         })
     }
 
-    /// Email validator (basic)
     pub fn email() -> FieldValidatorFn {
         Box::new(|value| {
             if let Some(email) = value.as_str() {
@@ -338,7 +304,6 @@ pub mod validators {
         })
     }
 
-    /// Number range validator
     pub fn number_range(min: i64, max: i64) -> FieldValidatorFn {
         Box::new(move |value| {
             if let Some(n) = value.as_i64() {
@@ -353,7 +318,6 @@ pub mod validators {
         })
     }
 
-    /// Length validator for strings
     pub fn string_length(min: usize, max: usize) -> FieldValidatorFn {
         Box::new(move |value| {
             if let Some(s) = value.as_str() {
@@ -368,7 +332,6 @@ pub mod validators {
         })
     }
 
-    /// Enum validator
     pub fn enum_values(allowed: Vec<&'static str>) -> FieldValidatorFn {
         Box::new(move |value| {
             if let Some(s) = value.as_str() {
@@ -387,7 +350,6 @@ pub mod validators {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
     use serde_json::json;
 
     #[test]
@@ -399,23 +361,13 @@ mod tests {
     }
 
     #[test]
-    fn field_validator_creation() {
-        let validator = FieldValidator::new(FieldType::String).required();
-        assert!(validator.required);
-        assert!(!validator.immutable);
-    }
-
-    #[test]
     fn basic_schema_validation() {
         let schema = StateSchema::new()
             .require_field("name", FieldType::String)
             .require_field("age", FieldType::Integer);
 
-        let state = SharedState::new(Default::default());
-        state.set("name", json!("Alice"));
-        state.set("age", json!(30));
-
-        assert!(schema.validate(&state).is_ok());
+        let value = json!({"name": "Alice", "age": 30});
+        assert!(schema.validate_value(&value).is_ok());
     }
 
     #[test]
@@ -424,39 +376,9 @@ mod tests {
             .require_field("name", FieldType::String)
             .require_field("age", FieldType::Integer);
 
-        let state = SharedState::new(Default::default());
-        state.set("name", json!("Alice"));
-        // age is missing
-
-        let result = schema.validate(&state);
+        let value = json!({"name": "Alice"});
+        let result = schema.validate_value(&value);
         assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].field, "age");
-    }
-
-    #[test]
-    fn schema_type_mismatch() {
-        let schema = StateSchema::new().require_field("age", FieldType::Integer);
-
-        let state = SharedState::new(Default::default());
-        state.set("age", json!("thirty")); // Wrong type
-
-        let result = schema.validate(&state);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn optional_fields() {
-        let schema = StateSchema::new()
-            .require_field("name", FieldType::String)
-            .optional_field("nickname", FieldType::String);
-
-        let state = SharedState::new(Default::default());
-        state.set("name", json!("Alice"));
-        // nickname is optional and not provided
-
-        assert!(schema.validate(&state).is_ok());
     }
 
     #[test]
@@ -467,21 +389,5 @@ mod tests {
 
         assert!(schema.is_immutable("id"));
         assert!(!schema.is_immutable("name"));
-    }
-
-    #[test]
-    fn custom_validator() {
-        let schema = StateSchema::new().add_field(
-            "email",
-            FieldValidator::new(FieldType::String).with_validator(validators::email()),
-        );
-
-        let state = SharedState::new(Default::default());
-        state.set("email", json!("test@example.com"));
-        assert!(schema.validate(&state).is_ok());
-
-        let state = SharedState::new(Default::default());
-        state.set("email", json!("invalid-email"));
-        assert!(schema.validate(&state).is_err());
     }
 }

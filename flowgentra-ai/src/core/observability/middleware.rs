@@ -4,7 +4,7 @@
 
 use crate::core::error::FlowgentraError;
 use crate::core::middleware::{ExecutionContext, Middleware, MiddlewareResult};
-use crate::core::state::State;
+use crate::core::state::DynState;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -54,7 +54,7 @@ impl ObservabilityMiddleware {
         self.trace.read().await.clone()
     }
 
-    fn extract_token_usage<T: State>(state: &T) -> Option<TokenUsage> {
+    fn extract_token_usage(state: &DynState) -> Option<TokenUsage> {
         state
             .get(TOKEN_USAGE_STATE_KEY)
             .and_then(|v: serde_json::Value| {
@@ -64,7 +64,7 @@ impl ObservabilityMiddleware {
             })
     }
 
-    fn state_to_snapshot<T: State>(state: &T, max_size: usize) -> Option<String> {
+    fn state_to_snapshot(state: &DynState, max_size: usize) -> Option<String> {
         let json = state.to_json_string().ok()?;
         if json.len() <= max_size {
             Some(json)
@@ -85,8 +85,8 @@ impl Default for ObservabilityMiddleware {
 }
 
 #[async_trait]
-impl<T: crate::core::state::State> Middleware<T> for ObservabilityMiddleware {
-    async fn before_node(&self, _ctx: &mut ExecutionContext<T>) -> MiddlewareResult<T> {
+impl Middleware<DynState> for ObservabilityMiddleware {
+    async fn before_node(&self, _ctx: &mut ExecutionContext<DynState>) -> MiddlewareResult<DynState> {
         if let Some(ref name) = &self.agent_name {
             let mut trace = self.trace.write().await;
             if trace.agent_name.is_none() {
@@ -96,7 +96,7 @@ impl<T: crate::core::state::State> Middleware<T> for ObservabilityMiddleware {
         MiddlewareResult::Continue
     }
 
-    async fn after_node(&self, ctx: &mut ExecutionContext<T>) -> MiddlewareResult<T> {
+    async fn after_node(&self, ctx: &mut ExecutionContext<DynState>) -> MiddlewareResult<DynState> {
         let elapsed = ctx.elapsed_ms();
         let start_time = chrono::Utc::now() - chrono::Duration::milliseconds(elapsed as i64);
 
@@ -115,8 +115,8 @@ impl<T: crate::core::state::State> Middleware<T> for ObservabilityMiddleware {
         &self,
         node_name: &str,
         error: &FlowgentraError,
-        ctx: &ExecutionContext<T>,
-    ) -> MiddlewareResult<T> {
+        ctx: &ExecutionContext<DynState>,
+    ) -> MiddlewareResult<DynState> {
         let mut trace = self.trace.write().await;
         trace.mark_failed(node_name, error.to_string());
         trace.complete();
@@ -145,7 +145,7 @@ impl<T: crate::core::state::State> Middleware<T> for ObservabilityMiddleware {
         MiddlewareResult::Continue
     }
 
-    async fn on_complete(&self, final_state: &T) {
+    async fn on_complete(&self, final_state: &DynState) {
         let mut trace = self.trace.write().await;
         if matches!(trace.status, TraceStatus::Completed) {
             trace.complete();

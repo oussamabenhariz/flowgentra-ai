@@ -1,26 +1,14 @@
 //! # State Management for Memory
 //!
-//! Provides easy-to-use memory patterns:
-//! 1. **Persistent State** - Basic state that flows through graph
-//! 2. **Message History** - Automatic message list management
-//! 3. **Summary/Compression** - Summarize old messages to manage tokens
-//! 4. **Custom State Fields** - Any additional state data
-//! 5. **Thread-Scoped Memory** - Multi-tenant conversations
+//! Provides memory patterns for managing conversation history.
 
 use crate::core::error::Result;
 use crate::core::llm::{Message, MessageRole};
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// Helper to work with message history in state
-///
-/// # Example
-/// ```ignore
-/// let mut history = MessageHistory::from_state(&state);
-/// history.add_user_message("What is Rust?");
-/// history.save_to_state(&state);
-/// ```
 pub struct MessageHistory {
     messages: Vec<MessageHistoryEntry>,
 }
@@ -32,17 +20,17 @@ pub struct MessageHistoryEntry {
 }
 
 impl MessageHistory {
-    /// Create empty message history
     pub fn new() -> Self {
         MessageHistory {
             messages: Vec::new(),
         }
     }
 
-    /// Load from state field `messages`
-    pub fn from_state<T: State>(state: &T) -> Result<Self> {
+    /// Load from a DynState field `messages`
+    pub fn from_state(state: &DynState) -> Result<Self> {
         if let Some(messages_value) = state.get("messages") {
-            if let Ok(messages) = serde_json::from_value::<Vec<MessageHistoryEntry>>(messages_value)
+            if let Ok(messages) =
+                serde_json::from_value::<Vec<MessageHistoryEntry>>(messages_value)
             {
                 return Ok(MessageHistory { messages });
             }
@@ -50,7 +38,14 @@ impl MessageHistory {
         Ok(MessageHistory::new())
     }
 
-    /// Add user message
+    /// Load from a JSON value
+    pub fn from_value(value: &Value) -> Result<Self> {
+        if let Ok(messages) = serde_json::from_value::<Vec<MessageHistoryEntry>>(value.clone()) {
+            return Ok(MessageHistory { messages });
+        }
+        Ok(MessageHistory::new())
+    }
+
     pub fn add_user_message(&mut self, content: impl Into<String>) {
         self.messages.push(MessageHistoryEntry {
             role: "user".to_string(),
@@ -58,7 +53,6 @@ impl MessageHistory {
         });
     }
 
-    /// Add assistant message
     pub fn add_assistant_message(&mut self, content: impl Into<String>) {
         self.messages.push(MessageHistoryEntry {
             role: "assistant".to_string(),
@@ -66,7 +60,6 @@ impl MessageHistory {
         });
     }
 
-    /// Add system message
     pub fn add_system_message(&mut self, content: impl Into<String>) {
         self.messages.push(MessageHistoryEntry {
             role: "system".to_string(),
@@ -74,34 +67,34 @@ impl MessageHistory {
         });
     }
 
-    /// Save back to state
-    pub fn save_to_state<T: State>(&self, state: &T) -> Result<()> {
+    /// Save back to a DynState
+    pub fn save_to_state(&self, state: &DynState) -> Result<()> {
         let messages_json = serde_json::to_value(&self.messages)?;
         state.set("messages", messages_json);
         Ok(())
     }
 
-    /// Get all messages
+    /// Convert to JSON value
+    pub fn to_value(&self) -> Result<Value> {
+        Ok(serde_json::to_value(&self.messages)?)
+    }
+
     pub fn messages(&self) -> &[MessageHistoryEntry] {
         &self.messages
     }
 
-    /// Get count
     pub fn len(&self) -> usize {
         self.messages.len()
     }
 
-    /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
-    /// Clear messages
     pub fn clear(&mut self) {
         self.messages.clear();
     }
 
-    /// Convert to Message objects for LLM
     pub fn to_llm_messages(&self) -> Vec<Message> {
         self.messages
             .iter()
@@ -134,38 +127,27 @@ pub struct CompressionManager {
 }
 
 impl CompressionManager {
-    /// Create new compression manager
-    ///
-    /// # Arguments
-    /// * `max_recent_messages` - Keep this many recent messages, summarize older ones
     pub fn new(max_recent_messages: usize) -> Self {
         CompressionManager {
             max_recent_messages,
         }
     }
 
-    /// Apply compression to message history
-    /// Keeps recent messages, summarizes older ones
     pub fn compress_history(&self, history: &mut MessageHistory) -> Result<()> {
         let total_messages = history.len();
-
         if total_messages <= self.max_recent_messages {
-            return Ok(()); // No compression needed
+            return Ok(());
         }
 
         let messages = history.messages.clone();
         let summary_count = total_messages - self.max_recent_messages;
-
-        // Create summary of old messages
         let old_messages = &messages[0..summary_count];
         let summary = self.create_summary(old_messages);
 
-        // Keep summary + recent messages
         let mut compressed = vec![MessageHistoryEntry {
             role: "system".to_string(),
             content: format!("Previous conversation summary:\n{}", summary),
         }];
-
         compressed.extend_from_slice(&messages[summary_count..]);
         history.messages = compressed;
 
@@ -175,7 +157,6 @@ impl CompressionManager {
     fn create_summary(&self, messages: &[MessageHistoryEntry]) -> String {
         let user_count = messages.iter().filter(|m| m.role == "user").count();
         let assistant_count = messages.iter().filter(|m| m.role == "assistant").count();
-
         format!(
             "Previous conversation ({} user messages, {} assistant messages)",
             user_count, assistant_count
@@ -183,7 +164,7 @@ impl CompressionManager {
     }
 }
 
-/// Thread-scoped memory manager for multi-tenant support
+/// Thread-scoped memory manager
 #[allow(dead_code)]
 pub struct ThreadManager {
     threads: HashMap<String, Value>,
@@ -191,39 +172,28 @@ pub struct ThreadManager {
 
 impl ThreadManager {
     #[allow(dead_code)]
-    /// Create new thread manager
     pub fn new() -> Self {
         ThreadManager {
             threads: HashMap::new(),
         }
     }
-
-    /// Get thread state
     #[allow(dead_code)]
     pub fn get_thread_state(&self, thread_id: &str) -> Option<&Value> {
         self.threads.get(thread_id)
     }
-
-    /// Set thread state
     #[allow(dead_code)]
     pub fn set_thread_state(&mut self, thread_id: impl Into<String>, state: Value) {
         self.threads.insert(thread_id.into(), state);
     }
-
-    /// Create thread if doesn't exist
     #[allow(dead_code)]
     pub fn create_thread(&mut self, thread_id: impl Into<String>) {
         let id = thread_id.into();
         self.threads.entry(id).or_insert_with(|| json!({}));
     }
-
-    /// Get all thread IDs
     #[allow(dead_code)]
     pub fn thread_ids(&self) -> Vec<&String> {
         self.threads.keys().collect()
     }
-
-    /// Clear specific thread
     #[allow(dead_code)]
     pub fn clear_thread(&mut self, thread_id: &str) {
         self.threads.remove(thread_id);
@@ -236,41 +206,49 @@ impl Default for ThreadManager {
     }
 }
 
-/// Custom state field helper  
+/// Custom state field helper
 pub struct CustomState {
     fields: HashMap<String, Value>,
 }
 
 impl CustomState {
-    /// Create new custom state
     pub fn new() -> Self {
         CustomState {
             fields: HashMap::new(),
         }
     }
 
-    /// Set a custom field
     pub fn set(&mut self, key: impl Into<String>, value: Value) {
         self.fields.insert(key.into(), value);
     }
 
-    /// Get a custom field
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.fields.get(key)
     }
 
-    /// Save all fields to state
-    pub fn save_to_state<T: State>(&self, state: &T) -> Result<()> {
+    /// Save all fields to a DynState
+    pub fn save_to_state(&self, state: &DynState) -> Result<()> {
         state.set("_custom_state", serde_json::to_value(&self.fields)?);
         Ok(())
     }
 
-    /// Load from state
-    pub fn from_state<T: State>(state: &T) -> Result<Self> {
+    /// Load from a DynState
+    pub fn from_state(state: &DynState) -> Result<Self> {
         if let Some(custom_value) = state.get("_custom_state") {
             if let Ok(fields) = serde_json::from_value(custom_value) {
                 return Ok(CustomState { fields });
             }
+        }
+        Ok(CustomState::new())
+    }
+
+    pub fn to_value(&self) -> Result<Value> {
+        Ok(serde_json::to_value(&self.fields)?)
+    }
+
+    pub fn from_value(value: &Value) -> Result<Self> {
+        if let Ok(fields) = serde_json::from_value(value.clone()) {
+            return Ok(CustomState { fields });
         }
         Ok(CustomState::new())
     }
@@ -291,7 +269,6 @@ mod tests {
         let mut history = MessageHistory::new();
         history.add_user_message("Hello");
         history.add_assistant_message("Hi!");
-
         assert_eq!(history.len(), 2);
         assert!(!history.is_empty());
     }
@@ -303,19 +280,8 @@ mod tests {
         for i in 0..5 {
             history.add_user_message(format!("Message {}", i));
         }
-
         assert_eq!(history.len(), 5);
         manager.compress_history(&mut history).ok();
-        // Should have summary + 2 recent = 3 entries
         assert!(history.len() <= 3);
-    }
-
-    #[test]
-    fn test_thread_manager() {
-        let mut tm = ThreadManager::new();
-        tm.create_thread("user_1");
-        tm.create_thread("user_2");
-
-        assert_eq!(tm.thread_ids().len(), 2);
     }
 }

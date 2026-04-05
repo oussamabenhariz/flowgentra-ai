@@ -41,6 +41,7 @@ pub mod events;
 pub mod graph_visualizer;
 mod middleware;
 pub mod otel;
+pub mod prometheus;
 mod replay;
 mod trace;
 mod types;
@@ -48,6 +49,7 @@ pub mod ui;
 pub mod visualization;
 
 pub use events::{EventBroadcaster, ExecutionEvent};
+pub use prometheus::{MetricsCollector, PrometheusExporter, record_llm_tokens};
 pub use graph_visualizer::{
     ExecutionStatistics, NodeExecutionStatus, NodeStatistics, NodeType, StateGraphEdge,
     StateGraphNode, StateGraphVisualization, StateGraphVisualizer,
@@ -59,7 +61,7 @@ pub use types::{FailureSnapshot, NodeTiming, PathSegment};
 pub use visualization::{ExecutionTracer, GraphVisualizer, LayoutAlgorithm};
 
 use crate::core::llm::TokenUsage;
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde_json::json;
 
 /// Record token usage in state for ObservabilityMiddleware to aggregate.
@@ -68,7 +70,7 @@ use serde_json::json;
 /// Token counts are **accumulated** across multiple calls, not overwritten.
 /// This means graphs with multiple LLM-calling nodes will report the total
 /// token usage across all calls.
-pub fn record_token_usage<T: State>(state: &mut T, usage: &TokenUsage) {
+pub fn record_token_usage(state: &mut DynState, usage: &TokenUsage) {
     // Read existing usage (if any) and accumulate
     let existing: TokenUsage = state
         .get(TOKEN_USAGE_STATE_KEY)

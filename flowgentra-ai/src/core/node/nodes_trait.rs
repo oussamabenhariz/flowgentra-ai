@@ -736,8 +736,8 @@ mod tests {
 
     #[test]
     fn test_node_output() {
-        use crate::core::state::SharedState;
-        let state = SharedState::new(Default::default());
+        use crate::core::state::DynState;
+        let state = DynState::new();
         let output = NodeOutput::success(state).with_duration(Duration::from_millis(100));
 
         assert!(output.success);

@@ -22,7 +22,7 @@ use crate::core::error::{FlowgentraError, Result};
 use crate::core::llm::LLMClient;
 use crate::core::mcp::MCPClient;
 // Removed unexpected closing delimiter
-use crate::core::state::State;
+use crate::core::state::DynState;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -100,16 +100,16 @@ impl ToolNode {
 // =============================================================================
 
 /// Complex type for condition functions
-pub type ConditionFn<T> = Box<dyn Fn(&T) -> bool + Send + Sync>;
+pub type ConditionFn = Box<dyn Fn(&DynState) -> bool + Send + Sync>;
 
 /// Node that routes based on conditions
-pub struct ConditionalRouter<T: State> {
+pub struct ConditionalRouter {
     config: ConditionalRouterConfig,
     #[allow(clippy::type_complexity)]
-    conditions: HashMap<String, Box<dyn Fn(&T) -> bool + Send + Sync>>,
+    conditions: HashMap<String, Box<dyn Fn(&DynState) -> bool + Send + Sync>>,
 }
 
-impl<T: State> ConditionalRouter<T> {
+impl ConditionalRouter {
     /// Create a new router
     pub fn new(name: impl Into<String>) -> Self {
         ConditionalRouter {
@@ -134,7 +134,7 @@ impl<T: State> ConditionalRouter<T> {
     /// Register a condition
     pub fn register_condition<F>(mut self, name: impl Into<String>, condition: F) -> Self
     where
-        F: Fn(&T) -> bool + Send + Sync + 'static,
+        F: Fn(&DynState) -> bool + Send + Sync + 'static,
     {
         self.conditions.insert(name.into(), Box::new(condition));
         self
@@ -148,8 +148,8 @@ impl<T: State> ConditionalRouter<T> {
 }
 
 #[async_trait]
-impl<T: State + Send + Sync> PluggableNode<T> for ConditionalRouter<T> {
-    async fn run(&self, state: T) -> Result<NodeOutput<T>> {
+impl PluggableNode<DynState> for ConditionalRouter {
+    async fn run(&self, state: DynState) -> Result<NodeOutput<DynState>> {
         let start = Instant::now();
 
         // Check each routing rule
@@ -183,7 +183,7 @@ impl<T: State + Send + Sync> PluggableNode<T> for ConditionalRouter<T> {
         &self.config.config
     }
 
-    fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
+    fn clone_box(&self) -> Box<dyn PluggableNode<DynState>> {
         Box::new(ConditionalRouter {
             config: self.config.clone(),
             conditions: HashMap::new(),
@@ -196,12 +196,12 @@ impl<T: State + Send + Sync> PluggableNode<T> for ConditionalRouter<T> {
 // =============================================================================
 
 /// Node that wraps another node with retry logic
-pub struct RetryNode<T: State> {
+pub struct RetryNode {
     config: RetryNodeConfig,
-    inner_node: Option<Box<dyn PluggableNode<T>>>,
+    inner_node: Option<Box<dyn PluggableNode<DynState>>>,
 }
 
-impl<T: State> RetryNode<T> {
+impl RetryNode {
     /// Create a new retry node
     pub fn new(name: impl Into<String>) -> Self {
         RetryNode {
@@ -219,7 +219,7 @@ impl<T: State> RetryNode<T> {
     }
 
     /// Set the inner node to retry
-    pub fn with_inner_node(mut self, node: Box<dyn PluggableNode<T>>) -> Self {
+    pub fn with_inner_node(mut self, node: Box<dyn PluggableNode<DynState>>) -> Self {
         self.inner_node = Some(node);
         self
     }
@@ -240,13 +240,13 @@ struct AgentRetryPolicy {
     max_backoff_ms: u64,
 }
 
-impl<T: State> tower::retry::Policy<T, NodeOutput<T>, FlowgentraError> for AgentRetryPolicy {
+impl tower::retry::Policy<DynState, NodeOutput<DynState>, FlowgentraError> for AgentRetryPolicy {
     type Future = Pin<Box<dyn Future<Output = Self> + Send>>;
 
     fn retry(
         &self,
-        _req: &T,
-        result: std::result::Result<&NodeOutput<T>, &FlowgentraError>,
+        _req: &DynState,
+        result: std::result::Result<&NodeOutput<DynState>, &FlowgentraError>,
     ) -> Option<Self::Future> {
         if result.is_ok() {
             return None;
@@ -280,14 +280,14 @@ impl<T: State> tower::retry::Policy<T, NodeOutput<T>, FlowgentraError> for Agent
         }))
     }
 
-    fn clone_request(&self, req: &T) -> Option<T> {
+    fn clone_request(&self, req: &DynState) -> Option<DynState> {
         Some(req.clone())
     }
 }
 
 #[async_trait]
-impl<T: State> PluggableNode<T> for RetryNode<T> {
-    async fn run(&self, state: T) -> Result<NodeOutput<T>> {
+impl PluggableNode<DynState> for RetryNode {
+    async fn run(&self, state: DynState) -> Result<NodeOutput<DynState>> {
         let start = Instant::now();
 
         let inner_node = self.inner_node.as_ref().ok_or_else(|| {
@@ -334,7 +334,7 @@ impl<T: State> PluggableNode<T> for RetryNode<T> {
         meta
     }
 
-    fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
+    fn clone_box(&self) -> Box<dyn PluggableNode<DynState>> {
         Box::new(RetryNode {
             config: self.config.clone(),
             inner_node: self.inner_node.as_ref().map(|n| n.clone_box()),
@@ -347,12 +347,12 @@ impl<T: State> PluggableNode<T> for RetryNode<T> {
 // =============================================================================
 
 /// Node that enforces execution timeout
-pub struct TimeoutNode<T: State> {
+pub struct TimeoutNode {
     config: TimeoutNodeConfig,
-    inner_node: Option<Box<dyn PluggableNode<T>>>,
+    inner_node: Option<Box<dyn PluggableNode<DynState>>>,
 }
 
-impl<T: State> TimeoutNode<T> {
+impl TimeoutNode {
     /// Create a new timeout node
     pub fn new(name: impl Into<String>, timeout_ms: u64) -> Self {
         TimeoutNode {
@@ -370,15 +370,15 @@ impl<T: State> TimeoutNode<T> {
     }
 
     /// Set the inner node
-    pub fn with_inner_node(mut self, node: Box<dyn crate::core::node::PluggableNode<T>>) -> Self {
+    pub fn with_inner_node(mut self, node: Box<dyn crate::core::node::PluggableNode<DynState>>) -> Self {
         self.inner_node = Some(node);
         self
     }
 }
 
 #[async_trait]
-impl<T: crate::core::state::State> crate::core::node::PluggableNode<T> for TimeoutNode<T> {
-    async fn run(&self, state: T) -> Result<NodeOutput<T>> {
+impl crate::core::node::PluggableNode<DynState> for TimeoutNode {
+    async fn run(&self, state: DynState) -> Result<NodeOutput<DynState>> {
         let start = Instant::now();
 
         let inner_node = self.inner_node.as_ref().ok_or_else(|| {
@@ -440,7 +440,7 @@ impl<T: crate::core::state::State> crate::core::node::PluggableNode<T> for Timeo
         meta
     }
 
-    fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
+    fn clone_box(&self) -> Box<dyn PluggableNode<DynState>> {
         Box::new(TimeoutNode {
             config: self.config.clone(),
             inner_node: self.inner_node.as_ref().map(|n| n.clone_box()),
@@ -484,8 +484,8 @@ impl HumanInTheLoopNode {
 }
 
 #[async_trait]
-impl<T: State> PluggableNode<T> for HumanInTheLoopNode {
-    async fn run(&self, state: T) -> Result<NodeOutput<T>> {
+impl PluggableNode<DynState> for HumanInTheLoopNode {
+    async fn run(&self, state: DynState) -> Result<NodeOutput<DynState>> {
         let start = Instant::now();
 
         // In a real implementation, this would:
@@ -536,7 +536,7 @@ impl<T: State> PluggableNode<T> for HumanInTheLoopNode {
         meta
     }
 
-    fn clone_box(&self) -> Box<dyn crate::core::node::PluggableNode<T>> {
+    fn clone_box(&self) -> Box<dyn crate::core::node::PluggableNode<DynState>> {
         Box::new(HumanInTheLoopNode {
             config: self.config.clone(),
         })
@@ -546,7 +546,7 @@ impl<T: State> PluggableNode<T> for HumanInTheLoopNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
+    use crate::core::state::DynState;
 
     #[test]
     fn test_llm_node_creation() {
@@ -562,8 +562,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_router_node() {
-        let router: ConditionalRouter<SharedState> = ConditionalRouter::new("router")
-            .register_condition("is_urgent", |state: &SharedState| {
+        let router = ConditionalRouter::new("router")
+            .register_condition("is_urgent", |state: &DynState| {
                 state
                     .get("urgent")
                     .and_then(|v| v.as_bool())
@@ -571,7 +571,7 @@ mod tests {
             })
             .add_rule("is_urgent", "urgent_handler");
 
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("urgent", json!(true));
 
         let result = router.run(state).await;
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_timeout_node_creation() {
-        let _timeout_node: TimeoutNode<SharedState> = TimeoutNode::new("timeout_wrapper", 5000);
+        let _timeout_node: TimeoutNode = TimeoutNode::new("timeout_wrapper", 5000);
     }
 
     #[tokio::test]
@@ -589,7 +589,7 @@ mod tests {
             .add_editable_field("amount")
             .require_approval(true);
 
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let result = node.run(state).await;
 
         assert!(result.is_ok());

@@ -18,7 +18,7 @@ use crate::core::state_graph::{StateGraph, StateGraphError};
 /// let research_graph = StateGraph::builder()./* ... */.compile()?;
 /// let writing_graph = StateGraph::builder()./* ... */.compile()?;
 ///
-/// let supervisor = Supervisor::new(|state: &PlainState| {
+/// let supervisor = Supervisor::new(|state: &DynState| {
 ///     let task = state.get_string("task").unwrap_or_default();
 ///     if task.contains("research") { Ok("researcher".to_string()) }
 ///     else { Ok("writer".to_string()) }

@@ -184,7 +184,7 @@ impl Agent for FewShotReActAgent {
 
     fn initialize(
         &mut self,
-        state: &mut crate::core::state::SharedState,
+        state: &mut crate::core::state::DynState,
     ) -> Result<(), FlowgentraError> {
         // Store agent metadata
         state.set(
@@ -210,7 +210,7 @@ impl Agent for FewShotReActAgent {
     fn process(
         &self,
         input: &str,
-        _state: &crate::core::state::SharedState,
+        _state: &crate::core::state::DynState,
     ) -> Result<String, FlowgentraError> {
         let reasoning = self.generate_reasoning_chain(input);
 
@@ -310,7 +310,7 @@ mod tests {
             "The answer is 2",
         ));
 
-        let state = crate::core::state::SharedState::new(Default::default());
+        let state = crate::core::state::DynState::new();
         let result = agent.process("What is 5+3?", &state);
 
         assert!(result.is_ok());

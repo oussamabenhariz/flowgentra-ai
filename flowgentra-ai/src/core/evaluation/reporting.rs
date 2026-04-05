@@ -3,7 +3,7 @@
 //! Generate readable evaluation reports and summaries from execution data.
 
 use crate::core::error::Result;
-use crate::core::state::SharedState;
+use crate::core::state::DynState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -32,7 +32,7 @@ pub struct EvaluationReport {
 
 impl EvaluationReport {
     /// Extract report from state
-    pub fn from_state(state: &SharedState) -> Self {
+    pub fn from_state(state: &DynState) -> Self {
         let mut nodes = vec![];
         let mut total_score = 0.0;
         let mut total_retries = 0u32;
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_report_from_empty_state() {
-        let state = SharedState::default();
+        let state = DynState::default();
         let report = EvaluationReport::from_state(&state);
         assert_eq!(report.overall_score, 0.0);
         assert!(report.nodes.is_empty());
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_report_passed_threshold() {
-        let state = SharedState::default();
+        let state = DynState::default();
         // A report with no data has 0.0 score, which fails
         let report = EvaluationReport::from_state(&state);
         assert!(!report.passed);

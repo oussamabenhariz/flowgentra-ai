@@ -28,7 +28,7 @@
 
 use crate::core::error::{FlowgentraError, Result};
 use crate::core::node::nodes_trait::PluggableNode;
-use crate::core::state::State;
+use crate::core::state::DynState;
 use crate::core::NodeOutput;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -173,7 +173,7 @@ impl EvaluationNodeConfig {
     /// using the **built-in heuristic scorer**.
     ///
     /// For a custom scorer use [`into_standalone_node_fn_with_scorer`].
-    pub fn into_standalone_node_fn<T: State + 'static>(self) -> super::NodeFunction<T> {
+    pub fn into_standalone_node_fn(self) -> super::NodeFunction<DynState> {
         self.into_standalone_node_fn_with_scorer(default_scorer())
     }
 
@@ -205,10 +205,10 @@ impl EvaluationNodeConfig {
     /// let node = Node::new("score", cfg.into_standalone_node_fn_with_scorer(scorer), vec![], HashMap::new());
     /// agent.runtime_mut().graph.add_node(node);
     /// ```
-    pub fn into_standalone_node_fn_with_scorer<T: State + 'static>(
+    pub fn into_standalone_node_fn_with_scorer(
         self,
         scorer: ScorerFn,
-    ) -> super::NodeFunction<T> {
+    ) -> super::NodeFunction<DynState> {
         Box::new(move |state| {
             let config = self.clone();
             let scorer = scorer.clone();
@@ -280,12 +280,12 @@ impl EvaluationNodeConfig {
     /// Build a `NodeFunction` that calls `inner` in a loop using the **built-in heuristic scorer**.
     ///
     /// For a custom scorer use [`into_wrapping_node_fn_with_scorer`].
-    pub fn into_wrapping_node_fn<T: State + 'static>(
+    pub fn into_wrapping_node_fn(
         self,
         inner: std::sync::Arc<
-            dyn Fn(T) -> futures::future::BoxFuture<'static, Result<T>> + Send + Sync,
+            dyn Fn(DynState) -> futures::future::BoxFuture<'static, Result<DynState>> + Send + Sync,
         >,
-    ) -> super::NodeFunction<T> {
+    ) -> super::NodeFunction<DynState> {
         self.into_wrapping_node_fn_with_scorer(inner, default_scorer())
     }
 
@@ -314,13 +314,13 @@ impl EvaluationNodeConfig {
     /// let inner = Arc::new(my_refine_handler);
     /// let node = Node::new("refine", cfg.into_wrapping_node_fn_with_scorer(inner, scorer), vec![], HashMap::new());
     /// ```
-    pub fn into_wrapping_node_fn_with_scorer<T: State + 'static>(
+    pub fn into_wrapping_node_fn_with_scorer(
         self,
         inner: std::sync::Arc<
-            dyn Fn(T) -> futures::future::BoxFuture<'static, Result<T>> + Send + Sync,
+            dyn Fn(DynState) -> futures::future::BoxFuture<'static, Result<DynState>> + Send + Sync,
         >,
         scorer: ScorerFn,
-    ) -> super::NodeFunction<T> {
+    ) -> super::NodeFunction<DynState> {
         Box::new(move |state| {
             let config = self.clone();
             let inner = inner.clone();
@@ -330,7 +330,7 @@ impl EvaluationNodeConfig {
                 let start_time = Instant::now();
                 let mut state = state;
                 let mut best_score: f64 = 0.0;
-                let mut best_state: Option<T> = None;
+                let mut best_state: Option<DynState> = None;
                 let mut all_attempts = Vec::new();
 
                 for attempt_num in 1..=config.max_retries {
@@ -508,16 +508,16 @@ pub struct EvaluationResult {
 // =============================================================================
 
 /// Evaluation node - iteratively evaluates and refines output
-pub struct EvaluationNode<T: State> {
+pub struct EvaluationNode {
     pub config: EvaluationNodeConfig,
-    pub inner_node: Box<dyn PluggableNode<T>>,
+    pub inner_node: Box<dyn PluggableNode<DynState>>,
 }
 
-impl<T: State> EvaluationNode<T> {
+impl EvaluationNode {
     /// Create a new evaluation node with validation
     pub fn new(
         config: EvaluationNodeConfig,
-        inner_node: Box<dyn PluggableNode<T>>,
+        inner_node: Box<dyn PluggableNode<DynState>>,
     ) -> Result<Self> {
         EvaluationNodeConfig::validate(&config)?;
         Ok(EvaluationNode { config, inner_node })
@@ -526,13 +526,13 @@ impl<T: State> EvaluationNode<T> {
     /// Create without validation (useful for dynamic wrapping)
     pub fn new_unchecked(
         config: EvaluationNodeConfig,
-        inner_node: Box<dyn PluggableNode<T>>,
+        inner_node: Box<dyn PluggableNode<DynState>>,
     ) -> Self {
         EvaluationNode { config, inner_node }
     }
 }
 
-impl<T: State> Clone for EvaluationNode<T> {
+impl Clone for EvaluationNode {
     fn clone(&self) -> Self {
         EvaluationNode {
             config: self.config.clone(),
@@ -542,7 +542,7 @@ impl<T: State> Clone for EvaluationNode<T> {
 }
 
 #[async_trait]
-impl<T: State> PluggableNode<T> for EvaluationNode<T> {
+impl PluggableNode<DynState> for EvaluationNode {
     fn node_type(&self) -> &'static str {
         "evaluation"
     }
@@ -555,11 +555,11 @@ impl<T: State> PluggableNode<T> for EvaluationNode<T> {
         &self.config.config
     }
 
-    fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
+    fn clone_box(&self) -> Box<dyn PluggableNode<DynState>> {
         Box::new(self.clone())
     }
 
-    async fn run(&self, state: T) -> Result<NodeOutput<T>> {
+    async fn run(&self, state: DynState) -> Result<NodeOutput<DynState>> {
         let config = &self.config;
         let start_time = Instant::now();
         let field_name = config.get_field_name();
@@ -723,7 +723,7 @@ pub fn scorer_from_sync(
 ///     check_consistency: false,
 ///     ..Default::default()
 /// });
-/// cfg.into_standalone_node_fn_with_scorer::<SharedState>(scorer)
+/// cfg.into_standalone_node_fn_with_scorer::<DynState>(scorer)
 /// ```
 pub fn scorer_from_node_scorer(criteria: crate::core::evaluation::ScoringCriteria) -> ScorerFn {
     Arc::new(move |output: Value, _attempt: u32| {
@@ -731,7 +731,7 @@ pub fn scorer_from_node_scorer(criteria: crate::core::evaluation::ScoringCriteri
         Box::pin(async move {
             use crate::core::evaluation::NodeScorer;
             // Consistency check needs state history; use a fresh state as fallback.
-            let dummy = crate::core::state::SharedState::new(Default::default());
+            let dummy = DynState::new();
             let score = NodeScorer::score(&output, &criteria, &dummy, "");
             (score.overall, score.explanation)
         })
@@ -760,7 +760,7 @@ pub fn scorer_from_confidence(
         let task = task.clone();
         Box::pin(async move {
             use crate::core::evaluation::ConfidenceScorer;
-            let dummy = crate::core::state::SharedState::new(Default::default());
+            let dummy = DynState::new();
             let score = ConfidenceScorer::score(&output, task.as_deref(), &dummy, "", &config);
             let feedback = format!(
                 "clarity={:.2} relevance={:.2} completeness={:.2} ({})",

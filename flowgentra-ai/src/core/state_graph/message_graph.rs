@@ -1,40 +1,94 @@
 //! MessageGraph — a convenience wrapper for chat-focused workflows
 //!
-//! Pre-configures a StateGraph with message accumulation using the Append reducer.
-//! Messages flow through the graph and accumulate automatically.
+//! Provides `MessageState` — a pre-built typed state with message accumulation.
 
-use serde_json::json;
+use std::sync::Arc;
 
 use crate::core::llm::Message;
-use crate::core::state::PlainState;
+use crate::core::reducer::{Append, Reducer};
+use crate::core::state::{Context, State};
 use crate::core::state_graph::error::Result;
 use crate::core::state_graph::executor::{StateGraph, StateGraphBuilder};
+use crate::core::state_graph::node::Node;
 use crate::core::state_graph::RouterFn;
 
-/// Builder for message-centric graphs.
+/// Pre-built typed state for chat workflows.
 ///
-/// Automatically manages a "messages" array in state with append semantics.
-/// Each node receives the full message history and can add new messages.
+/// Messages automatically accumulate via the `Append` reducer.
 ///
 /// # Example
 /// ```ignore
-/// use flowgentra_ai::core::state_graph::message_graph::MessageGraphBuilder;
-/// use flowgentra_ai::core::llm::Message;
+/// use std::sync::Arc;
+/// use flowgentra_ai::core::state_graph::node::FunctionNode;
 ///
 /// let graph = MessageGraphBuilder::new()
-///     .add_fn("echo", |state: &PlainState| {
-///         let messages = MessageGraphBuilder::get_messages(state);
-///         let last = messages.last().map(|m| m.content.clone()).unwrap_or_default();
-///         let mut s = state.clone();
-///         s = MessageGraphBuilder::add_message(s, Message::assistant(format!("Echo: {}", last)));
-///         Box::pin(async move { Ok(s) })
-///     })
+///     .add_node("echo", Arc::new(FunctionNode::new("echo", |state: &MessageState, _ctx: &Context| {
+///         let last = state.messages.last().map(|m| m.content.clone()).unwrap_or_default();
+///         Box::pin(async move {
+///             Ok(MessageStateUpdate::new()
+///                 .messages(vec![Message::assistant(format!("Echo: {}", last))]))
+///         })
+///     })))
 ///     .set_entry_point("echo")
 ///     .add_edge("echo", "__end__")
 ///     .compile()?;
 /// ```
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct MessageState {
+    /// Chat messages — uses Append reducer to accumulate.
+    pub messages: Vec<Message>,
+}
+
+/// Partial update for MessageState.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MessageStateUpdate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<Vec<Message>>,
+}
+
+impl MessageStateUpdate {
+    pub fn new() -> Self {
+        Self { messages: None }
+    }
+
+    pub fn messages(mut self, messages: Vec<Message>) -> Self {
+        self.messages = Some(messages);
+        self
+    }
+}
+
+impl State for MessageState {
+    type Update = MessageStateUpdate;
+
+    fn apply_update(&mut self, update: Self::Update) {
+        if let Some(messages) = update.messages {
+            <Append as Reducer<Vec<Message>>>::merge(&mut self.messages, messages);
+        }
+    }
+}
+
+impl MessageState {
+    /// Create a new MessageState with initial messages.
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self { messages }
+    }
+
+    /// Create an empty MessageState.
+    pub fn empty() -> Self {
+        Self {
+            messages: Vec::new(),
+        }
+    }
+
+    /// Get the last message.
+    pub fn last_message(&self) -> Option<&Message> {
+        self.messages.last()
+    }
+}
+
+/// Builder for message-centric graphs using `MessageState`.
 pub struct MessageGraphBuilder {
-    inner: StateGraphBuilder<PlainState>,
+    inner: StateGraphBuilder<MessageState>,
 }
 
 impl MessageGraphBuilder {
@@ -44,18 +98,9 @@ impl MessageGraphBuilder {
         }
     }
 
-    /// Add a node function. The function receives `&PlainState` and returns a pinned future.
-    pub fn add_fn<F>(mut self, name: &str, f: F) -> Self
-    where
-        F: Fn(
-                &PlainState,
-            )
-                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PlainState>> + Send>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.inner = self.inner.add_fn(name, f);
+    /// Add a node to the graph.
+    pub fn add_node(mut self, name: &str, node: Arc<dyn Node<MessageState>>) -> Self {
+        self.inner = self.inner.add_node(name, node);
         self
     }
 
@@ -72,76 +117,20 @@ impl MessageGraphBuilder {
     }
 
     /// Add a conditional edge with a sync router.
-    pub fn add_conditional_edge(mut self, from: &str, router: RouterFn<PlainState>) -> Self {
+    pub fn add_conditional_edge(mut self, from: &str, router: RouterFn<MessageState>) -> Self {
         self.inner = self.inner.add_conditional_edge(from, router);
         self
     }
 
+    /// Set the framework context.
+    pub fn set_context(mut self, ctx: Context) -> Self {
+        self.inner = self.inner.set_context(ctx);
+        self
+    }
+
     /// Compile the graph.
-    pub fn compile(self) -> Result<StateGraph<PlainState>> {
+    pub fn compile(self) -> Result<StateGraph<MessageState>> {
         self.inner.compile()
-    }
-
-    // ── Helper functions for working with messages in state ──
-
-    /// Create initial state with messages.
-    pub fn initial_state(messages: Vec<Message>) -> PlainState {
-        let mut state = PlainState::new();
-        let msg_values: Vec<serde_json::Value> = messages
-            .into_iter()
-            .map(|m| {
-                json!({
-                    "role": format!("{:?}", m.role).to_lowercase(),
-                    "content": m.content
-                })
-            })
-            .collect();
-        state.set("messages", json!(msg_values));
-        state
-    }
-
-    /// Get messages from state.
-    pub fn get_messages(state: &PlainState) -> Vec<Message> {
-        state
-            .get("messages")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| {
-                        let role = v.get("role")?.as_str()?;
-                        let content = v.get("content")?.as_str()?.to_string();
-                        Some(match role {
-                            "system" => Message::system(content),
-                            "user" => Message::user(content),
-                            "assistant" => Message::assistant(content),
-                            "tool" => Message::tool(content),
-                            _ => Message::user(content),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Add a message to state (append semantics).
-    pub fn add_message(mut state: PlainState, message: Message) -> PlainState {
-        let msg_value = json!({
-            "role": format!("{:?}", message.role).to_lowercase(),
-            "content": message.content
-        });
-
-        let mut messages = state
-            .get("messages")
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default();
-        messages.push(msg_value);
-        state.set("messages", json!(messages));
-        state
-    }
-
-    /// Get the last message from state.
-    pub fn last_message(state: &PlainState) -> Option<Message> {
-        Self::get_messages(state).into_iter().last()
     }
 }
 
@@ -156,66 +145,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_initial_state() {
-        let state = MessageGraphBuilder::initial_state(vec![
-            Message::user("Hello"),
-            Message::system("sys"),
-        ]);
+    fn test_message_state_append() {
+        let mut state = MessageState::new(vec![Message::user("Hello")]);
 
-        let messages = MessageGraphBuilder::get_messages(&state);
-        assert_eq!(messages.len(), 2);
-        assert!(messages[0].is_user());
-        assert_eq!(messages[0].content, "Hello");
-    }
+        let update = MessageStateUpdate::new().messages(vec![Message::assistant("Hi!")]);
+        state.apply_update(update);
 
-    #[test]
-    fn test_add_message() {
-        let state = MessageGraphBuilder::initial_state(vec![Message::user("Hi")]);
-        let state = MessageGraphBuilder::add_message(state, Message::assistant("Hello!"));
-
-        let messages = MessageGraphBuilder::get_messages(&state);
-        assert_eq!(messages.len(), 2);
-        assert!(messages[1].is_assistant());
+        assert_eq!(state.messages.len(), 2);
+        assert!(state.messages[1].is_assistant());
     }
 
     #[test]
     fn test_last_message() {
-        let state = MessageGraphBuilder::initial_state(vec![
+        let state = MessageState::new(vec![
             Message::user("Hi"),
             Message::assistant("Hello!"),
         ]);
 
-        let last = MessageGraphBuilder::last_message(&state).unwrap();
+        let last = state.last_message().unwrap();
         assert!(last.is_assistant());
         assert_eq!(last.content, "Hello!");
     }
 
     #[tokio::test]
     async fn test_message_graph_compile() {
+        use crate::core::state_graph::node::FunctionNode;
         let graph = MessageGraphBuilder::new()
-            .add_fn("echo", |state: &PlainState| {
-                let messages = MessageGraphBuilder::get_messages(state);
-                let last = messages
+            .add_node("echo", Arc::new(FunctionNode::new("echo", |state: &MessageState, _ctx: &Context| {
+                let last = state
+                    .messages
                     .last()
                     .map(|m| m.content.clone())
                     .unwrap_or_default();
-                let mut s = state.clone();
-                s = MessageGraphBuilder::add_message(
-                    s,
-                    Message::assistant(format!("Echo: {}", last)),
-                );
-                Box::pin(async move { Ok(s) })
-            })
+                Box::pin(async move {
+                    Ok(MessageStateUpdate::new()
+                        .messages(vec![Message::assistant(format!("Echo: {}", last))]))
+                })
+            })))
             .set_entry_point("echo")
             .add_edge("echo", "__end__")
             .compile()
             .unwrap();
 
-        let state = MessageGraphBuilder::initial_state(vec![Message::user("Hello")]);
+        let state = MessageState::new(vec![Message::user("Hello")]);
         let result = graph.invoke(state).await.unwrap();
 
-        let messages = MessageGraphBuilder::get_messages(&result);
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].content, "Echo: Hello");
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[1].content, "Echo: Hello");
     }
 }

@@ -61,9 +61,9 @@
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
-/// Evaluate a simple condition expression against a generic State.
+/// Evaluate a simple condition expression against a DynState.
 /// Supported forms: "key", "key == value", "key != value", "key == null", "key != null"
-fn evaluate_condition<T: crate::core::state::State>(condition: &str, state: &T) -> bool {
+fn evaluate_condition(condition: &str, state: &crate::core::state::DynState) -> bool {
     let condition = condition.trim();
     if condition.contains("!=") {
         let parts: Vec<&str> = condition.splitn(2, "!=").collect();
@@ -129,7 +129,7 @@ pub struct ChildExecutionStats {
 
 use crate::core::error::Result;
 use crate::core::node::nodes_trait::{NodeOutput, PluggableNode};
-use crate::core::state::State;
+use crate::core::state::DynState;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -497,16 +497,16 @@ impl SupervisorNodeConfig {
 }
 
 /// PluggableNode-based implementation (used by `create_node_from_config`).
-/// In practice the runtime uses the `Handler<SharedState>` created by `create_supervisor_handler`.
-pub struct SupervisorNode<T: crate::core::state::State> {
+/// In practice the runtime uses the `Handler<DynState>` created by `create_supervisor_handler`.
+pub struct SupervisorNode {
     pub config: SupervisorNodeConfig,
-    pub children: Vec<Arc<dyn PluggableNode<T>>>,
+    pub children: Vec<Arc<dyn PluggableNode<DynState>>>,
 }
 
 /// Backwards-compatible alias — use `SupervisorNode` in new code.
-pub type OrchestratorNode<T> = SupervisorNode<T>;
+pub type OrchestratorNode = SupervisorNode;
 
-impl<T: crate::core::state::State> Clone for SupervisorNode<T> {
+impl Clone for SupervisorNode {
     fn clone(&self) -> Self {
         SupervisorNode {
             config: self.config.clone(),
@@ -515,10 +515,10 @@ impl<T: crate::core::state::State> Clone for SupervisorNode<T> {
     }
 }
 
-impl<T: crate::core::state::State> SupervisorNode<T> {
+impl SupervisorNode {
     pub fn new(
         config: SupervisorNodeConfig,
-        children: Vec<Arc<dyn PluggableNode<T>>>,
+        children: Vec<Arc<dyn PluggableNode<DynState>>>,
     ) -> crate::core::error::Result<Self> {
         Self::validate_config(&config, &children)?;
         Ok(SupervisorNode { config, children })
@@ -526,7 +526,7 @@ impl<T: crate::core::state::State> SupervisorNode<T> {
 
     fn validate_config(
         config: &SupervisorNodeConfig,
-        children: &[Arc<dyn PluggableNode<T>>],
+        children: &[Arc<dyn PluggableNode<DynState>>],
     ) -> crate::core::error::Result<()> {
         if config.children.is_empty() {
             return Err(crate::core::error::FlowgentraError::ConfigError(
@@ -562,8 +562,8 @@ impl<T: crate::core::state::State> SupervisorNode<T> {
 }
 
 #[async_trait]
-impl<T: State> PluggableNode<T> for SupervisorNode<T> {
-    async fn run(&self, state: T) -> Result<NodeOutput<T>> {
+impl PluggableNode<DynState> for SupervisorNode {
+    async fn run(&self, state: DynState) -> Result<NodeOutput<DynState>> {
         let start = Instant::now();
         info!(
             "SupervisorNode '{}' running with strategy {:?} over {} children",
@@ -987,7 +987,7 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
                     .as_deref()
                     .unwrap_or("first_success");
 
-                let mut successes: Vec<(String, NodeOutput<T>)> = Vec::new();
+                let mut successes: Vec<(String, NodeOutput<DynState>)> = Vec::new();
                 let mut child_stats: Vec<ChildExecutionStats> = Vec::new();
 
                 for (name, result) in results {
@@ -1101,7 +1101,7 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
 
             OrchestrationStrategy::ConditionalRouting => {
                 // Route to the first child whose condition matches
-                let mut selected_child: Option<&Arc<dyn PluggableNode<T>>> = None;
+                let mut selected_child: Option<&Arc<dyn PluggableNode<DynState>>> = None;
                 let mut selected_name = String::new();
 
                 for (condition, child_name) in &self.config.routing_rules {
@@ -1607,7 +1607,7 @@ impl<T: State> PluggableNode<T> for SupervisorNode<T> {
         &self.config.config
     }
 
-    fn clone_box(&self) -> Box<dyn PluggableNode<T>> {
-        Box::new(self.clone()) as Box<dyn PluggableNode<T>>
+    fn clone_box(&self) -> Box<dyn PluggableNode<DynState>> {
+        Box::new(self.clone()) as Box<dyn PluggableNode<DynState>>
     }
 }

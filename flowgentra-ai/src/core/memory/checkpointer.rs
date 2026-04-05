@@ -4,7 +4,7 @@
 //! can maintain context.
 
 use crate::core::error::Result;
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -31,7 +31,7 @@ pub struct Checkpoint {
 }
 
 impl Checkpoint {
-    pub fn new<T: State>(state: &T, metadata: CheckpointMetadata) -> Result<Self> {
+    pub fn new(state: &DynState, metadata: CheckpointMetadata) -> Result<Self> {
         let state_value = state.to_value();
         Ok(Checkpoint {
             state_value,
@@ -40,8 +40,8 @@ impl Checkpoint {
     }
 
     /// Get the state from this checkpoint.
-    pub fn state<T: State>(&self) -> Result<T> {
-        T::from_json(self.state_value.clone())
+    pub fn state(&self) -> Result<DynState> {
+        DynState::from_json(self.state_value.clone())
     }
 }
 
@@ -61,10 +61,10 @@ pub trait Checkpointer: Send + Sync {
 /// Trait for generic checkpoint saving.
 pub trait GenericCheckpointer: Send + Sync {
     /// Save state and metadata for the given thread.
-    fn save<T: State>(
+    fn save(
         &self,
         thread_id: &str,
-        state: &T,
+        state: &DynState,
         metadata: &CheckpointMetadata,
     ) -> Result<()>;
 }
@@ -113,10 +113,10 @@ impl Checkpointer for MemoryCheckpointer {
 }
 
 impl GenericCheckpointer for MemoryCheckpointer {
-    fn save<T: State>(
+    fn save(
         &self,
         thread_id: &str,
-        state: &T,
+        state: &DynState,
         metadata: &CheckpointMetadata,
     ) -> Result<()> {
         let checkpoint = Checkpoint::new(state, metadata.clone())?;
@@ -129,4 +129,4 @@ impl GenericCheckpointer for MemoryCheckpointer {
 }
 
 // Blanket impl: any type that implements both traits implements CheckpointStore
-impl<T: Checkpointer + GenericCheckpointer + ?Sized> CheckpointStore for T {}
+impl<C: Checkpointer + GenericCheckpointer + ?Sized> CheckpointStore for C {}

@@ -22,7 +22,7 @@
 
 use crate::core::advanced_nodes::{JoinType, MergeStrategy};
 use crate::core::error::{FlowgentraError, Result};
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -30,12 +30,12 @@ use tokio::time::timeout;
 
 /// Result from a single branch execution
 #[derive(Debug, Clone)]
-pub struct BranchResult<T: State> {
+pub struct BranchResult {
     /// Name of the branch
     pub branch_name: String,
 
     /// Resulting state from branch execution
-    pub state: T,
+    pub state: DynState,
 
     /// Duration of branch execution
     pub duration: Duration,
@@ -110,19 +110,19 @@ impl ParallelExecutor {
     /// results are collected per the join strategy and merged per the
     /// merge strategy.
     #[allow(clippy::type_complexity)]
-    pub async fn execute<T: State + Default + Send + Sync + 'static>(
+    pub async fn execute(
         &self,
-        initial_state: T,
+        initial_state: DynState,
         branches: Vec<(
             String,
             Box<
-                dyn Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>
+                dyn Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
                     + Send
                     + Sync,
             >,
         )>,
-    ) -> Result<T> {
-        let mut join_set: JoinSet<BranchResult<T>> = JoinSet::new();
+    ) -> Result<DynState> {
+        let mut join_set: JoinSet<BranchResult> = JoinSet::new();
 
         for (name, func) in branches {
             let state_clone = initial_state.clone();
@@ -139,7 +139,7 @@ impl ParallelExecutor {
                     },
                     Err(e) => BranchResult {
                         branch_name,
-                        state: T::empty(),
+                        state: DynState::empty(),
                         duration: start.elapsed(),
                         success: false,
                         error: Some(e.to_string()),
@@ -164,10 +164,10 @@ impl ParallelExecutor {
     }
 
     /// Collect results from all branches based on join strategy
-    async fn collect_results<T: crate::core::state::State>(
+    async fn collect_results(
         &self,
-        join_set: &mut JoinSet<BranchResult<T>>,
-    ) -> Result<Vec<BranchResult<T>>> {
+        join_set: &mut JoinSet<BranchResult>,
+    ) -> Result<Vec<BranchResult>> {
         let timeout_duration = self.timeout;
 
         match self.join_type {
@@ -263,11 +263,11 @@ impl ParallelExecutor {
     }
 
     /// Merge results from branches into a single state
-    fn merge_results<T: crate::core::state::State>(
+    fn merge_results(
         &self,
-        initial_state: &T,
-        results: &[BranchResult<T>],
-    ) -> Result<T> {
+        initial_state: &DynState,
+        results: &[BranchResult],
+    ) -> Result<DynState> {
         let merged = initial_state.clone();
 
         match self.merge_strategy {
@@ -286,8 +286,8 @@ impl ParallelExecutor {
                 // Take first successful result
                 if let Some(first) = results.iter().find(|r| r.success) {
                     // State::merge(&self) doesn't return Result, just performs merge
-                    first.state.merge(first.state.clone());
-                    merged.merge(first.state.clone());
+                    first.state.merge(&first.state.clone());
+                    merged.merge(&first.state.clone());
                 }
             }
 
@@ -295,7 +295,7 @@ impl ParallelExecutor {
                 // Take last successful result
                 if let Some(last) = results.iter().rfind(|r| r.success) {
                     // State::merge(&self) doesn't return Result, just performs merge
-                    merged.merge(last.state.clone());
+                    merged.merge(&last.state.clone());
                 }
             }
 
@@ -313,7 +313,7 @@ impl ParallelExecutor {
                 for result in results {
                     if result.success {
                         // State::merge(&self) doesn't return Result, just performs merge
-                        merged.merge(result.state.clone());
+                        merged.merge(&result.state.clone());
                     }
                 }
             }
@@ -330,12 +330,12 @@ impl Default for ParallelExecutor {
 }
 
 /// Synchronization point for parallel branches
-pub struct BranchSync<T: crate::core::state::State> {
+pub struct BranchSync {
     /// Name of this sync point
     pub name: String,
 
     /// Results collected so far
-    pub results: Vec<BranchResult<T>>,
+    pub results: Vec<BranchResult>,
 
     /// Whether all branches completed
     pub all_complete: bool,
@@ -344,7 +344,7 @@ pub struct BranchSync<T: crate::core::state::State> {
     pub created_at: std::time::Instant,
 }
 
-impl<T: crate::core::state::State> BranchSync<T> {
+impl BranchSync {
     /// Create a new branch sync point
     pub fn new(name: impl Into<String>) -> Self {
         BranchSync {
@@ -356,7 +356,7 @@ impl<T: crate::core::state::State> BranchSync<T> {
     }
 
     /// Add a branch result
-    pub fn add_result(&mut self, result: BranchResult<T>) {
+    pub fn add_result(&mut self, result: BranchResult) {
         self.results.push(result);
     }
 
@@ -381,11 +381,11 @@ impl<T: crate::core::state::State> BranchSync<T> {
     }
 
     /// Merge all results into a single state, starting from the given initial state.
-    pub fn merge_all(&self, initial: T) -> T {
+    pub fn merge_all(&self, initial: DynState) -> DynState {
         let merged = initial;
 
         for result in &self.results {
-            merged.merge(result.state.clone());
+            merged.merge(&result.state.clone());
         }
 
         merged
@@ -395,7 +395,6 @@ impl<T: crate::core::state::State> BranchSync<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
 
     #[tokio::test]
     async fn test_parallel_executor_creation() {
@@ -405,11 +404,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_branch_sync() {
-        let mut sync: BranchSync<SharedState> = BranchSync::new("test_sync");
+        let mut sync = BranchSync::new("test_sync");
 
         let result = BranchResult {
             branch_name: "branch_1".to_string(),
-            state: SharedState::new(Default::default()),
+            state: DynState::new(),
             duration: Duration::from_millis(100),
             success: true,
             error: None,

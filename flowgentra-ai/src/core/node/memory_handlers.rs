@@ -18,7 +18,7 @@
 //! ```
 
 use crate::core::error::Result;
-use crate::core::state::State;
+use crate::core::state::DynState;
 use crate::core::state::{CompressionManager, MessageHistory};
 use serde_json::json;
 
@@ -37,8 +37,8 @@ use serde_json::json;
 ///       role: user
 /// ```
 pub async fn append_message_handler(
-    state: crate::core::state::SharedState,
-) -> Result<crate::core::state::SharedState> {
+    state: crate::core::state::DynState,
+) -> Result<crate::core::state::DynState> {
     let role = state
         .get_typed::<String>("role")
         .unwrap_or_else(|_| "user".to_string());
@@ -84,8 +84,8 @@ pub async fn append_message_handler(
 ///       max_recent_messages: 10
 /// ```
 pub async fn compress_history_handler(
-    state: crate::core::state::SharedState,
-) -> Result<crate::core::state::SharedState> {
+    state: crate::core::state::DynState,
+) -> Result<crate::core::state::DynState> {
     let max_recent = state
         .get_typed::<usize>("max_recent_messages")
         .unwrap_or(10);
@@ -106,7 +106,7 @@ pub async fn compress_history_handler(
 ///   - name: clear_messages
 ///     handler: memory::clear_history
 /// ```
-pub async fn clear_history_handler<T: State>(state: T) -> Result<T> {
+pub async fn clear_history_handler(state: DynState) -> Result<DynState> {
     let mut history = MessageHistory::from_state(&state)?;
     history.clear();
     history.save_to_state(&state)?;
@@ -118,7 +118,7 @@ pub async fn clear_history_handler<T: State>(state: T) -> Result<T> {
 /// Get message count for logging/debugging
 ///
 /// Sets `message_count` in state
-pub async fn get_message_count_handler<T: State>(state: T) -> Result<T> {
+pub async fn get_message_count_handler(state: DynState) -> Result<DynState> {
     let history = MessageHistory::from_state(&state)?;
     state.set("message_count", json!(history.len()));
     Ok(state)
@@ -127,7 +127,7 @@ pub async fn get_message_count_handler<T: State>(state: T) -> Result<T> {
 /// Format message history for LLM context
 ///
 /// Converts message history to formatted text for use in prompts
-pub async fn format_history_for_context_handler<T: State>(state: T) -> Result<T> {
+pub async fn format_history_for_context_handler(state: DynState) -> Result<DynState> {
     let history = MessageHistory::from_state(&state)?;
 
     let formatted = history
@@ -144,11 +144,10 @@ pub async fn format_history_for_context_handler<T: State>(state: T) -> Result<T>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
 
     #[tokio::test]
     async fn test_append_message() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("input", json!("Hello"));
         state.set("role", json!("user"));
 
@@ -161,7 +160,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_history() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let mut history = MessageHistory::new();
         history.add_user_message("Test");
         history.save_to_state(&state).unwrap();

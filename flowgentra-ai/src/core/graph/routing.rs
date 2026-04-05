@@ -25,6 +25,7 @@
 //! edge.with_condition(condition);
 //! ```
 
+use crate::core::state::DynState;
 use serde_json::Value;
 
 /// Unified routing condition that supports both DSL and function-based conditions.
@@ -54,30 +55,30 @@ use serde_json::Value;
 /// });
 /// ```
 #[derive(Clone)]
-pub enum RoutingCondition<T: crate::core::state::State> {
+pub enum RoutingCondition {
     /// Type-safe DSL condition (recommended)
-    DSL(Condition<T>),
+    DSL(Condition),
 
     /// Function-based condition (for custom logic)
     ///
     /// Returns `Some(node_name)` to jump to a specific node,
     /// or `None` to use the default target.
-    Function(FunctionCondition<T>),
+    Function(FunctionCondition),
 }
 
-pub type FunctionCondition<T> =
-    std::sync::Arc<dyn Fn(&T) -> crate::core::error::Result<Option<String>> + Send + Sync>;
+pub type FunctionCondition =
+    std::sync::Arc<dyn Fn(&DynState) -> crate::core::error::Result<Option<String>> + Send + Sync>;
 
-impl<T: crate::core::state::State> RoutingCondition<T> {
+impl RoutingCondition {
     /// Create a DSL-based condition (preferred method)
-    pub fn dsl(condition: Condition<T>) -> Self {
+    pub fn dsl(condition: Condition) -> Self {
         RoutingCondition::DSL(condition)
     }
 
     /// Create a function-based condition
     pub fn function<F>(f: F) -> Self
     where
-        F: Fn(&T) -> crate::core::error::Result<Option<String>> + Send + Sync + 'static,
+        F: Fn(&DynState) -> crate::core::error::Result<Option<String>> + Send + Sync + 'static,
     {
         RoutingCondition::Function(std::sync::Arc::new(f))
     }
@@ -86,12 +87,12 @@ impl<T: crate::core::state::State> RoutingCondition<T> {
     ///
     /// Returns `Some(node)` if the condition specifies a target node,
     /// or `None` if using the default target.
-    pub fn evaluate(&self, state: &T) -> crate::core::error::Result<Option<String>> {
+    pub fn evaluate(&self, state: &DynState) -> crate::core::error::Result<Option<String>> {
         match self {
             RoutingCondition::DSL(condition) => {
                 // DSL-based conditions return boolean:
-                // - true → allow this edge (return Ok(None) to use default target)
-                // - false → block this edge (return Err to signal "don't take this edge")
+                // - true -> allow this edge (return Ok(None) to use default target)
+                // - false -> block this edge (return Err to signal "don't take this edge")
                 if condition.evaluate(state) {
                     Ok(None) // Use the default target from the edge
                 } else {
@@ -108,7 +109,7 @@ impl<T: crate::core::state::State> RoutingCondition<T> {
     ///
     /// For DSL conditions: returns true if condition evaluates to true
     /// For function conditions: returns true if function returns Ok(_)
-    pub fn allows_traversal(&self, state: &T) -> crate::core::error::Result<bool> {
+    pub fn allows_traversal(&self, state: &DynState) -> crate::core::error::Result<bool> {
         match self {
             RoutingCondition::DSL(condition) => Ok(condition.evaluate(state)),
             RoutingCondition::Function(f) => {
@@ -122,7 +123,7 @@ impl<T: crate::core::state::State> RoutingCondition<T> {
     }
 }
 
-impl<T: crate::core::state::State> std::fmt::Debug for RoutingCondition<T> {
+impl std::fmt::Debug for RoutingCondition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RoutingCondition::DSL(cond) => write!(f, "DSL({})", cond),
@@ -131,7 +132,7 @@ impl<T: crate::core::state::State> std::fmt::Debug for RoutingCondition<T> {
     }
 }
 
-impl<T: crate::core::state::State> std::fmt::Display for RoutingCondition<T> {
+impl std::fmt::Display for RoutingCondition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RoutingCondition::DSL(cond) => write!(f, "{}", cond),
@@ -233,7 +234,7 @@ impl std::fmt::Display for ComparisonOp {
 
 /// Type-safe routing condition
 #[derive(Clone)]
-pub enum Condition<T: crate::core::state::State> {
+pub enum Condition {
     /// Compare a field: field op value
     Compare {
         field: String,
@@ -251,18 +252,18 @@ pub enum Condition<T: crate::core::state::State> {
     },
 
     /// Logical AND of conditions
-    And(Vec<Condition<T>>),
+    And(Vec<Condition>),
 
     /// Logical OR of conditions
-    Or(Vec<Condition<T>>),
+    Or(Vec<Condition>),
 
     /// Logical NOT of condition
-    Not(Box<Condition<T>>),
+    Not(Box<Condition>),
 
     /// Custom predicate function
     Custom {
         name: String,
-        predicate: std::sync::Arc<dyn Fn(&T) -> bool + Send + Sync>,
+        predicate: std::sync::Arc<dyn Fn(&DynState) -> bool + Send + Sync>,
     },
 }
 
@@ -291,7 +292,7 @@ impl FieldTypeCheck {
     }
 }
 
-impl<T: crate::core::state::State> Condition<T> {
+impl Condition {
     /// Create a comparison condition
     pub fn compare(field: impl Into<String>, op: ComparisonOp, value: impl Into<Value>) -> Self {
         Condition::Compare {
@@ -315,24 +316,24 @@ impl<T: crate::core::state::State> Condition<T> {
     }
 
     /// Create AND condition
-    pub fn and(conditions: Vec<Condition<T>>) -> Self {
+    pub fn and(conditions: Vec<Condition>) -> Self {
         Condition::And(conditions)
     }
 
     /// Create OR condition
-    pub fn or(conditions: Vec<Condition<T>>) -> Self {
+    pub fn or(conditions: Vec<Condition>) -> Self {
         Condition::Or(conditions)
     }
 
     /// Create NOT condition
-    pub fn not_condition(condition: Condition<T>) -> Self {
+    pub fn not_condition(condition: Condition) -> Self {
         Condition::Not(Box::new(condition))
     }
 
     /// Create custom predicate condition
     pub fn custom<F>(name: impl Into<String>, predicate: F) -> Self
     where
-        F: Fn(&T) -> bool + Send + Sync + 'static,
+        F: Fn(&DynState) -> bool + Send + Sync + 'static,
     {
         Condition::Custom {
             name: name.into(),
@@ -341,7 +342,7 @@ impl<T: crate::core::state::State> Condition<T> {
     }
 
     /// Evaluate the condition against a state
-    pub fn evaluate(&self, state: &T) -> bool {
+    pub fn evaluate(&self, state: &DynState) -> bool {
         match self {
             Condition::Compare { field, op, value } => match state.get(field) {
                 Some(field_value) => op.apply(&field_value, value),
@@ -359,11 +360,11 @@ impl<T: crate::core::state::State> Condition<T> {
             },
 
             Condition::And(conditions) => {
-                conditions.iter().all(|c: &Condition<T>| c.evaluate(state))
+                conditions.iter().all(|c: &Condition| c.evaluate(state))
             }
 
             Condition::Or(conditions) => {
-                conditions.iter().any(|c: &Condition<T>| c.evaluate(state))
+                conditions.iter().any(|c: &Condition| c.evaluate(state))
             }
 
             Condition::Not(condition) => !condition.evaluate(state),
@@ -459,21 +460,21 @@ impl<T: crate::core::state::State> Condition<T> {
     }
 }
 
-impl<T: crate::core::state::State> std::fmt::Debug for Condition<T> {
+impl std::fmt::Debug for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_string_representation())
     }
 }
 
-impl<T: crate::core::state::State> std::fmt::Display for Condition<T> {
+impl std::fmt::Display for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_string_representation())
     }
 }
 
 /// Builder for constructing complex conditions
-pub struct ConditionBuilder<T: crate::core::state::State> {
-    conditions: Vec<Condition<T>>,
+pub struct ConditionBuilder {
+    conditions: Vec<Condition>,
     mode: ConditionMode,
 }
 
@@ -483,7 +484,7 @@ enum ConditionMode {
     Or,
 }
 
-impl<T: crate::core::state::State> ConditionBuilder<T> {
+impl ConditionBuilder {
     /// Create a new builder in AND mode
     pub fn and() -> Self {
         Self {
@@ -501,7 +502,7 @@ impl<T: crate::core::state::State> ConditionBuilder<T> {
     }
 
     /// Add a condition
-    pub fn add_condition(self, condition: Condition<T>) -> Self {
+    pub fn add_condition(self, condition: Condition) -> Self {
         let mut conditions = self.conditions;
         conditions.push(condition);
         Self {
@@ -526,7 +527,7 @@ impl<T: crate::core::state::State> ConditionBuilder<T> {
     }
 
     /// Build the final condition
-    pub fn build(self) -> Condition<T> {
+    pub fn build(self) -> Condition {
         if self.conditions.is_empty() {
             Condition::and(vec![]) // No conditions = always true for AND
         } else if self.conditions.len() == 1 {
@@ -546,7 +547,6 @@ impl<T: crate::core::state::State> ConditionBuilder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
     use serde_json::json;
 
     #[test]
@@ -559,39 +559,38 @@ mod tests {
 
     #[test]
     fn condition_compare() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("confidence", json!(0.9));
 
-        let condition: Condition<SharedState> =
-            Condition::compare("confidence", ComparisonOp::GreaterThan, 0.8);
+        let condition = Condition::compare("confidence", ComparisonOp::GreaterThan, 0.8);
         assert!(condition.evaluate(&state));
     }
 
     #[test]
     fn condition_field_exists() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("field", json!("value"));
 
-        let condition: Condition<SharedState> = Condition::field_exists("field");
+        let condition = Condition::field_exists("field");
         assert!(condition.evaluate(&state));
 
-        let missing: Condition<SharedState> = Condition::field_exists("missing");
+        let missing = Condition::field_exists("missing");
         assert!(!missing.evaluate(&state));
     }
 
     #[test]
     fn condition_and() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("a", json!(true));
         state.set("b", json!(true));
 
-        let condition: Condition<SharedState> = Condition::and(vec![
+        let condition = Condition::and(vec![
             Condition::field_exists("a"),
             Condition::field_exists("b"),
         ]);
         assert!(condition.evaluate(&state));
 
-        let condition: Condition<SharedState> = Condition::and(vec![
+        let condition = Condition::and(vec![
             Condition::field_exists("a"),
             Condition::field_exists("missing"),
         ]);
@@ -600,16 +599,16 @@ mod tests {
 
     #[test]
     fn condition_or() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("a", json!(true));
 
-        let condition: Condition<SharedState> = Condition::or(vec![
+        let condition = Condition::or(vec![
             Condition::field_exists("a"),
             Condition::field_exists("missing"),
         ]);
         assert!(condition.evaluate(&state));
 
-        let condition: Condition<SharedState> = Condition::or(vec![
+        let condition = Condition::or(vec![
             Condition::field_exists("missing1"),
             Condition::field_exists("missing2"),
         ]);
@@ -618,22 +617,21 @@ mod tests {
 
     #[test]
     fn condition_not() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("a", json!(true));
 
-        let condition: Condition<SharedState> =
-            Condition::Not(Box::new(Condition::field_exists("missing")));
+        let condition = Condition::Not(Box::new(Condition::field_exists("missing")));
         assert!(condition.evaluate(&state));
     }
 
     #[test]
     fn condition_builder() {
-        let condition: Condition<SharedState> = ConditionBuilder::and()
+        let condition = ConditionBuilder::and()
             .compare("confidence", ComparisonOp::GreaterThan, 0.8)
             .compare("attempts", ComparisonOp::LessThan, 3)
             .build();
 
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("confidence", json!(0.9));
         state.set("attempts", json!(2));
 
@@ -642,33 +640,30 @@ mod tests {
 
     #[test]
     fn condition_simplify() {
-        let condition: Condition<SharedState> = Condition::Not(Box::new(Condition::Not(Box::new(
+        let condition = Condition::Not(Box::new(Condition::Not(Box::new(
             Condition::field_exists("a"),
         ))));
         let simplified = condition.simplify();
 
         // Should simplify to just field_exists("a")
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("a", json!(true));
         assert!(simplified.evaluate(&state));
     }
 
     #[test]
     fn field_type_check() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         state.set("name", json!("Alice"));
         state.set("age", json!(30));
 
-        let string_check: Condition<SharedState> =
-            Condition::field_type("name", FieldTypeCheck::String);
+        let string_check = Condition::field_type("name", FieldTypeCheck::String);
         assert!(string_check.evaluate(&state));
 
-        let number_check: Condition<SharedState> =
-            Condition::field_type("age", FieldTypeCheck::Number);
+        let number_check = Condition::field_type("age", FieldTypeCheck::Number);
         assert!(number_check.evaluate(&state));
 
-        let wrong_check: Condition<SharedState> =
-            Condition::field_type("name", FieldTypeCheck::Number);
+        let wrong_check = Condition::field_type("name", FieldTypeCheck::Number);
         assert!(!wrong_check.evaluate(&state));
     }
 }

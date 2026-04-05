@@ -109,7 +109,7 @@ impl Agent for ZeroShotReActAgent {
 
     fn initialize(
         &mut self,
-        state: &mut crate::core::state::SharedState,
+        state: &mut crate::core::state::DynState,
     ) -> Result<(), FlowgentraError> {
         // Store agent metadata in state
         state.set(
@@ -131,7 +131,7 @@ impl Agent for ZeroShotReActAgent {
     fn process(
         &self,
         input: &str,
-        _state: &crate::core::state::SharedState,
+        _state: &crate::core::state::DynState,
     ) -> Result<String, FlowgentraError> {
         // For production, this would integrate with actual LLM
         // For now, return structured thinking process
@@ -222,9 +222,9 @@ mod tests {
 
     #[test]
     fn test_process() {
-        use crate::core::state::SharedState;
+        use crate::core::state::DynState;
         let agent = ZeroShotReActAgent::default();
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let result = agent.process("What is 2+2?", &state);
 
         assert!(result.is_ok());
@@ -234,9 +234,9 @@ mod tests {
 
     #[test]
     fn test_initialize() {
-        use crate::core::state::SharedState;
+        use crate::core::state::DynState;
         let mut agent = ZeroShotReActAgent::default();
-        let mut state = SharedState::new(Default::default());
+        let mut state = DynState::new();
 
         assert!(agent.initialize(&mut state).is_ok());
         assert!(state.get("__agent_name").is_some());

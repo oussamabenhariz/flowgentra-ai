@@ -67,7 +67,6 @@ impl InMemoryVectorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_save_and_load() {

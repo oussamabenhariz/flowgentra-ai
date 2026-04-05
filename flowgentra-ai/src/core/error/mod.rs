@@ -224,26 +224,164 @@ impl FlowgentraError {
         }
     }
 
-    /// Get a hint for common error scenarios
+    /// Get a hint for common error scenarios.
+    ///
+    /// Returns a human-readable suggestion that helps developers resolve the error
+    /// without needing to search documentation.
     pub fn hint(&self) -> Option<&'static str> {
         match self {
+            // ── Graph / Node errors ──
             FlowgentraError::NodeNotFound(_) => {
-                Some("Make sure the handler name in config.yaml matches a #[register_handler] function name")
+                Some("Make sure the handler name in config.yaml matches a #[register_handler] \
+                      function name. Run the binary with RUST_LOG=debug to see registered handlers.")
             }
+            FlowgentraError::InvalidEdge(_) => {
+                Some("Edge references a node that was not added to the graph. \
+                      Call builder.add_node(\"name\", ...) before adding edges to it.")
+            }
+            FlowgentraError::CycleDetected => {
+                Some("Your graph has a cycle but no conditional edge routing to END. \
+                      Add .add_conditional_edge(\"node\", router) where the router returns END \
+                      when the termination condition is met.")
+            }
+            FlowgentraError::RecursionLimitExceeded { .. } => {
+                Some("The graph ran more steps than allowed. Either your cycle never terminates \
+                      (add a conditional edge to END) or raise the limit with \
+                      builder.set_max_steps(n).")
+            }
+            FlowgentraError::NoTerminationPath { .. } => {
+                Some("One or more nodes loop back without a path to END. \
+                      Add a conditional edge that routes to END when done.")
+            }
+            FlowgentraError::RoutingError(_) => {
+                Some("The routing function returned an unknown node name. \
+                      Make sure all strings returned by your router are valid node names \
+                      or the END constant.")
+            }
+            // ── State errors ──
             FlowgentraError::StateError(msg) if msg.contains("not found") => {
-                Some("Check that previous nodes set this state field, or set it in main before agent.run()")
+                Some("Check that previous nodes set this state field before reading it. \
+                      Consider initialising the field in the initial state passed to invoke().")
             }
-            FlowgentraError::LLMError(msg) if msg.contains("401") || msg.contains("Unauthorized") => {
-                Some("Check your API key is valid and set correctly (e.g., $MISTRAL_API_KEY environment variable)")
+            FlowgentraError::StateError(msg) if msg.contains("type mismatch") => {
+                Some("A state field was written with a different type than expected. \
+                      Check that all nodes agree on the field's JSON type.")
             }
-            FlowgentraError::TimeoutError | FlowgentraError::ExecutionTimeout(_) => {
-                Some("Increase the timeout value in config.yaml for this node, or optimize handler performance")
+            FlowgentraError::InvalidStateTransition(_) => {
+                Some("A node attempted a state transition that violates a reducer constraint. \
+                      Review the field's #[reducer(...)] annotation and the values being written.")
+            }
+            // ── LLM errors ──
+            FlowgentraError::LLMError(msg)
+                if msg.contains("401") || msg.contains("Unauthorized") =>
+            {
+                Some("Your API key is invalid or expired. \
+                      Check that the correct environment variable is set \
+                      (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY, MISTRAL_API_KEY).")
+            }
+            FlowgentraError::LLMError(msg)
+                if msg.contains("429") || msg.contains("rate limit") =>
+            {
+                Some("You have exceeded the LLM provider's rate limit. \
+                      Add exponential back-off or reduce request frequency. \
+                      Consider enabling the built-in LLM retry middleware.")
+            }
+            FlowgentraError::LLMError(msg)
+                if msg.contains("context_length") || msg.contains("max_tokens") =>
+            {
+                Some("The prompt exceeds the model's context window. \
+                      Truncate conversation history, use message summarisation \
+                      (ConversationMemory::with_summary), or switch to a model with \
+                      a larger context window.")
+            }
+            FlowgentraError::LLMError(msg) if msg.contains("model") => {
+                Some("The specified model name may be incorrect or unavailable for your account. \
+                      Double-check the model field in config.yaml.")
+            }
+            FlowgentraError::LLMError(_) => {
+                Some("An LLM call failed. Enable RUST_LOG=debug to see the full request/response. \
+                      Check network connectivity and provider status page.")
+            }
+            // ── Tool errors ──
+            FlowgentraError::ToolError(msg) if msg.contains("not found") => {
+                Some("The tool was not registered. \
+                      Call registry.register(\"name\", Arc::new(MyTool)) before passing it \
+                      to the agent, or add it via context.with_tool_registry(registry).")
+            }
+            FlowgentraError::ToolError(msg) if msg.contains("already registered") => {
+                Some("A tool with this name is already in the registry. \
+                      Use a unique name or call registry.unregister(\"name\") first.")
+            }
+            FlowgentraError::ValidationError(_) => {
+                Some("A value did not match the expected JSON schema. \
+                      Check the tool's input_schema or the state field's type annotation.")
+            }
+            // ── Config errors ──
+            FlowgentraError::ConfigError(msg) if msg.contains("LLM") => {
+                Some("LLM is not configured in this context. \
+                      Add an `llm:` section to config.yaml or call \
+                      builder.set_context(Context::new().with_llm_config(...)).")
+            }
+            FlowgentraError::ConfigError(msg) if msg.contains("MCP") => {
+                Some("The named MCP server is not configured. \
+                      Add the server under `mcp_servers:` in config.yaml and make sure \
+                      the name matches the one used in the node's `mcps:` list.")
             }
             FlowgentraError::ConfigError(_) => {
-                Some("Ensure config.yaml is valid YAML and all required fields are present")
+                Some("Ensure config.yaml is valid YAML and all required fields are present. \
+                      Run with RUST_LOG=debug for the full parse error.")
             }
+            // ── Runtime / execution ──
+            FlowgentraError::TimeoutError | FlowgentraError::ExecutionTimeout(_) => {
+                Some("A node exceeded its time budget. \
+                      Increase the timeout in config.yaml for this node, \
+                      or optimise the handler (e.g., avoid blocking calls inside async code).")
+            }
+            FlowgentraError::ParallelExecutionError(_) => {
+                Some("One branch of a parallel execution failed. \
+                      Check the inner error message for which branch failed and why.")
+            }
+            FlowgentraError::ExecutionAborted(_) => {
+                Some("Execution was aborted by middleware (e.g., evaluation threshold not met). \
+                      Check evaluation configuration or disable the evaluation middleware.")
+            }
+            // ── MCP errors ──
+            FlowgentraError::MCPTransportError(_) => {
+                Some("Could not connect to the MCP server. \
+                      Check that the server process is running and the endpoint URL is correct. \
+                      This error is safe to retry.")
+            }
+            FlowgentraError::MCPServerError(_) => {
+                Some("The MCP server returned an error response. \
+                      Check the server logs. Do NOT blindly retry — the tool may have executed.")
+            }
+            // ── IO / serialization ──
+            FlowgentraError::IoError(_) => {
+                Some("A file or network I/O operation failed. \
+                      Check file paths, permissions, and network connectivity.")
+            }
+            FlowgentraError::YamlError(_) => {
+                Some("Failed to parse YAML. Validate config.yaml with a YAML linter \
+                      (e.g., yamllint) and check for tabs vs. spaces, missing quotes, etc.")
+            }
+            // ── Context wrapper (unwrap inner hint) ──
             FlowgentraError::Context(_, inner) => inner.hint(),
             _ => None,
+        }
+    }
+
+    /// Format the error with its hint, suitable for displaying to developers.
+    ///
+    /// ```no_run
+    /// use flowgentra_ai::core::error::FlowgentraError;
+    ///
+    /// let err = FlowgentraError::NodeNotFound("my_handler".into());
+    /// eprintln!("{}", err.display_with_hint());
+    /// ```
+    pub fn display_with_hint(&self) -> String {
+        match self.hint() {
+            Some(hint) => format!("{}\n  Hint: {}", self, hint),
+            None => self.to_string(),
         }
     }
 }

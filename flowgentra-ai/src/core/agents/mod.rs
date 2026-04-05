@@ -75,14 +75,14 @@ pub trait Agent: Send + Sync {
     /// Initialize agent with state
     fn initialize(
         &mut self,
-        state: &mut crate::core::state::SharedState,
+        state: &mut crate::core::state::DynState,
     ) -> Result<(), FlowgentraError>;
 
     /// Process user input and generate response
     fn process(
         &self,
         input: &str,
-        state: &crate::core::state::SharedState,
+        state: &crate::core::state::DynState,
     ) -> Result<String, FlowgentraError>;
 
     /// Get agent configuration

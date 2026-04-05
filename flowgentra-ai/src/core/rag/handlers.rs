@@ -3,7 +3,7 @@
 //! Ready-to-use handlers for common RAG patterns.
 
 use crate::core::error::Result;
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -44,15 +44,15 @@ impl RAGHandlers {
     ///
     /// Reads `doc_id` and `doc_text` from state, generates an embedding,
     /// and indexes the document with the embedding attached.
-    pub fn index_handler<T: State>(
+    pub fn index_handler(
         vector_store: Arc<VectorStore>,
         embeddings: Arc<Embeddings>,
-    ) -> impl Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>
+    ) -> impl Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
            + Send
            + Sync
            + Clone
            + 'static {
-        move |state: T| {
+        move |state: DynState| {
             let store = Arc::clone(&vector_store);
             let emb = Arc::clone(&embeddings);
 
@@ -101,16 +101,16 @@ impl RAGHandlers {
     }
 
     /// Handler: Retrieve relevant documents with token-budget-aware context
-    pub fn retrieval_handler<T: State>(
+    pub fn retrieval_handler(
         vector_store: Arc<VectorStore>,
         embeddings: Arc<Embeddings>,
         config: RAGNodeConfig,
-    ) -> impl Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>
+    ) -> impl Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
            + Send
            + Sync
            + Clone
            + 'static {
-        move |state: T| {
+        move |state: DynState| {
             let store = Arc::clone(&vector_store);
             let emb = Arc::clone(&embeddings);
             let cfg = config.clone();
@@ -211,18 +211,18 @@ impl RAGHandlers {
     /// Handler: Augment LLM prompt with retrieved context (token-budget aware)
     ///
     /// Includes source attribution markers for each chunk.
-    pub fn augment_prompt_handler<T: State>(
+    pub fn augment_prompt_handler(
         context_key: String,
         prompt_key: String,
         max_context_chars: Option<usize>,
-    ) -> impl Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>
+    ) -> impl Fn(DynState) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DynState>> + Send>>
            + Send
            + Sync
            + Clone
            + 'static {
         let budget = max_context_chars.unwrap_or(4000);
 
-        move |state: T| {
+        move |state: DynState| {
             let ctx_key = context_key.clone();
             let pmpt_key = prompt_key.clone();
             let max_chars = budget;

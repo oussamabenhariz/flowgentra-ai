@@ -10,21 +10,21 @@ The graph engine is the core of FlowgentraAI. Build workflows as directed graphs
 
 ### StateGraph Builder
 
-Build workflows programmatically with type-safe state:
+Build workflows programmatically with dynamic state:
 
 ```rust
-use flowgentra_ai::core::state_graph::StateGraphBuilder;
-use flowgentra_ai::core::state::PlainState;
+use flowgentra_ai::prelude::*;
 
 let graph = StateGraphBuilder::new()
-    .add_fn("step1", process_input)
-    .add_fn("step2", generate_output)
+    .add_node("step1", Box::new(FunctionNode::new(process_input)))
+    .add_node("step2", Box::new(FunctionNode::new(generate_output)))
     .set_entry_point("step1")
     .add_edge("step1", "step2")
     .add_edge("step2", "__end__")
     .compile()?;
 
-let result = graph.run(initial_state).await?;
+let state = DynState::new();
+let result = graph.invoke(state).await?;
 ```
 
 ### Conditional Routing
@@ -38,14 +38,13 @@ builder.add_conditional_edge("classify", |state| {
         .unwrap_or("default");
     Ok(category.to_string())
 })
-```
 
 ### Async Conditional Edges
 
 For routing decisions that need async operations (API calls, DB lookups):
 
 ```rust
-builder.add_async_conditional_edge("check", Box::new(|state| {
+builder.add_conditional_edge("check", Box::new(|state| {
     Box::pin(async move {
         let result = call_external_api(&state).await?;
         Ok(result.next_step)
@@ -59,95 +58,60 @@ Nest entire graphs as single nodes inside a parent graph:
 
 ```rust
 let inner_graph = StateGraphBuilder::new()
-    .add_fn("a", step_a)
-    .add_fn("b", step_b)
+    .add_node("a", Box::new(FunctionNode::new(step_a)))
+    .add_node("b", Box::new(FunctionNode::new(step_b)))
     .set_entry_point("a")
     .add_edge("a", "b")
     .add_edge("b", "__end__")
     .compile()?;
 
 let outer = StateGraphBuilder::new()
-    .add_subgraph("inner", inner_graph)
-    .add_fn("final", finalize)
+    .add_node("inner", Box::new(FunctionNode::new(move |state| {
+        let g = inner_graph.clone();
+        Box::pin(async move { g.invoke(state).await })
+    })))
+    .add_node("final", Box::new(FunctionNode::new(finalize)))
     .set_entry_point("inner")
     .add_edge("inner", "final")
     .add_edge("final", "__end__")
     .compile()?;
 ```
 
-### Parallel Execution
-
-Run branches concurrently and merge results:
-
-```rust
-use flowgentra_ai::core::runtime::parallel::{ParallelExecutor, JoinType};
-
-let executor = ParallelExecutor::new()
-    .with_join_type(JoinType::WaitAll)
-    .with_timeout(Duration::from_secs(30))
-    .with_continue_on_error(true);
-
-let result = executor.execute(branches, state).await?;
-```
-
-Join strategies: `WaitAll`, `WaitAny`, `WaitCount(n)`, `WaitTimeout`.
-
 ### Graph Export
 
 Visualize your graph in multiple formats:
 
 ```rust
-let graph = builder.compile()?;
-
 // Graphviz DOT
 let dot = graph.to_dot();
 
-// Mermaid (for Markdown docs)
+// Mermaid (for Markdown docs)  
 let mermaid = graph.to_mermaid();
 
 // JSON (for custom tooling)
 let json = graph.to_json();
 ```
 
-### Human-in-the-Loop
-
-Pause execution for human review, then resume with modified state:
-
-```rust
-let graph = StateGraphBuilder::new()
-    .add_fn("draft", draft_response)
-    .add_fn("send", send_response)
-    .set_entry_point("draft")
-    .interrupt_before("send")  // Pause here for approval
-    .add_edge("draft", "send")
-    .add_edge("send", "__end__")
-    .compile()?;
-
-// Later, resume with edits
-let result = graph.resume_with_state("thread-1", updated_state).await?;
-```
-
 ### MessageGraphBuilder
 
-A convenience wrapper for chat-focused workflows with automatic message accumulation:
+A specialized builder for chat workflows with automatic message accumulation:
 
 ```rust
 use flowgentra_ai::prelude::*;
 
 let graph = MessageGraphBuilder::new()
-    .add_fn("echo", |state: &PlainState| {
-        let messages = MessageGraphBuilder::get_messages(state);
-        let last = messages.last().map(|m| m.content.clone()).unwrap_or_default();
-        let mut s = state.clone();
-        s = MessageGraphBuilder::add_message(s, Message::assistant(format!("Echo: {}", last)));
-        Box::pin(async move { Ok(s) })
-    })
+    .add_node("echo", Box::new(FunctionNode::new(|state| {
+        Box::pin(async move {
+            let state_clone = state.clone();
+            Ok(state_clone)
+        })
+    })))
     .set_entry_point("echo")
     .add_edge("echo", "__end__")
     .compile()?;
 
-let state = MessageGraphBuilder::initial_state(vec![Message::user("Hello")]);
-let result = graph.invoke(state).await?;
+let mut state = MessageState::default();
+let result = graph.invoke(&state).await?;
 ```
 
 ### ToolNode
@@ -180,23 +144,29 @@ let state = store_tool_calls(state, &llm_response);
 
 ## State Management
 
-### PlainState and SharedState
+### DynState
 
-Two state containers for different needs:
+A flexible, dynamic key-value state container for graph workflows:
 
 ```rust
-// Owned state (single-threaded, fast)
-let mut state = PlainState::new();
-state.set("key", json!("value"));
+use flowgentra_ai::prelude::*;
+use serde_json::json;
 
-// Thread-safe state (concurrent access)
-let state = SharedState::new();
+// Create new state
+let state = DynState::new();
+
+// Set values
 state.set("key", json!("value"));
+state.set("count", json!(42));
+
+// Get values
+if let Some(val) = state.get("key") {
+    println!("Value: {}", val);
+}
+
+// Clone for immutability
+let cloned = state.clone();
 ```
-
-### ScopedState
-
-Namespaced state isolation prevents key collisions between nodes:
 
 ```rust
 use flowgentra_ai::core::state::ScopedState;

@@ -10,7 +10,7 @@
 //! - **Variable tracking** - Monitor state changes
 //! - **Error context** - Rich error information
 
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -105,7 +105,7 @@ impl ExecutionDebugInfo {
     }
 
     /// Record a snapshot
-    pub fn record_snapshot<T: State>(&mut self, node: &str, step: usize, state: &T) {
+    pub fn record_snapshot(&mut self, node: &str, step: usize, state: &DynState) {
         let state_value = state.to_value(); // Add explicit type annotation if needed
         let state_size = serde_json::to_string(&state_value)
             .map(|s| s.len())

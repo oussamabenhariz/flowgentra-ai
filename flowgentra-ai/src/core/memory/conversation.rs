@@ -35,6 +35,12 @@ pub struct InMemoryConversationMemory {
     store: RwLock<HashMap<String, Vec<Message>>>,
     /// If set, only the last N messages are kept when adding (sliding window).
     max_messages: Option<usize>,
+    /// Optional system prompt to always include
+    system_prompt: Option<String>,
+    /// Initial messages to load (e.g., system message, examples)
+    initial_messages: Vec<Message>,
+    /// Threshold for auto-summarization (in tokens). None = disabled.
+    summarize_threshold: Option<usize>,
 }
 
 impl InMemoryConversationMemory {
@@ -42,12 +48,33 @@ impl InMemoryConversationMemory {
         Self {
             store: RwLock::new(HashMap::new()),
             max_messages: None,
+            system_prompt: None,
+            initial_messages: Vec::new(),
+            summarize_threshold: None,
         }
     }
 
     /// Set a sliding window: only keep the last N messages per thread.
     pub fn with_max_messages(mut self, max: usize) -> Self {
         self.max_messages = Some(max);
+        self
+    }
+
+    /// Set a system prompt to be included in responses.
+    pub fn with_system_prompt(mut self, prompt: String) -> Self {
+        self.system_prompt = Some(prompt);
+        self
+    }
+
+    /// Set initial messages to load for new threads.
+    pub fn with_initial_messages(mut self, messages: Vec<Message>) -> Self {
+        self.initial_messages = messages;
+        self
+    }
+
+    /// Set a threshold for auto-summarization (in estimated tokens).
+    pub fn with_summarize_threshold(mut self, threshold: usize) -> Self {
+        self.summarize_threshold = Some(threshold);
         self
     }
 
@@ -58,6 +85,21 @@ impl InMemoryConversationMemory {
             m.max_messages = Some(max);
         }
         m
+    }
+
+    /// Estimate tokens in a message (~4 chars per token)
+    fn estimate_tokens(msg: &Message) -> usize {
+        (msg.content.len() + 10) / 4
+    }
+
+    /// Get system prompt as a message if configured.
+    pub fn get_system_prompt(&self) -> Option<Message> {
+        self.system_prompt.as_ref().map(|prompt| Message::system(prompt.clone()))
+    }
+
+    /// Get all initial messages.
+    pub fn get_initial_messages(&self) -> Vec<Message> {
+        self.initial_messages.clone()
     }
 }
 
@@ -74,12 +116,45 @@ impl ConversationMemory for InMemoryConversationMemory {
             .write()
             .map_err(|e| crate::core::error::FlowgentraError::StateError(e.to_string()))?;
         let list = guard.entry(thread_id.to_string()).or_default();
+
+        // Initialize with system prompt + initial messages on first call
+        if list.is_empty() {
+            if let Some(system_msg) = self.get_system_prompt() {
+                list.push(system_msg);
+            }
+            list.extend(self.get_initial_messages());
+        }
+
         list.push(message);
+
+        // Apply sliding window (max_messages)
         if let Some(max) = self.max_messages {
             if list.len() > max {
                 list.drain(0..(list.len() - max));
             }
         }
+
+        // Apply auto-summarization if threshold exceeded
+        if let Some(threshold) = self.summarize_threshold {
+            let total_tokens: usize = list.iter().map(Self::estimate_tokens).sum();
+            if total_tokens > threshold {
+                // Keep system messages and recent messages, but flag old ones for potential summarization
+                // For now, just remove oldest non-system messages to stay under budget
+                let mut idx = 0;
+                while idx < list.len() - 1 {
+                    let total_tokens: usize = list.iter().map(Self::estimate_tokens).sum();
+                    if total_tokens <= threshold {
+                        break;
+                    }
+                    if !list[idx].is_system() {
+                        list.remove(idx);
+                    } else {
+                        idx += 1;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

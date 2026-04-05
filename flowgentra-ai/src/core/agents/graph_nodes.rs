@@ -10,7 +10,7 @@
 use super::builders::PrebuiltAgentConfig;
 use crate::core::error::FlowgentraError;
 use crate::core::llm::{LLMClient, LLMConfig, LLMProvider, Message};
-use crate::core::state::SharedState;
+use crate::core::state::DynState;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -200,7 +200,7 @@ impl AgentReasoningNode {
         Self { config }
     }
 
-    pub async fn execute(&self, state: &SharedState) -> Result<SharedState, FlowgentraError> {
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
         let client = create_client_from_config(&self.config)?;
 
         // Build the user prompt with tools and input
@@ -302,7 +302,7 @@ impl ToolExecutorNode {
         self
     }
 
-    pub async fn execute(&self, state: &SharedState) -> Result<SharedState, FlowgentraError> {
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
         let tool_name = state
             .get("pending_tool_name")
             .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -359,7 +359,7 @@ impl ConversationalNode {
         Self { config }
     }
 
-    pub async fn execute(&self, state: &SharedState) -> Result<SharedState, FlowgentraError> {
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
         let client = create_client_from_config(&self.config)?;
 
         let input = state
@@ -411,7 +411,7 @@ impl ConversationalNode {
 ///
 /// Returns `"tool_executor"` if the LLM response contains a tool call,
 /// or `"END"` if the agent has reached a final answer.
-pub fn reasoning_router(state: &SharedState) -> Result<String, FlowgentraError> {
+pub fn reasoning_router(state: &DynState) -> Result<String, FlowgentraError> {
     let needs_tool = state
         .get("needs_tool")
         .and_then(|v| v.as_bool())
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_reasoning_router_needs_tool() {
-        let state = SharedState::default();
+        let state = DynState::default();
         state.set("needs_tool", serde_json::json!(true));
         let result = reasoning_router(&state).unwrap();
         assert_eq!(result, "tool_executor");
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_reasoning_router_end() {
-        let state = SharedState::default();
+        let state = DynState::default();
         state.set("needs_tool", serde_json::json!(false));
         let result = reasoning_router(&state).unwrap();
         assert_eq!(result, "END");
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_reasoning_router_default() {
-        let state = SharedState::default();
+        let state = DynState::default();
         // No "needs_tool" key — should default to END
         let result = reasoning_router(&state).unwrap();
         assert_eq!(result, "END");

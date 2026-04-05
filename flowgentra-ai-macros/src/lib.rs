@@ -1,117 +1,174 @@
+use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
-// use syn::parse::Parse;
-use convert_case::Casing;
+use syn::{parse_macro_input, Data, DeriveInput, Fields, ItemFn};
 
-/// Procedural macro to derive the State trait and generate StateUpdate, reducers, and setters
-#[proc_macro_derive(State, attributes(state))]
+/// Derive the `State` trait for a struct.
+///
+/// Generates:
+/// - A `{Name}Update` struct with all fields wrapped in `Option<T>`
+/// - Builder methods on the update struct for ergonomic partial updates
+/// - `State` trait impl with `type Update` and `apply_update` using per-field reducers
+///
+/// # Attributes
+///
+/// Two equivalent syntaxes are supported for configuring per-field reducers:
+///
+/// **Ident syntax** — `#[reducer(Kind)]`:
+/// - `Overwrite` (default) — replaces the value
+/// - `Append` — extends `Vec<T>` fields
+/// - `Sum` — adds numeric fields
+/// - `MergeMap` — merges `HashMap` fields
+///
+/// **String syntax** — `#[state(reducer = "kind")]` (LangGraph-style):
+/// - `"overwrite"` / `"replace"` / `"last_value"` → `Overwrite`
+/// - `"append"` / `"topic"` → `Append`
+/// - `"sum"` → `Sum`
+/// - `"merge_map"` / `"merge"` → `MergeMap`
+///
+/// # Example
+///
+/// ```ignore
+/// use flowgentra_ai::prelude::*;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(State, Clone, Debug, Serialize, Deserialize)]
+/// struct AgentState {
+///     query: String,
+///
+///     // Ident syntax
+///     #[reducer(Append)]
+///     messages: Vec<Message>,
+///
+///     result: Option<String>,
+///
+///     // String syntax
+///     #[state(reducer = "sum")]
+///     retry_count: i32,
+/// }
+///
+/// // Nodes return partial updates:
+/// let update = AgentStateUpdate::new()
+///     .result(Some("done".into()));
+/// ```
+#[proc_macro_derive(State, attributes(reducer, state))]
 pub fn derive_state(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = &input.ident;
     let vis = &input.vis;
 
-    // Collect fields and their types
+    // Use relative crate path - macros always work relative to the target crate
+    let flowgentra_ai_crate = quote! { crate };
+
     let fields = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields_named) => &fields_named.named,
-            _ => panic!("State must be a struct with named fields"),
+            _ => panic!("#[derive(State)] requires a struct with named fields"),
         },
-        _ => panic!("State must be a struct"),
+        _ => panic!("#[derive(State)] requires a struct"),
     };
 
-    let mut update_fields = Vec::new();
-    let mut update_setters = Vec::new();
-    let mut reducer_fields = Vec::new();
-    let mut reducer_inits = Vec::new();
+    let update_name = format_ident!("{}Update", struct_name);
+
+    let mut update_field_defs = Vec::new();
+    let mut update_defaults = Vec::new();
+    let mut setters = Vec::new();
+    let mut apply_arms = Vec::new();
 
     for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
-        let field_ty = &field.ty;
-        // Find reducer attribute
-        let mut reducer = quote! { ::flowgentra_ai::core::reducer::Overwrite };
+        let name = field.ident.as_ref().unwrap();
+        let ty = &field.ty;
+
+        // Parse reducer from either #[reducer(Kind)] or #[state(reducer = "kind")].
+        // Default to Overwrite.
+        let mut reducer_path = quote! { #flowgentra_ai_crate::core::reducer::Overwrite };
         for attr in &field.attrs {
+            // ── #[reducer(Kind)] ─────────────────────────────────────────────
+            if attr.path().is_ident("reducer") {
+                if let Ok(ident) = attr.parse_args::<syn::Ident>() {
+                    reducer_path = quote! { #flowgentra_ai_crate::core::reducer::#ident };
+                }
+                break;
+            }
+            // ── #[state(reducer = "string")] ─────────────────────────────────
             if attr.path().is_ident("state") {
+                // parse as a key = "value" meta
                 let _ = attr.parse_nested_meta(|meta| {
                     if meta.path.is_ident("reducer") {
-                        if let Ok(buf) = meta.value() {
-                            if let Ok(litstr) = buf.parse::<syn::LitStr>() {
-                                let reducer_ident = format_ident!(
-                                    "{}",
-                                    litstr.value().to_case(convert_case::Case::UpperCamel)
-                                );
-                                reducer = quote! { ::flowgentra_ai::core::reducer::#reducer_ident };
-                            }
-                        }
+                        let value: syn::LitStr = meta.value()?.parse()?;
+                        let kind = match value.value().to_lowercase().as_str() {
+                            "append" | "topic" => "Append",
+                            "sum" => "Sum",
+                            "merge_map" | "merge" => "MergeMap",
+                            // "overwrite" | "replace" | "last_value" | _ → Overwrite (default)
+                            _ => "Overwrite",
+                        };
+                        let kind_ident = format_ident!("{}", kind);
+                        reducer_path = quote! { #flowgentra_ai_crate::core::reducer::#kind_ident };
                     }
                     Ok(())
                 });
+                break;
             }
         }
-        update_fields.push(quote! { pub #field_name: Option<#field_ty> });
-        let setter_name = format_ident!("set_{}", field_name);
-        update_setters.push(quote! {
-            pub fn #setter_name(mut self, value: #field_ty) -> Self {
-                self.#field_name = Some(value);
+
+        // Update struct: all fields are Option<T>
+        update_field_defs.push(quote! {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub #name: Option<#ty>
+        });
+        update_defaults.push(quote! { #name: None });
+
+        // Builder setter
+        setters.push(quote! {
+            pub fn #name(mut self, value: #ty) -> Self {
+                self.#name = Some(value);
                 self
             }
         });
-        reducer_fields.push(quote! { pub #field_name: fn(&mut #field_ty, #field_ty) });
-        reducer_inits.push(quote! { #field_name: <#reducer as ::flowgentra_ai::core::reducer::Reducer<#field_ty>>::merge });
+
+        // apply_update arm: apply reducer if field is Some
+        apply_arms.push(quote! {
+            if let Some(value) = update.#name {
+                <#reducer_path as #flowgentra_ai_crate::core::reducer::Reducer<#ty>>::merge(
+                    &mut self.#name,
+                    value,
+                );
+            }
+        });
     }
 
-    let update_struct = format_ident!("StateUpdate__{}", struct_name);
-    let reducers_struct = format_ident!("Reducers__{}", struct_name);
-
     let expanded = quote! {
-        impl ::flowgentra_ai::core::state::State for #struct_name {}
-
+        /// Partial update struct — all fields are `Option<T>`.
+        ///
+        /// Nodes return this to indicate which fields changed.
+        /// Only `Some` fields are applied via their configured reducer.
         #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-        #vis struct #update_struct {
-            #(#update_fields,)*
+        #vis struct #update_name {
+            #(#update_field_defs,)*
         }
 
-        impl #update_struct {
-            pub fn new() -> Self {
-                Self { #( #update_fields: None, )* }
-            }
-            #(#update_setters)*
-        }
-
-        #vis struct #reducers_struct {
-            #(#reducer_fields,)*
-        }
-
-        impl #reducers_struct {
+        impl #update_name {
+            /// Create an empty update (all fields `None`).
             pub fn new() -> Self {
                 Self {
-                    #(#reducer_inits,)*
+                    #(#update_defaults,)*
                 }
+            }
+
+            #(#setters)*
+        }
+
+        impl #flowgentra_ai_crate::core::state::State for #struct_name {
+            type Update = #update_name;
+
+            fn apply_update(&mut self, update: Self::Update) {
+                #(#apply_arms)*
             }
         }
     };
+
     TokenStream::from(expanded)
 }
-// # FlowgentraAI Handler Registration Macro
-//
-// Provides the `#[register_handler]` attribute for automatic handler registration.
-//
-// ## Quick Start
-//
-// ```ignore
-// use flowgentra_ai::prelude::*;
-//
-// #[register_handler]
-// pub async fn my_handler(mut state: State) -> Result<State> {
-//     state.set("output", json!("processed"));
-//     Ok(state)
-// }
-//
-// // Create agent - handler auto-discovered!
-// let agent = from_config_path("config.yaml")?;
-// ```
-
-use proc_macro::TokenStream;
-use syn::ItemFn;
 
 /// Register a handler function for automatic discovery.
 ///
@@ -125,25 +182,16 @@ use syn::ItemFn;
 ///
 /// Decorated function must be:
 /// - `pub async fn`
-/// - Takes single `State` parameter (mut or immutable)
-/// - Returns `Result<State>`
+/// - Takes `(&S, &Context)` parameters
+/// - Returns `Result<S::Update>`
 ///
 /// # Example
 ///
 /// ```ignore
 /// #[register_handler]
-/// pub async fn validate_input(mut state: State) -> Result<State> {
-///     let input = state.get("input").and_then(|v| v.as_str()).unwrap_or("");
-///     state.set("valid", json!(!input.is_empty()));
-///     Ok(state)
+/// pub async fn validate_input(state: &MyState, ctx: &Context) -> Result<MyStateUpdate> {
+///     Ok(MyStateUpdate::new().valid(!state.input.is_empty()))
 /// }
-/// ```
-///
-/// Then in your config.yaml:
-/// ```yaml
-/// nodes:
-///   - name: "step1"
-///     handler: "validate_input"  # Matches function name
 /// ```
 #[proc_macro_attribute]
 pub fn register_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -158,7 +206,7 @@ pub fn register_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
         inventory::submit! {
             flowgentra_ai::core::agent::HandlerEntry::new(
                 #handler_name,
-                std::sync::Arc::new(|state| Box::pin(#func_name(state)))
+                std::sync::Arc::new(|state, ctx| Box::pin(#func_name(state, ctx)))
             )
         }
     };
@@ -166,31 +214,58 @@ pub fn register_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Attribute macro to turn an `async fn(&S) -> Result<S>` into a `FunctionNode`.
+/// Attribute macro to turn an `async fn` into a `FunctionNode`.
 ///
 /// Generates a factory function `{name}_node()` that returns
 /// `Arc<FunctionNode<S, _>>` for use with `StateGraphBuilder::add_node`.
 ///
-/// # Example
+/// If the function has **no return type**, the macro infers it from the first
+/// parameter (`state: &MyState` → `Result<MyStateUpdate>`) and wraps the last
+/// expression in `Ok(...)` automatically.
+///
+/// # Example — minimal form (no return type, no `Ok`)
 ///
 /// ```ignore
 /// use flowgentra_ai_macros::node;
 ///
 /// #[node]
-/// async fn summarize(state: &PlainState) -> flowgentra_ai::core::state_graph::error::Result<PlainState> {
-///     let mut s = state.clone();
-///     s.set("summary", serde_json::json!("done"));
-///     Ok(s)
+/// async fn summarize(state: &MyState, _ctx: &Context) {
+///     update! { summary: "done".into() }
 /// }
 ///
 /// // Use: graph.add_node("summarize", summarize_node())
 /// ```
+///
+/// # Example — explicit form (full control)
+///
+/// ```ignore
+/// #[node]
+/// async fn summarize(state: &MyState, _ctx: &Context) -> Result<MyStateUpdate> {
+///     Ok(update! { summary: "done".into() })
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn node(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemFn);
+    let mut input = parse_macro_input!(item as ItemFn);
     let func_name = &input.sig.ident;
     let node_factory_name = format_ident!("{}_node", func_name);
     let node_name_str = func_name.to_string();
+
+    // If no return type is written, infer it from `state: &MyState` → `Result<MyStateUpdate>`
+    // and wrap the last expression in `Ok(...)`.
+    if matches!(input.sig.output, syn::ReturnType::Default) {
+        if let Some(update_ident) = extract_update_ident(&input.sig.inputs) {
+            input.sig.output = syn::parse_quote! {
+                -> flowgentra_ai::core::state_graph::error::Result<#update_ident>
+            };
+
+            // Wrap the tail expression (last stmt with no semicolon) in Ok(...)
+            if let Some(syn::Stmt::Expr(expr, None)) = input.block.stmts.last_mut() {
+                let inner = expr.clone();
+                *expr = syn::parse_quote! { Ok(#inner) };
+            }
+        }
+    }
 
     let expanded = quote! {
         #input
@@ -199,15 +274,33 @@ pub fn node(_attr: TokenStream, item: TokenStream) -> TokenStream {
         pub fn #node_factory_name() -> std::sync::Arc<
             flowgentra_ai::core::state_graph::node::FunctionNode<
                 _,
-                impl Fn(&_) -> std::pin::Pin<Box<dyn std::future::Future<Output = flowgentra_ai::core::state_graph::error::Result<_>> + Send>> + Send + Sync,
+                impl Fn(&_, &flowgentra_ai::core::state::Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = flowgentra_ai::core::state_graph::error::Result<_>> + Send>> + Send + Sync,
             >
         > {
             std::sync::Arc::new(flowgentra_ai::core::state_graph::node::FunctionNode::new(
                 #node_name_str,
-                |state| Box::pin(#func_name(state)),
+                |state, ctx| Box::pin(#func_name(state, ctx)),
             ))
         }
     };
 
     TokenStream::from(expanded)
+}
+
+/// Extract `MyStateUpdate` ident from `state: &MyState` (first function parameter).
+fn extract_update_ident(
+    inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
+) -> Option<syn::Ident> {
+    let first = inputs.first()?;
+    let syn::FnArg::Typed(pat_type) = first else {
+        return None;
+    };
+    let syn::Type::Reference(type_ref) = pat_type.ty.as_ref() else {
+        return None;
+    };
+    let syn::Type::Path(type_path) = type_ref.elem.as_ref() else {
+        return None;
+    };
+    let state_ident = &type_path.path.segments.last()?.ident;
+    Some(format_ident!("{}Update", state_ident))
 }

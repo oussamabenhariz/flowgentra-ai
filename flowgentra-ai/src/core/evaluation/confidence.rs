@@ -394,13 +394,13 @@ fn has_descriptive_keys(obj: &serde_json::Map<String, Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
+    use crate::core::state::DynState;
     use serde_json::json;
 
     #[test]
     fn test_confidence_score_string() {
         let config = ConfidenceConfig::default();
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
 
         let output = json!("This is a comprehensive response with details");
         let score = ConfidenceScorer::score(&output, None, &state, "test", &config);
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn test_confidence_score_object() {
         let config = ConfidenceConfig::default();
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
 
         let output = json!({"result": "ok", "status": "success", "data": [1,2,3]});
         let score = ConfidenceScorer::score(&output, None, &state, "test", &config);
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn test_confidence_level_categorization() {
         let config = ConfidenceConfig::default();
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
 
         let low_output = json!("");
         let low_score = ConfidenceScorer::score(&low_output, None, &state, "test", &config);

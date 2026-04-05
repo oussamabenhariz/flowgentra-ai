@@ -1,22 +1,33 @@
-//! FlowgentraAI - Simple Example
+//! FlowgentraAI - Example
 //!
-//! This is a basic example showing how to use FlowgentraAI to create and run an agent.
-//! For more complex examples, see the `examples/` directory.
-//!
-//! Run with: `cargo run --example simple_example`
+//! This example demonstrates how to define and use custom typed states.
+//! With the new architecture, users define their own states using the #[derive(State)] macro.
+//!\
+//! For detailed examples, see: examples/typed_states.rs
 
-use flowgentra_ai::prelude::*;
-
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
     println!("=== FlowgentraAI Example ===\n");
 
-    // Create initial state
-    let state = PlainState::new();
+    println!("Welcome to FlowgentraAI!");
+    println!("\nWith the refactored state system, you can now:");
+    println!("  ✓ Define custom state types with #[derive(State)]");
+    println!("  ✓ Control field merge behavior with #[reducer(...)]");
+    println!("  ✓ Build type-safe graphs with StateGraph<S: State>");
+    println!("  ✓ Get full IDE support with compile-time type checking\n");
 
-    println!("Initial state: {}\n", state.to_json_string()?);
+    println!("For examples, run:");
+    println!("  cargo run --example typed_states\n");
 
-    // Example state completed
-    println!("✓ Example completed successfully!");
-    Ok(())
+    println!("Quick start:");
+    println!("  use flowgentra_ai::prelude::*;");
+    println!("  use serde::{{Serialize, Deserialize}};\n");
+
+    println!("  #[derive(State, Clone, Debug, Serialize, Deserialize)]");
+    println!("  struct MyState {{");
+    println!("      input: String,");
+    println!("      #[reducer(Append)]");
+    println!("      messages: Vec<Message>,");
+    println!("  }}\n");
+
+    println!("✓ Ready to build workflows!");
 }

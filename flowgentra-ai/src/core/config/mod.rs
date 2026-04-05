@@ -738,15 +738,15 @@ impl AgentConfig {
     /// Users can then set actual values via `state.set()`.
     ///
     /// Create initial state from config
-    /// Uses SharedState (the default state type) for state creation
+    /// Uses DynState (the default state type) for state creation
     ///
     /// # Example
     /// ```ignore
     /// let config = AgentConfig::from_file("agent.yaml")?;
     /// let state = config.create_initial_state();
     /// ```
-    pub fn create_initial_state(&self) -> crate::core::state::SharedState {
-        let state = crate::core::state::SharedState::new(crate::core::state::PlainState::new());
+    pub fn create_initial_state(&self) -> crate::core::state::DynState {
+        let state = crate::core::state::DynState::new();
 
         // Initialize all schema fields with null
         for key in self.state_schema.keys() {
@@ -760,13 +760,13 @@ impl AgentConfig {
     ///
     /// Returns Ok(()) if validation passes, Err if configured schema
     /// validation fails or if schema is not configured.
-    pub fn validate_state<T: crate::core::state::State>(
+    pub fn validate_state(
         &self,
-        state: &T,
+        state: &crate::core::state::DynState,
     ) -> crate::core::error::Result<()> {
         if let Some(schema) = &self.validation_schema {
             schema
-                .validate(state)
+                .validate_state(state)
                 .map_err(|errors: Vec<ValidationError>| {
                     let error_msgs = errors
                         .iter()

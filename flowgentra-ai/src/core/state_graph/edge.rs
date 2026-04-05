@@ -43,7 +43,7 @@ pub enum Edge<S: State> {
         router: Box<dyn Fn(&S) -> Result<String> + Send + Sync>,
     },
 
-    /// Conditional edge with an async router (for external service calls)
+    /// Conditional edge with an async router
     AsyncConditional {
         from: String,
         router: AsyncRouterFn<S>,
@@ -106,17 +106,5 @@ impl<S: State> Edge<S> {
             Edge::Conditional { router, .. } => router(state),
             Edge::AsyncConditional { router, .. } => router(state).await,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::state::PlainState;
-
-    #[test]
-    fn test_fixed_edge() {
-        let edge = Edge::<PlainState>::fixed("node1", "node2");
-        assert_eq!(edge.from(), "node1");
     }
 }

@@ -64,8 +64,13 @@ tower = { version = "0.4", features = ["util", "retry", "timeout"] }
 # PDF text extraction
 pdf-extract = "0.7"
 
+# Metrics (Prometheus)
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false, features = ["http-listener"] }
+
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 [features]
 
@@ -76,5 +81,9 @@ path = "src/lib.rs"
 [[bin]]
 name = "flowgentra-ai"
 path = "src/main.rs"
+
+[[bench]]
+name = "execution_benchmarks"
+harness = false
 
 

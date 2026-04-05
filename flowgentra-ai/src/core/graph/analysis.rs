@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_empty_graph() -> Result<()> {
-        let graph: Graph<crate::core::state::SharedState> = Graph::new();
+        let graph: Graph<crate::core::state::DynState> = Graph::new();
         let analysis = GraphAnalyzer::analyze(&graph)?;
         assert_eq!(analysis.parallelism_level, 1);
         Ok(())

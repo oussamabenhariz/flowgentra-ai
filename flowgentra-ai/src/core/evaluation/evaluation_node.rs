@@ -3,7 +3,7 @@
 //! Public-facing wrapper that encapsulates the runner.
 
 use crate::core::error::Result;
-use crate::core::state::SharedState;
+use crate::core::state::DynState;
 use super::evaluation_node_runner::{EvaluationNodeRunner, EvaluationResult};
 
 /// An evaluation node combines a handler with automatic retry logic.
@@ -62,7 +62,7 @@ impl EvaluationNode {
     /// - all attempts (for history)
     /// - best attempt (highest score)
     /// - exit reason
-    pub async fn execute(&mut self, state: SharedState) -> Result<EvaluationResult> {
+    pub async fn execute(&mut self, state: DynState) -> Result<EvaluationResult> {
         self.runner.execute(state).await
     }
 

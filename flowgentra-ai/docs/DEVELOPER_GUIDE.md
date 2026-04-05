@@ -1,4 +1,3 @@
-````markdown
 # FlowgentraAI Developer Guide - Build Advanced Agents
 
 Go beyond the basics. Learn patterns for building sophisticated agents.

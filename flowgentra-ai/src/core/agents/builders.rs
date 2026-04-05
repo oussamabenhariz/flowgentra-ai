@@ -9,7 +9,8 @@ use super::{
 };
 use crate::core::error::FlowgentraError;
 use crate::core::mcp::MCPConfig;
-use crate::core::state::SharedState;
+use crate::core::state::{DynState, DynStateUpdate};
+use crate::core::state::context::Context;
 use crate::core::state_graph::{FunctionNode, StateGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -95,7 +96,7 @@ impl PrebuiltAgentConfig {
 pub struct GraphBasedAgent {
     config: PrebuiltAgentConfig,
     name: String,
-    graph: StateGraph<SharedState>,
+    graph: StateGraph<DynState>,
     /// Conversation history for multi-turn context: Vec<(role, content)>
     conversation_history: std::sync::Mutex<Vec<(String, String)>>,
 }
@@ -128,7 +129,7 @@ impl GraphBasedAgent {
     fn build_zero_shot_react_graph(
         config: &PrebuiltAgentConfig,
         tool_executor: Option<ToolExecutorFn>,
-    ) -> Result<StateGraph<SharedState>, FlowgentraError> {
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
         let agent_config = config.clone();
         let tool_config = config.clone();
         let tool_executor = tool_executor.unwrap_or_else(|| Arc::new(|name: &str, _args: &str| {
@@ -136,7 +137,7 @@ impl GraphBasedAgent {
         }));
 
         // Create agent reasoning node (wraps the actual node logic)
-        let agent_node = Arc::new(FunctionNode::new("agent", move |state: &SharedState| {
+        let agent_node = Arc::new(FunctionNode::new("agent", move |state: &DynState, _ctx: &Context| {
             let config = agent_config.clone();
             let state = state.clone();
             Box::pin(async move {
@@ -146,7 +147,8 @@ impl GraphBasedAgent {
                         node: "agent".to_string(),
                         reason: e.to_string(),
                     }
-                })
+                })?;
+                Ok(DynStateUpdate::new())
             })
         }));
 
@@ -154,7 +156,7 @@ impl GraphBasedAgent {
         let tool_exec_fn = tool_executor.clone();
         let tool_executor_node = Arc::new(FunctionNode::new(
             "tool_executor",
-            move |state: &SharedState| {
+            move |state: &DynState, _ctx: &Context| {
                 let config = tool_config.clone();
                 let executor = tool_exec_fn.clone();
                 let state = state.clone();
@@ -165,19 +167,19 @@ impl GraphBasedAgent {
                             node: "tool_executor".to_string(),
                             reason: e.to_string(),
                         }
-                    })
+                    })?;
+                    Ok(DynStateUpdate::new())
                 })
             },
         ));
 
         // Create end node (terminal node that just returns state)
-        let end_node = Arc::new(FunctionNode::new("END", |state: &SharedState| {
-            let state = state.clone();
-            Box::pin(async move { Ok(state) })
+        let end_node = Arc::new(FunctionNode::new("END", |_state: &DynState, _ctx: &Context| {
+            Box::pin(async move { Ok(DynStateUpdate::new()) })
         }));
 
         // Build the graph with routing
-        let graph = StateGraph::<SharedState>::builder()
+        let graph = StateGraph::<DynState>::builder()
             .add_node("agent", agent_node)
             .add_node("tool_executor", tool_executor_node)
             .add_node("END", end_node)
@@ -185,7 +187,7 @@ impl GraphBasedAgent {
             // Agent decides: use tools or finish
             .add_conditional_edge(
                 "agent",
-                Box::new(|state: &SharedState| {
+                Box::new(|state: &DynState| {
                     reasoning_router(state).map_err(|e| {
                         crate::core::state_graph::StateGraphError::ExecutionError {
                             node: "agent".to_string(),
@@ -209,7 +211,7 @@ impl GraphBasedAgent {
     fn build_few_shot_react_graph(
         config: &PrebuiltAgentConfig,
         tool_executor: Option<ToolExecutorFn>,
-    ) -> Result<StateGraph<SharedState>, FlowgentraError> {
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
         // For now, use same structure as ZeroShotReAct
         // In real implementation, would include example demonstrations
         Self::build_zero_shot_react_graph(config, tool_executor)
@@ -218,13 +220,13 @@ impl GraphBasedAgent {
     /// Build a Conversational agent graph
     fn build_conversational_graph(
         config: &PrebuiltAgentConfig,
-    ) -> Result<StateGraph<SharedState>, FlowgentraError> {
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
         let config_clone = config.clone();
 
         // Single node for conversational response
         let conversation_node = Arc::new(FunctionNode::new(
             "conversation",
-            move |state: &SharedState| {
+            move |state: &DynState, _ctx: &Context| {
                 let config = config_clone.clone();
                 let state = state.clone();
                 Box::pin(async move {
@@ -234,12 +236,13 @@ impl GraphBasedAgent {
                             node: "conversation".to_string(),
                             reason: e.to_string(),
                         }
-                    })
+                    })?;
+                    Ok(DynStateUpdate::new())
                 })
             },
         ));
 
-        let graph = StateGraph::<SharedState>::builder()
+        let graph = StateGraph::<DynState>::builder()
             .add_node("conversation", conversation_node)
             .set_entry_point("conversation")
             .compile()
@@ -254,7 +257,7 @@ impl GraphBasedAgent {
     /// Execute the agent with given input
     pub async fn execute_input(&self, input: &str) -> Result<String, FlowgentraError> {
         // Create initial state
-        let initial_state = SharedState::default();
+        let initial_state = DynState::default();
         initial_state.set("input", serde_json::json!(input));
 
         // Inject conversation history into state for multi-turn context
@@ -321,7 +324,7 @@ impl GraphBasedAgent {
     }
 
     /// Get reference to the underlying StateGraph for advanced usage
-    pub fn graph(&self) -> &StateGraph<SharedState> {
+    pub fn graph(&self) -> &StateGraph<DynState> {
         &self.graph
     }
 
@@ -345,7 +348,7 @@ impl Agent for GraphBasedAgent {
         AgentType::from_type_str(&self.config.agent_type)
     }
 
-    fn initialize(&mut self, _state: &mut SharedState) -> Result<(), FlowgentraError> {
+    fn initialize(&mut self, _state: &mut DynState) -> Result<(), FlowgentraError> {
         // Initialize any resources needed
         if self.config.memory_enabled {
             debug!(
@@ -356,7 +359,7 @@ impl Agent for GraphBasedAgent {
         Ok(())
     }
 
-    fn process(&self, _input: &str, _state: &SharedState) -> Result<String, FlowgentraError> {
+    fn process(&self, _input: &str, _state: &DynState) -> Result<String, FlowgentraError> {
         // Synchronous wrapper - use execute_input() for async execution
         Err(FlowgentraError::StateError(
             "Use execute_input() for async execution".to_string(),

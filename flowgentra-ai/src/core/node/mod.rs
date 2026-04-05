@@ -2,7 +2,7 @@
 pub type NodeId = String;
 use crate::core::error::{FlowgentraError, Result};
 use crate::core::node::nodes_trait::PluggableNode;
-use crate::core::state::State;
+use crate::core::state::{DynState, State};
 use std::sync::Arc;
 
 /// Factory function to create a node from config.
@@ -12,10 +12,10 @@ use std::sync::Arc;
 /// # Arguments
 /// * `config` - The node configuration (typically from YAML)
 /// * `node_map` - A map of all available nodes, indexed by name
-pub fn create_node_from_config<T: State>(
+pub fn create_node_from_config(
     config: &serde_json::Value,
-    node_map: &std::collections::HashMap<String, Box<dyn PluggableNode<T>>>,
-) -> Result<Box<dyn PluggableNode<T>>> {
+    node_map: &std::collections::HashMap<String, Box<dyn PluggableNode<DynState>>>,
+) -> Result<Box<dyn PluggableNode<DynState>>> {
     let node_type = config.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match node_type {
         // ── Supervisor (alias: orchestrator) ─────────────────────────────────
@@ -30,14 +30,14 @@ pub fn create_node_from_config<T: State>(
                 })?;
             let node_name = &cfg.name;
 
-            let mut children: Vec<Arc<dyn PluggableNode<T>>> = Vec::new();
+            let mut children: Vec<Arc<dyn PluggableNode<DynState>>> = Vec::new();
             let mut missing_children = Vec::new();
 
             for child_name in &cfg.children {
                 match node_map.get(child_name) {
                     Some(node) => {
                         let cloned = node.clone_box();
-                        let arc_node: Arc<dyn PluggableNode<T>> = Arc::from(cloned);
+                        let arc_node: Arc<dyn PluggableNode<DynState>> = Arc::from(cloned);
                         children.push(arc_node);
                     }
                     None => missing_children.push(child_name.clone()),
@@ -337,10 +337,10 @@ impl NodeConfig {
 /// # Example Handler
 /// ```no_run
 /// use flowgentra_ai::core::node::NodeFunction;
-/// use flowgentra_ai::core::state::SharedState;
+/// use flowgentra_ai::core::state::DynState;
 /// use serde_json::json;
 ///
-/// fn my_handler() -> NodeFunction<SharedState> {
+/// fn my_handler() -> NodeFunction<DynState> {
 ///     Box::new(|state| {
 ///         Box::pin(async move {
 ///             // Your logic here
@@ -361,7 +361,7 @@ pub type NodeFunction<T> = Box<
 /// A compiled node ready for execution.
 ///
 /// This is created internally by the runtime when configuration is loaded.
-pub struct Node<T: State> {
+pub struct Node<T: State = DynState> {
     /// Node name (identifier)
     pub name: String,
 
@@ -531,7 +531,7 @@ pub type EdgeCondition<T> =
 
 /// A compiled edge (connection) between two nodes, with optional condition.
 #[derive(Clone)]
-pub struct Edge<T: State> {
+pub struct Edge<T: State = DynState> {
     /// Source node name
     pub from: String,
 
@@ -545,7 +545,7 @@ pub struct Edge<T: State> {
     pub condition_name: Option<String>,
 
     /// Type-safe routing condition (new DSL-based conditions)
-    pub routing_condition: Option<Condition<T>>,
+    pub routing_condition: Option<Condition>,
 }
 
 impl<T: State> std::fmt::Debug for Edge<T> {
@@ -567,7 +567,7 @@ impl<T: State> Edge<T> {
         to: impl Into<String>,
         condition: Option<EdgeCondition<T>>,
     ) -> Self {
-        Edge::<T> {
+        Edge {
             from: from.into(),
             to: to.into(),
             condition,
@@ -585,7 +585,7 @@ impl<T: State> Edge<T> {
     /// Set the type-safe routing condition for this edge
     pub fn with_routing_condition(
         mut self,
-        condition: crate::core::graph::routing::Condition<T>,
+        condition: crate::core::graph::routing::Condition,
     ) -> Self {
         self.routing_condition = Some(condition);
         self
@@ -604,9 +604,13 @@ impl<T: State> Edge<T> {
             }
         }
 
-        // Then check new routing condition if present
+        // Then check new routing condition if present (requires DynState)
         if let Some(routing_cond) = &self.routing_condition {
-            return Ok(routing_cond.evaluate(state));
+            // Serialize to Value, wrap in DynState for evaluation
+            let value = serde_json::to_value(state).unwrap_or_default();
+            if let Ok(temp_state) = DynState::from_json(value) {
+                return Ok(routing_cond.evaluate(&temp_state));
+            }
         }
 
         // No condition = always traversable

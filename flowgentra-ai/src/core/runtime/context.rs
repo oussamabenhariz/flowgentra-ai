@@ -16,10 +16,10 @@
 //!
 //! ```no_run
 //! use flowgentra_ai::core::context::ExecutionContext;
-//! use flowgentra_ai::core::state::SharedState;
+//! use flowgentra_ai::core::state::DynState;
 //! use std::sync::Arc;
 //!
-//! let ctx = ExecutionContext::new("my_node", SharedState::new(Default::default()));
+//! let ctx = ExecutionContext::new("my_node", DynState::new());
 //! println!("Node: {}", ctx.node_name());
 //! println!("Depth: {}", ctx.depth());
 //! ```
@@ -27,7 +27,7 @@
 use crate::core::error::FlowgentraError;
 use crate::core::llm::LLMClient;
 use crate::core::mcp::MCPClient;
-use crate::core::state::State;
+use crate::core::state::DynState;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,13 +40,13 @@ use std::time::{Duration, Instant};
 /// - Middleware processing
 /// - Debugging and monitoring
 #[derive(Clone)]
-pub struct ExecutionContext<T: State> {
+pub struct ExecutionContext {
     // === Core Execution Info ===
     /// Name of the current node being executed
     node_name: String,
 
     /// Current execution state (shared across all nodes)
-    state: T,
+    state: DynState,
 
     /// Execution path: list of nodes executed so far
     execution_path: Vec<String>,
@@ -112,9 +112,9 @@ pub struct ExecutionContext<T: State> {
 // Constructor & Basic Methods
 // =============================================================================
 
-impl<T: crate::core::state::State> ExecutionContext<T> {
+impl ExecutionContext {
     /// Create a new execution context for a node
-    pub fn new(node_name: impl Into<String>, state: T) -> Self {
+    pub fn new(node_name: impl Into<String>, state: DynState) -> Self {
         let now = Instant::now();
         Self {
             node_name: node_name.into(),
@@ -161,17 +161,17 @@ impl<T: crate::core::state::State> ExecutionContext<T> {
     }
 
     /// Get the current state
-    pub fn state(&self) -> &T {
+    pub fn state(&self) -> &DynState {
         &self.state
     }
 
     /// Get mutable access to state
-    pub fn state_mut(&mut self) -> &mut T {
+    pub fn state_mut(&mut self) -> &mut DynState {
         &mut self.state
     }
 
     /// Set the entire state
-    pub fn set_state(&mut self, state: T) {
+    pub fn set_state(&mut self, state: DynState) {
         self.state = state;
     }
 
@@ -413,11 +413,11 @@ impl<T: crate::core::state::State> ExecutionContext<T> {
     }
 }
 
-impl<T: State> std::fmt::Debug for ExecutionContext<T> {
+impl std::fmt::Debug for ExecutionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExecutionContext")
             .field("node_name", &self.node_name)
-            .field("state_keys", &self.state.keys().collect::<Vec<_>>())
+            .field("state_keys", &self.state.keys())
             .field("execution_path", &self.execution_path)
             .field("depth", &self.depth)
             .field("iteration", &self.iteration)
@@ -441,7 +441,7 @@ impl<T: State> std::fmt::Debug for ExecutionContext<T> {
 // Builder Pattern for Convenience
 // =============================================================================
 
-impl<T: State> ExecutionContext<T> {
+impl ExecutionContext {
     /// Builder-style method to set LLM client
     pub fn with_llm(mut self, client: Arc<dyn LLMClient>) -> Self {
         self.llm_client = Some(client);
@@ -488,12 +488,11 @@ impl<T: State> ExecutionContext<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::state::SharedState;
     use serde_json::json;
 
     #[test]
     fn test_context_creation() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let ctx = ExecutionContext::new("my_node", state);
         assert_eq!(ctx.node_name(), "my_node");
         assert_eq!(ctx.depth(), 0);
@@ -502,7 +501,7 @@ mod tests {
 
     #[test]
     fn test_context_child() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let ctx = ExecutionContext::new("parent", state);
         let child = ctx.child("child");
 
@@ -513,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_metadata() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let mut ctx = ExecutionContext::new("test", state);
 
         ctx.set_metadata("key1", json!("value1"));
@@ -522,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_labels() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let mut ctx = ExecutionContext::new("test", state);
 
         ctx.set_label("env", "prod");
@@ -531,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_builder_pattern() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let ctx = ExecutionContext::new("test", state)
             .with_max_attempts(3)
             .with_max_iterations(5)
@@ -544,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_execution_path() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let mut ctx = ExecutionContext::new("node1", state);
 
         ctx.push_path("node1".to_string());
@@ -555,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_iteration_limit() {
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let mut ctx = ExecutionContext::new("test", state);
 
         ctx.set_max_iterations(3);

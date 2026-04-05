@@ -27,46 +27,8 @@ pub fn health_check() -> bool {
 // - Document handler contracts (fields read/written).
 // - Use clear error types and never panic in handlers or runtime.
 // - Compose handlers for complex logic, don't overload one function.
-use crate::core::reducer::ReducerConfig;
 /// Runtime for typed state engine
-use crate::core::state::State;
-
-/// Merge a partial state update into the current state using per-field reducers.
-///
-/// Works with any `State` type by converting to/from JSON values.
-/// The `ReducerConfig` maps field names to `JsonReducer` strategies.
-/// Fields without explicit reducers use `Overwrite` (replace) semantics.
-///
-/// # Example
-/// ```ignore
-/// let config = ReducerConfig::new()
-///     .field("messages", JsonReducer::Append)
-///     .field("count", JsonReducer::Sum);
-/// let merged = merge_state(&current, &partial_update, &config)?;
-/// ```
-pub fn merge_state<T: State>(
-    current: &T,
-    update: &T,
-    reducers: &ReducerConfig,
-) -> crate::core::error::Result<T> {
-    let current_value = current.to_value();
-    let update_value = update.to_value();
-    let merged_value = reducers.merge_values(&current_value, &update_value);
-    T::from_json(merged_value)
-}
-
-/// Merge multiple partial state updates into the current state, applying them in order.
-pub fn merge_state_many<T: State>(
-    current: &T,
-    updates: &[T],
-    reducers: &ReducerConfig,
-) -> crate::core::error::Result<T> {
-    let mut result = current.clone();
-    for update in updates {
-        result = merge_state(&result, update, reducers)?;
-    }
-    Ok(result)
-}
+use crate::core::state::DynState;
 
 use crate::core::config::AgentConfig;
 use crate::core::error::{FlowgentraError, Result};
@@ -90,12 +52,12 @@ use std::time::Instant;
 // Execution Context
 // =============================================================================
 
-pub struct ExecutionContext<T: State> {
+pub struct ExecutionContext {
     /// Name of the node being executed
     pub node_name: String,
 
     /// Current state being processed
-    pub state: T,
+    pub state: DynState,
 
     /// LLM client for AI operations
     pub llm_client: Arc<dyn LLMClient>,
@@ -116,12 +78,12 @@ pub struct ExecutionContext<T: State> {
 /// - Applying edge conditions
 /// - Maintaining service clients
 /// - Executing middleware hooks
-pub struct AgentRuntime<T: State> {
+pub struct AgentRuntime {
     /// Agent configuration
     config: AgentConfig,
 
     /// The execution graph
-    graph: Graph<T>,
+    graph: Graph<DynState>,
 
     /// LLM client shared across all nodes
     llm_client: Arc<dyn LLMClient>,
@@ -130,13 +92,13 @@ pub struct AgentRuntime<T: State> {
     mcp_clients: HashMap<String, Arc<dyn MCPClient>>,
 
     /// Middleware pipeline for cross-cutting concerns
-    middleware_pipeline: MiddlewarePipeline<T>,
+    middleware_pipeline: MiddlewarePipeline<DynState>,
 
     /// Optional checkpointer for thread-scoped state persistence (resume, multi-turn).
     checkpointer: Option<Arc<MemoryCheckpointer>>,
 }
 
-impl<T: State> AgentRuntime<T> {
+impl AgentRuntime {
     // =========================================================================
     // Initialization
     // =========================================================================
@@ -203,7 +165,7 @@ impl<T: State> AgentRuntime<T> {
             if supervisor_children.contains(&node_config.name) {
                 continue;
             }
-            let placeholder_fn: NodeFunction<T> =
+            let placeholder_fn: NodeFunction<DynState> =
                 Box::new(|state| Box::pin(async move { Ok(state) }));
             let is_planner = node_config.handler == "builtin::planner"
                 || node_config.node_type.as_deref() == Some("planner");
@@ -283,7 +245,7 @@ impl<T: State> AgentRuntime<T> {
     ///
     /// Replaces the placeholder function with the actual handler.
     /// Called during agent initialization.
-    pub fn register_node(&mut self, name: &str, function: NodeFunction<T>) -> Result<()> {
+    pub fn register_node(&mut self, name: &str, function: NodeFunction<DynState>) -> Result<()> {
         if let Some(node) = self.graph.nodes.get_mut(name) {
             // Replace the placeholder function
             let mcps = node.mcps.clone();
@@ -308,7 +270,7 @@ impl<T: State> AgentRuntime<T> {
         &mut self,
         from: &str,
         condition_name: &str,
-        condition_fn: EdgeCondition<T>,
+        condition_fn: EdgeCondition<DynState>,
     ) -> Result<()> {
         // Find and update the edge(s)
         for edge in self.graph.edges.iter_mut() {
@@ -363,19 +325,19 @@ impl<T: State> AgentRuntime<T> {
     /// ```
     pub fn add_middleware(
         &mut self,
-        middleware: Arc<dyn crate::core::middleware::Middleware<T>>,
+        middleware: Arc<dyn crate::core::middleware::Middleware<DynState>>,
     ) -> &mut Self {
         self.middleware_pipeline.use_middleware(middleware);
         self
     }
 
     /// Get a reference to the middleware pipeline
-    pub fn middleware_pipeline(&self) -> &MiddlewarePipeline<T> {
+    pub fn middleware_pipeline(&self) -> &MiddlewarePipeline<DynState> {
         &self.middleware_pipeline
     }
 
     /// Get mutable reference to the middleware pipeline
-    pub fn middleware_pipeline_mut(&mut self) -> &mut MiddlewarePipeline<T> {
+    pub fn middleware_pipeline_mut(&mut self) -> &mut MiddlewarePipeline<DynState> {
         &mut self.middleware_pipeline
     }
 
@@ -394,17 +356,17 @@ impl<T: State> AgentRuntime<T> {
     ///
     /// For thread-scoped persistence (resume, multi-turn), use `execute_with_thread` and
     /// set a checkpointer via `set_checkpointer` or config.
-    pub async fn execute(&self, initial_state: T) -> Result<T> {
+    pub async fn execute(&self, initial_state: DynState) -> Result<DynState> {
         self.execute_impl(initial_state, None).await
     }
 
     /// Execute with a thread id for checkpointing. When a checkpointer is set, state is
     /// loaded from the last checkpoint for this thread (if any) and saved after each node.
-    pub async fn execute_with_thread(&self, thread_id: &str, initial_state: T) -> Result<T> {
+    pub async fn execute_with_thread(&self, thread_id: &str, initial_state: DynState) -> Result<DynState> {
         self.execute_impl(initial_state, Some(thread_id)).await
     }
 
-    async fn execute_impl(&self, initial_state: T, thread_id: Option<&str>) -> Result<T> {
+    async fn execute_impl(&self, initial_state: DynState, thread_id: Option<&str>) -> Result<DynState> {
         // == STATE CLONING NOTES ==
         // This execution loop clones state at several points for correctness:
         // 1. Parallel frontier execution: Arc-wrapped single clone for shared access
@@ -413,7 +375,7 @@ impl<T: State> AgentRuntime<T> {
         //
         // For typical workflows, these clones are acceptable and necessary.
         // For large state objects (>1MB), consider:
-        // - SharedState: Zero-copy shared state via Arc<Mutex>
+        // - DynState: Zero-copy shared state via Arc<Mutex>
         // - OptimizedState: Lazy cloning on mutation only
         // See STATE_OPTIMIZATION_GUIDE.md for detailed strategies
 
@@ -489,12 +451,12 @@ impl<T: State> AgentRuntime<T> {
                 // ├════════════════════════════════════════════════════════════════════════╣
                 // ║ Issue: clone() called per node × iterations (3 nodes × 10 steps = 30×) ║
                 // ║ Impact: 50-200ms overhead for state > 500KB                            ║
-                // ║ Solution: Use SharedState, NOT PlainState!                             ║
+                // ║ Solution: Use DynState, NOT DynState!                             ║
                 // ║                                                                        ║
-                // ║ SharedState.clone() = Cheap (Arc pointer, ~1μs)                       ║
-                // ║ PlainState.clone() = Expensive (full data, 5-20ms)                    ║
+                // ║ DynState.clone() = Cheap (Arc pointer, ~1μs)                       ║
+                // ║ DynState.clone() = Expensive (full data, 5-20ms)                    ║
                 // ║                                                                        ║
-                // ║ Recommendation: For production, ALWAYS use SharedState                 ║
+                // ║ Recommendation: For production, ALWAYS use DynState                 ║
                 // ║ Example at: flowgentra-ai/examples/state_graph_react_agent.rs            ║
                 // ╚════════════════════════════════════════════════════════════════════════╝
                 let state_shared = Arc::new(state); // No clone - wrap as-is
@@ -506,8 +468,8 @@ impl<T: State> AgentRuntime<T> {
                             .graph
                             .get_node(node_name)
                             .ok_or_else(|| FlowgentraError::NodeNotFound(node_name.clone()))?;
-                        // ⚠️ SharedState.clone() is cheap (Arc pointer)
-                        // ⚠️ PlainState.clone() is expensive (full JSON data copy)
+                        // ⚠️ DynState.clone() is cheap (Arc pointer)
+                        // ⚠️ DynState.clone() is expensive (full JSON data copy)
                         let state_in = (*state_shared).clone();
                         let name = node_name.clone();
                         let fut = node.execute(state_in);
@@ -523,13 +485,13 @@ impl<T: State> AgentRuntime<T> {
                             Ok::<_, FlowgentraError>((name, out))
                         })
                             as std::pin::Pin<
-                                Box<dyn std::future::Future<Output = Result<(String, T)>> + Send>,
+                                Box<dyn std::future::Future<Output = Result<(String, DynState)>> + Send>,
                             >
                     })
                     .collect();
 
                 // Use `try_join_all` to short-circuit immediately on the first error
-                let results: Vec<(String, T)> = match try_join_all(task_futures).await {
+                let results: Vec<(String, DynState)> = match try_join_all(task_futures).await {
                     Ok(res) => res,
                     Err(e) => {
                         tracing::error!(error = ?e, "Parallel node execution failed early");
@@ -622,7 +584,7 @@ impl<T: State> AgentRuntime<T> {
                 // Note: state.clone() is necessary here because:
                 // 1. Middleware takes mutable reference and can modify state
                 // 2. Node handler takes state by value
-                // For large state objects (>1MB), consider using SharedState for zero-copy sharing
+                // For large state objects (>1MB), consider using DynState for zero-copy sharing
                 let start_time = Instant::now();
                 let mut middleware_ctx = MiddlewareContext::new(node_name.clone(), state.clone());
 
@@ -911,12 +873,12 @@ impl<T: State> AgentRuntime<T> {
     // =========================================================================
 
     /// Get a reference to the graph for inspection
-    pub fn graph(&self) -> &Graph<T> {
+    pub fn graph(&self) -> &Graph<DynState> {
         &self.graph
     }
 
     /// Get mutable access to the graph
-    pub fn graph_mut(&mut self) -> &mut Graph<T> {
+    pub fn graph_mut(&mut self) -> &mut Graph<DynState> {
         &mut self.graph
     }
 
@@ -952,7 +914,7 @@ impl<T: State> AgentRuntime<T> {
     /// # use flowgentra_ai::core::runtime::AgentRuntime;
     /// # use flowgentra_ai::core::config::AgentConfig;
     /// # let config = AgentConfig::from_file("config.yaml")?;
-    /// # let runtime: AgentRuntime<SharedState> = AgentRuntime::from_config(config)?;
+    /// # let runtime: AgentRuntime<DynState> = AgentRuntime::from_config(config)?;
     /// #[cfg(feature = "visualization")]
     /// runtime.visualize_graph("agent_graph.txt")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())

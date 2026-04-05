@@ -9,7 +9,7 @@ use crate::core::evaluation::{
 use crate::core::middleware::{
     ExecutionContext as MiddlewareContext, Middleware, MiddlewareResult,
 };
-use crate::core::state::State;
+use crate::core::state::DynState;
 
 /// Auto-evaluation middleware that assesses and corrects node outputs
 pub struct AutoEvaluationMiddleware {
@@ -79,9 +79,9 @@ impl Default for AutoEvaluationMiddleware {
 }
 
 #[async_trait::async_trait]
-impl<T: State> Middleware<T> for AutoEvaluationMiddleware {
+impl Middleware<DynState> for AutoEvaluationMiddleware {
     /// Before node execution - prepare evaluation context
-    async fn before_node(&self, ctx: &mut MiddlewareContext<T>) -> MiddlewareResult<T> {
+    async fn before_node(&self, ctx: &mut MiddlewareContext<DynState>) -> MiddlewareResult<DynState> {
         let node_name = &ctx.node_name;
 
         // Initialize evaluation history for this node if needed
@@ -95,7 +95,7 @@ impl<T: State> Middleware<T> for AutoEvaluationMiddleware {
     }
 
     /// After node execution - evaluate and potentially retry
-    async fn after_node(&self, ctx: &mut MiddlewareContext<T>) -> MiddlewareResult<T> {
+    async fn after_node(&self, ctx: &mut MiddlewareContext<DynState>) -> MiddlewareResult<DynState> {
         let node_name = &ctx.node_name;
 
         if !self.policy.enable_scoring

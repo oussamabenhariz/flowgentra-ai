@@ -31,73 +31,74 @@ Run `cargo build` (takes a minute the first time).
 
 ## Step 3: Create Your Agent
 
-### Option A: Predefined Agent (Simplest)
+### Option A: Simple Agent from Config (Recommended Start)
+
+Use a configuration file for flexibility:
 
 ```rust
-use flowgentra_ai::core::agents::{AgentBuilder, AgentType};
-use flowgentra_ai::core::state::SharedState;
-use serde_json::json;
+use flowgentra_ai::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-        .with_name("my_assistant")
-        .with_llm_config("gpt-4")
-        .build()?;
-
-    let state = SharedState::new();
-    state.set("input", json!("What is Rust?"));
-
-    let mut agent = agent;
-    agent.initialize(&mut state.clone())?;
-
-    let response = agent.process("What is Rust?", &state)?;
-    println!("Agent says: {}", response);
-
+async fn main() -> Result<()> {
+    // Load agent from config.yaml
+    let agent = from_config_path("config.yaml")?;
+    
+    // Create dynamic state
+    let state = DynState::new();
+    state.set("input", serde_json::json!("What is Rust?"));
+    
+    // Run the agent
+    let output = agent.run(&state).await?;
+    println!("Agent response: {}", output);
+    
     Ok(())
 }
 ```
 
-### Option B: StateGraph (Recommended for Custom Workflows)
+### Option B: StateGraph (Full Control)
 
-The `StateGraph` API gives you full control over nodes, edges, and state flow:
+For custom workflows with typed state and conditional routing:
 
 ```rust
-use flowgentra_ai::core::state_graph::StateGraphBuilder;
-use flowgentra_ai::core::state::PlainState;
-use flowgentra_ai::core::error::Result;
+use flowgentra_ai::prelude::*;
+use serde_json::json;
 
 // Define node functions
-async fn greet(mut state: PlainState) -> Result<PlainState> {
+async fn greet(state: &DynState) -> Result<DynState> {
     let name = state.get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("World");
-    state.set("greeting", serde_json::json!(format!("Hello, {}!", name)));
-    Ok(state)
+    
+    let greeting = format!("Hello, {}!", name);
+    state.set("greeting", json!(greeting));
+    Ok(state.clone())
 }
 
-async fn format_output(mut state: PlainState) -> Result<PlainState> {
+async fn format_output(state: &DynState) -> Result<DynState> {
     let greeting = state.get("greeting")
         .and_then(|v| v.as_str())
         .unwrap_or("???");
-    state.set("output", serde_json::json!(format!("[{}]", greeting)));
-    Ok(state)
+    
+    state.set("output", json!(format!("[{}]", greeting)));
+    Ok(state.clone())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Build the graph
     let graph = StateGraphBuilder::new()
-        .add_fn("greet", greet)
-        .add_fn("format", format_output)
+        .add_node("greet", Box::new(FunctionNode::new(greet)))
+        .add_node("format", Box::new(FunctionNode::new(format_output)))
         .set_entry_point("greet")
         .add_edge("greet", "format")
         .add_edge("format", "__end__")
         .compile()?;
 
-    let mut state = PlainState::new();
-    state.set("name", serde_json::json!("Alice"));
+    // Create state and run
+    let state = DynState::new();
+    state.set("name", json!("Alice"));
 
-    let result = graph.run(state).await?;
+    let result = graph.invoke(state).await?;
     println!("{}", result.get("output").unwrap());
     // Prints: ["Hello, Alice!"]
 
@@ -105,98 +106,151 @@ async fn main() -> Result<()> {
 }
 ```
 
-## Step 4: Set Your API Key
+## Step 4: Create config.yaml (Optional, for Option A)
+
+```yaml
+name: MyAgent
+handlers: []
+```
+
+See [configuration/CONFIG_GUIDE.md](./configuration/CONFIG_GUIDE.md) for full configuration options.
+
+## Step 5: Set Your API Key
 
 ```bash
 export OPENAI_API_KEY="sk-your-actual-key-here"
 ```
 
-## Step 5: Run It
+## Step 6: Run It
 
 ```bash
 cargo run
 ```
 
----
+## Core Concepts
 
-## Three Agent Types
+### StateGraph
 
-| Type | Best For | Key Feature |
-|------|----------|-------------|
-| **ZeroShotReAct** | General reasoning, open-ended questions | Thinks + acts without examples |
-| **FewShotReAct** | Classification, pattern-based tasks | Learns from examples you provide |
-| **Conversational** | Chatbots, multi-turn dialogue | Remembers conversation history |
+The fundamental building block. A directed acyclic graph where:
+- **Nodes** are async functions that process state updates
+- **Edges** define transitions (fixed or conditional)
+- **State** flows through the graph as updates
+
+### DynState
+
+A flexible, dynamic key-value store for state:
+```rust
+use flowgentra_ai::prelude::*;
+use serde_json::json;
+
+let state = DynState::new();
+state.set("user_input", json!("hello"));
+state.set("count", json!(42));
+
+assert_eq!(state.get("user_input"), Some(json!("hello")));
+```
+
+### Conditional Routing
+
+Route execution based on state values at runtime:
 
 ```rust
-// ZeroShotReAct
-AgentBuilder::new(AgentType::ZeroShotReAct)
-
-// FewShotReAct
-AgentBuilder::new(AgentType::FewShotReAct)
-
-// Conversational (with memory)
-AgentBuilder::new(AgentType::Conversational)
-    .with_memory_steps(20)
+let graph = StateGraphBuilder::new()
+    .add_node("classify", Box::new(FunctionNode::new(classify)))
+    .add_node("simple_path", Box::new(FunctionNode::new(simple)))
+    .add_node("complex_path", Box::new(FunctionNode::new(complex)))
+    .set_entry_point("classify")
+    .add_conditional_edge("classify", |state| {
+        let complexity = state.get("score")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        
+        if complexity > 5 {
+            Ok("complex_path".to_string())
+        } else {
+            Ok("simple_path".to_string())
+        }
+    })
+    .add_edge("simple_path", "__end__")
+    .add_edge("complex_path", "__end__")
+    .compile()?;
 ```
 
 ---
 
 ## Next Steps by Complexity
 
-### Add Conditional Routing
+---
 
+## Next Steps by Complexity
+
+### Add Conditional Routing (Shown Above)
+
+Route to different branches based on state:
 ```rust
-let graph = StateGraphBuilder::new()
-    .add_fn("classify", classify_input)
-    .add_fn("simple", handle_simple)
-    .add_fn("complex", handle_complex)
-    .set_entry_point("classify")
-    .add_conditional_edge("classify", |state| {
-        let score = state.get("complexity")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        if score > 5 { Ok("complex".into()) } else { Ok("simple".into()) }
-    })
-    .add_edge("simple", "__end__")
-    .add_edge("complex", "__end__")
-    .compile()?;
+.add_conditional_edge("classify", |state| {
+    // Return next node name
+    let score = state.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+    if score > 5 { Ok("complex".into()) } else { Ok("simple".into()) }
+})
 ```
 
-### Add State Reducers
-
-Control how state fields merge when updated by multiple nodes:
+### Add Tools/LLM Integration
 
 ```rust
-use flowgentra_ai::core::reducer::{ReducerConfig, JsonReducer};
+use flowgentra_ai::prelude::*;
 
-let reducers = ReducerConfig::default()
-    .field("messages", JsonReducer::Append)      // Append to list
-    .field("score", JsonReducer::Sum)             // Sum values
-    .field("config", JsonReducer::DeepMerge);     // Deep merge objects
-```
+// Define a tool the agent can use
+let tool = ToolDefinition {
+    name: "calculator".to_string(),
+    description: "Perform math operations".to_string(),
+    input_schema: serde_json::json!({
+        "type": "object",
+        "properties": {
+            "expression": {"type": "string"}
+        }
+    }),
+};
 
-### Add Tools
-
-```rust
-use flowgentra_ai::core::agents::ToolSpec;
-
-let calculator = ToolSpec::new("calculator", "Do math")
-    .with_parameter("expression", "string")
-    .required("expression");
-
-let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    .with_tool(calculator)
-    .build()?;
+// Create an LLM client
+let llm_config = LLMConfig {
+    provider: LLMProvider::OpenAI,
+    model: "gpt-4".to_string(),
+    ..Default::default()
+};
 ```
 
 ### Add Checkpointing
 
+Save and resume state at key points:
+
 ```rust
-use flowgentra_ai::core::state_graph::FileCheckpointer;
+use flowgentra_ai::prelude::*;
 
 // File-based checkpoints for durable recovery
-let checkpointer = FileCheckpointer::new("./checkpoints");
+path: "./checkpoints",
+create_missing: true,
 ```
+
+### Add Message Graph (For Chat)
+
+For multi-turn conversations with message history:
+
+```rust
+use flowgentra_ai::prelude::*;
+
+let graph = MessageGraphBuilder::new()
+    .add_node("llm", Box::new(FunctionNode::new(llm_node)))
+    .add_node("tools", Box::new(FunctionNode::new(tool_node)))
+    .set_entry_point("llm")
+    .add_edge("llm", "tools")
+    .add_edge("tools", "__end__")
+    .compile()?;
+```
+
+---
+
+## I Want to...
 
 ### Get Structured JSON Output
 

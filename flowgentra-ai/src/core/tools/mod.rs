@@ -425,12 +425,53 @@ pub struct ToolExample {
 }
 
 // =============================================================================
+// Tool Name Wrapper (for custom naming)
+// =============================================================================
+
+/// Wraps a tool and overrides its name in the definition
+struct NamedToolWrapper {
+    inner: Arc<dyn Tool>,
+    custom_name: String,
+}
+
+#[async_trait]
+impl Tool for NamedToolWrapper {
+    async fn call(&self, input: Value) -> Result<Value> {
+        self.inner.call(input).await
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        let mut def = self.inner.definition();
+        def.name = self.custom_name.clone();
+        def
+    }
+}
+
+impl NamedToolWrapper {
+    pub fn new(tool: Arc<dyn Tool>, name: String) -> Arc<dyn Tool> {
+        Arc::new(NamedToolWrapper {
+            inner: tool,
+            custom_name: name,
+        })
+    }
+}
+
+// =============================================================================
 // Tool Registry
 // =============================================================================
 
 /// Central registry for managing tools
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+}
+
+impl std::fmt::Debug for ToolRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolRegistry")
+            .field("tool_count", &self.tools.len())
+            .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl ToolRegistry {
@@ -467,7 +508,7 @@ impl ToolRegistry {
         registry
     }
 
-    /// Register a tool
+    /// Register a tool with a custom name (overrides tool's internal name)
     pub fn register(&mut self, name: &str, tool: Arc<dyn Tool>) -> Result<()> {
         if self.tools.contains_key(name) {
             return Err(FlowgentraError::ToolError(format!(
@@ -475,7 +516,9 @@ impl ToolRegistry {
                 name
             )));
         }
-        self.tools.insert(name.to_string(), tool);
+        // Wrap tool to override its name in the definition
+        let named_tool = NamedToolWrapper::new(tool, name.to_string());
+        self.tools.insert(name.to_string(), named_tool);
         Ok(())
     }
 
@@ -527,6 +570,11 @@ impl ToolRegistry {
     pub fn validate_input(&self, name: &str, input: &Value) -> Result<()> {
         let definition = self.get_definition(name)?;
         definition.input_schema.validate(input)
+    }
+
+    /// Check if a tool is registered by name
+    pub fn has(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
     }
 
     /// Get tool count

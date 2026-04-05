@@ -8,7 +8,7 @@
 //! - **Usefulness**: Is the output actionable for downstream nodes?
 //! - **Consistency**: Does it align with previous outputs in the state?
 
-use crate::core::state::State;
+use crate::core::state::DynState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -84,10 +84,10 @@ pub struct NodeScorer;
 
 impl NodeScorer {
     /// Score an output value
-    pub fn score<T: State>(
+    pub fn score(
         output: &Value,
         criteria: &ScoringCriteria,
-        state: &T,
+        state: &DynState,
         node_name: &str,
     ) -> NodeScore {
         let mut scores = Vec::new();
@@ -214,7 +214,7 @@ impl NodeScorer {
     }
 
     /// Check if output is useful/actionable
-    fn score_usefulness<T: State>(output: &Value, _state: &T, _node_name: &str) -> f64 {
+    fn score_usefulness(output: &Value, _state: &DynState, _node_name: &str) -> f64 {
         // Useful outputs have meaningful content
         match output {
             Value::String(s) => {
@@ -252,7 +252,7 @@ impl NodeScorer {
     }
 
     /// Check consistency with prior outputs
-    fn score_consistency<T: State>(output: &Value, state: &T, node_name: &str) -> f64 {
+    fn score_consistency(output: &Value, state: &DynState, node_name: &str) -> f64 {
         // Check if this node has output history
         let history_key = format!("__node_output_history__{}", node_name);
         if let Some(Value::Array(histories)) = state.get(&history_key) {
@@ -322,9 +322,8 @@ mod tests {
 
     #[test]
     fn test_node_scorer_full() {
-        use crate::core::state::SharedState;
         let criteria = ScoringCriteria::default();
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
 
         let output = json!({"result": "success", "count": 42});
         let score = NodeScorer::score(&output, &criteria, &state, "test_node");

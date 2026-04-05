@@ -28,10 +28,10 @@
 //! ## Usage in Handlers
 //!
 //! ```no_run
-//! use flowgentra_ai::core::state::SharedState;
+//! use flowgentra_ai::core::state::DynState;
 //! use flowgentra_ai::core::llm::Message;
 //!
-//! async fn my_handler(state: SharedState) -> Result<SharedState, Box<dyn std::error::Error>> {
+//! async fn my_handler(state: DynState) -> Result<DynState, Box<dyn std::error::Error>> {
 //!     // Get LLM client from state (context-dependent)
 //!     // Send a message to the LLM
 //!     let messages = vec![

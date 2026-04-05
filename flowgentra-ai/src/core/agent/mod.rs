@@ -47,7 +47,7 @@ pub(crate) use crate::core::memory::{
     ConversationMemory, InMemoryConversationMemory, MemoryCheckpointer,
 };
 pub(crate) use crate::core::runtime::AgentRuntime;
-pub(crate) use crate::core::state::SharedState;
+pub(crate) use crate::core::state::DynState;
 use std::collections::HashMap;
 use std::sync::Arc;
 // Use inventory for auto-registration of handlers - collected dynamically at runtime
@@ -62,13 +62,13 @@ inventory::collect!(HandlerEntry);
 pub struct HandlerEntry {
     /// Name of the handler (matches config node names)
     pub name: String,
-    /// The handler function (always uses SharedState)
-    pub handler: ArcHandler<SharedState>,
+    /// The handler function (always uses DynState)
+    pub handler: ArcHandler<DynState>,
 }
 
 impl HandlerEntry {
     /// Create a new handler entry for auto-registration
-    pub fn new(name: impl Into<String>, handler: ArcHandler<SharedState>) -> HandlerEntry {
+    pub fn new(name: impl Into<String>, handler: ArcHandler<DynState>) -> HandlerEntry {
         HandlerEntry {
             name: name.into(),
             handler,
@@ -95,10 +95,10 @@ pub type ArcHandler<T> = Arc<
 /// # Example
 /// ```no_run
 /// use flowgentra_ai::core::agent::Handler;
-/// use flowgentra_ai::core::state::SharedState;
+/// use flowgentra_ai::core::state::DynState;
 /// use serde_json::json;
 ///
-/// let my_handler: Handler<SharedState> = Box::new(|state| {
+/// let my_handler: Handler<DynState> = Box::new(|state| {
 ///     Box::pin(async move {
 ///         let input = state.get("input");
 ///         state.set("output", json!("processed"));
@@ -120,9 +120,9 @@ pub type Handler<T> = Box<
 /// # Example
 /// ```no_run
 /// use flowgentra_ai::core::agent::Condition;
-/// use flowgentra_ai::core::state::SharedState;
+/// use flowgentra_ai::core::state::DynState;
 ///
-/// let is_complex: Condition<SharedState> = Box::new(|state: &SharedState| {
+/// let is_complex: Condition<DynState> = Box::new(|state: &DynState| {
 ///     state.get("complexity_score")
 ///         .and_then(|v| v.as_i64())
 ///         .map(|score| score > 50)
@@ -153,11 +153,11 @@ pub type ConditionRegistry<T> = HashMap<String, Condition<T>>;
 /// - Orchestrating node execution
 /// - Optional checkpointer and conversation memory (from config or programmatic)
 pub struct Agent {
-    runtime: AgentRuntime<SharedState>,
+    runtime: AgentRuntime,
     llm_client: Arc<dyn LLMClient>,
     config: AgentConfig,
     /// Current state of the agent (initialized from state_schema)
-    pub state: SharedState,
+    pub state: DynState,
     /// Optional conversation memory (message history per thread). Set via config or with_conversation_memory().
     conversation_memory: Option<Arc<dyn ConversationMemory>>,
 }
@@ -198,8 +198,8 @@ impl Agent {
     /// ```
     pub fn from_config(
         config_path: &str,
-        handlers: HandlerRegistry<SharedState>,
-        conditions: ConditionRegistry<SharedState>,
+        handlers: HandlerRegistry<DynState>,
+        conditions: ConditionRegistry<DynState>,
     ) -> Result<Self> {
         let config = AgentConfig::from_file(config_path)?;
         config.validate()?;
@@ -212,20 +212,20 @@ impl Agent {
     /// which already loaded the file) to avoid reading the file a second time.
     pub fn from_config_inner(
         config: AgentConfig,
-        handlers: HandlerRegistry<SharedState>,
-        conditions: ConditionRegistry<SharedState>,
+        handlers: HandlerRegistry<DynState>,
+        conditions: ConditionRegistry<DynState>,
     ) -> Result<Self> {
         // Create runtime
-        let mut runtime = AgentRuntime::<SharedState>::from_config(config.clone())?;
+        let mut runtime = AgentRuntime::from_config(config.clone())?;
 
         // Create LLM client
         let llm_client = create_llm_client(&config.llm)?;
 
         // Convert all handlers to Arc (cloneable) so multiple nodes can share a handler
-        let arc_handlers: HashMap<String, ArcHandler<SharedState>> = handlers
+        let arc_handlers: HashMap<String, ArcHandler<DynState>> = handlers
             .into_iter()
             .map(|(name, handler)| {
-                let arc: ArcHandler<SharedState> = Arc::new(move |state| handler(state));
+                let arc: ArcHandler<DynState> = Arc::new(move |state| handler(state));
                 (name, arc)
             })
             .collect();
@@ -351,7 +351,7 @@ impl Agent {
         // Register all conditions
         type EdgeConditionFn = std::sync::Arc<
             dyn Fn(
-                    &SharedState,
+                    &DynState,
                 )
                     -> std::result::Result<Option<String>, crate::core::error::FlowgentraError>
                 + Send
@@ -360,7 +360,7 @@ impl Agent {
         for (condition_name, condition_fn) in conditions {
             let cond_name_clone = condition_name.clone();
             let edge_condition: EdgeConditionFn =
-                std::sync::Arc::new(move |state: &SharedState| {
+                std::sync::Arc::new(move |state: &DynState| {
                     if condition_fn(state) {
                         Ok(Some(cond_name_clone.clone()))
                     } else {
@@ -448,7 +448,7 @@ impl Agent {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn run(&mut self) -> Result<SharedState> {
+    pub async fn run(&mut self) -> Result<DynState> {
         // Automatically inject LLM config into state for handler access
         let llm_config_json =
             serde_json::to_value(&self.config.llm).unwrap_or_else(|_| serde_json::json!({}));
@@ -477,7 +477,7 @@ impl Agent {
     /// state is loaded from the last checkpoint for this thread (if any) and saved after each node.
     /// Use the same thread_id with conversation_memory to get/add messages for this conversation.
     /// Automatically injects the LLM configuration into state so handlers can access it.
-    pub async fn run_with_thread(&mut self, thread_id: &str) -> Result<SharedState> {
+    pub async fn run_with_thread(&mut self, thread_id: &str) -> Result<DynState> {
         // Automatically inject LLM config into state for handler access
         let llm_config_json =
             serde_json::to_value(&self.config.llm).unwrap_or_else(|_| serde_json::json!({}));
@@ -529,7 +529,7 @@ impl Agent {
     /// Get mutable access to the underlying runtime
     ///
     /// For advanced users who need direct runtime access.
-    pub fn runtime_mut(&mut self) -> &mut AgentRuntime<SharedState> {
+    pub fn runtime_mut(&mut self) -> &mut AgentRuntime {
         &mut self.runtime
     }
 
@@ -573,7 +573,7 @@ impl Agent {
     /// ```
     pub fn add_memory_handler(&mut self, node_name: &str, handler_type: &str) -> Result<()> {
         // Register the memory handler in the runtime
-        let handler: Handler<SharedState> = match handler_type {
+        let handler: Handler<DynState> = match handler_type {
             "memory::append_message" => Box::new(|state| {
                 Box::pin(crate::core::node::memory_handlers::append_message_handler(
                     state,
@@ -713,7 +713,25 @@ impl Agent {
 ///     Ok(())
 /// }
 /// ```
+/// Create an [`Agent`] from a YAML config file, auto-discovering all `#[register_handler]`
+/// functions plus any extra handlers provided (e.g. Python callables wrapped as Rust handlers).
+///
+/// Extra handlers take priority over inventory-registered handlers with the same name.
+pub fn from_config_path_with_extra_handlers(
+    config_path: &str,
+    extra_handlers: HashMap<String, ArcHandler<DynState>>,
+) -> Result<Agent> {
+    from_config_path_impl(config_path, extra_handlers)
+}
+
 pub fn from_config_path(config_path: &str) -> Result<Agent> {
+    from_config_path_impl(config_path, HashMap::new())
+}
+
+fn from_config_path_impl(
+    config_path: &str,
+    extra_handlers: HashMap<String, ArcHandler<DynState>>,
+) -> Result<Agent> {
     // Load config to get required node names
     let mut config = AgentConfig::from_file(config_path)?;
     config.validate()?;
@@ -813,10 +831,12 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
     }
 
     // Collect all registered handlers from inventory (ArcHandler = cloneable)
-    let mut handlers_map: HashMap<String, ArcHandler<SharedState>> = HashMap::new();
+    let mut handlers_map: HashMap<String, ArcHandler<DynState>> = HashMap::new();
     for entry in inventory::iter::<HandlerEntry> {
         handlers_map.insert(entry.name.clone(), entry.handler.clone());
     }
+    // Extra handlers (e.g. Python callables) take priority over inventory handlers
+    handlers_map.extend(extra_handlers);
 
     // Inject builtin::planner into handlers_map for backward compatibility
     // (when a node uses handler: "builtin::planner" instead of type: "planner")
@@ -837,14 +857,14 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
             llm_client,
             prompt_template,
         ));
-        let arc_handler: ArcHandler<SharedState> =
+        let arc_handler: ArcHandler<DynState> =
             Arc::new(move |state| planner_fn.as_ref()(state));
         handlers_map.insert("__builtin_planner__".to_string(), arc_handler);
     }
 
     // Build handler registry keyed by NODE NAME.
     // Dispatch based on node type — every built-in type is detected here.
-    let mut node_handlers: HandlerRegistry<SharedState> = HashMap::new();
+    let mut node_handlers: HandlerRegistry<DynState> = HashMap::new();
     let mut missing_handlers: Vec<String> = Vec::new();
 
     // Helper: look up a handler by name, or record it as missing
@@ -995,15 +1015,15 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
     // ── Second pass: supervisor + subgraph nodes ────────────────────────────────
     // Convert first-pass handlers to Arc so supervisor children can be shared
     // without being consumed (each child must remain a standalone graph node too).
-    let node_handlers_arc: HashMap<String, ArcHandler<SharedState>> = node_handlers
+    let node_handlers_arc: HashMap<String, ArcHandler<DynState>> = node_handlers
         .into_iter()
         .map(|(name, h)| {
-            let arc: ArcHandler<SharedState> = Arc::new(move |state| h(state));
+            let arc: ArcHandler<DynState> = Arc::new(move |state| h(state));
             (name, arc)
         })
         .collect();
 
-    let mut second_pass_handlers: HandlerRegistry<SharedState> = HashMap::new();
+    let mut second_pass_handlers: HandlerRegistry<DynState> = HashMap::new();
 
     // ── Sub-pass A: index all subgraph configs by node name ───────────────────
     // create_subgraph_handler is cheap (YAML loads only at execution time),
@@ -1055,7 +1075,7 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
         })
         .collect();
 
-    let mut built_supervisor_arcs: HashMap<String, ArcHandler<SharedState>> = HashMap::new();
+    let mut built_supervisor_arcs: HashMap<String, ArcHandler<DynState>> = HashMap::new();
     let mut remaining: Vec<_> = supervisor_nodes.iter().map(|n| n.name.clone()).collect();
     let max_passes = remaining.len() + 1; // guard against infinite loops
 
@@ -1073,7 +1093,7 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
             use crate::core::node::orchestrator_node::SupervisorNodeConfig;
             let cfg = SupervisorNodeConfig::from_node_config(node_config)?;
 
-            let mut child_arcs: Vec<(String, ArcHandler<SharedState>)> = Vec::new();
+            let mut child_arcs: Vec<(String, ArcHandler<DynState>)> = Vec::new();
             let mut all_resolved = true;
 
             for child_name in &cfg.children {
@@ -1121,7 +1141,7 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
                 } else {
                     create_supervisor_handler(cfg, child_arcs, child_mcps)
                 };
-                let arc: ArcHandler<SharedState> = Arc::new(move |state| handler(state));
+                let arc: ArcHandler<DynState> = Arc::new(move |state| handler(state));
                 built_supervisor_arcs.insert(sup_name.clone(), arc);
                 second_pass_handlers.insert(sup_name.clone(), {
                     let arc = built_supervisor_arcs.get(sup_name).unwrap().clone();
@@ -1158,10 +1178,10 @@ pub fn from_config_path(config_path: &str) -> Result<Agent> {
     }
 
     // Merge both passes back into a single HandlerRegistry
-    let mut node_handlers: HandlerRegistry<SharedState> = node_handlers_arc
+    let mut node_handlers: HandlerRegistry<DynState> = node_handlers_arc
         .into_iter()
         .map(|(name, arc)| {
-            let h: Handler<SharedState> = Box::new(move |state| arc(state));
+            let h: Handler<DynState> = Box::new(move |state| arc(state));
             (name, h)
         })
         .collect();
@@ -1270,16 +1290,16 @@ pub use memory_aware::{MemoryAwareAgent, MemoryStats};
 // =============================================================================
 // Built-in Node Handler Wrappers
 //
-// Each function converts a built-in node config into a Handler<SharedState>
+// Each function converts a built-in node config into a Handler<DynState>
 // so every node type is uniformly represented as a NodeFunction in the runtime.
 // =============================================================================
 
 /// Wraps a handler in an evaluation retry loop.
 /// Delegates to `EvaluationNodeConfig::into_wrapping_node_fn` — single source of truth.
 fn wrap_handler_with_evaluation(
-    handler: ArcHandler<SharedState>,
+    handler: ArcHandler<DynState>,
     eval_config: crate::core::node::evaluation_node::EvaluationNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     eval_config.into_wrapping_node_fn(handler)
 }
 
@@ -1299,9 +1319,9 @@ fn wrap_handler_with_evaluation(
 ///     max_backoff_ms: 30000
 /// ```
 fn wrap_handler_with_retry(
-    handler: ArcHandler<SharedState>,
+    handler: ArcHandler<DynState>,
     config: crate::core::node::nodes_trait::RetryNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     Box::new(move |state| {
         let handler = handler.clone();
         let config = config.clone();
@@ -1362,9 +1382,9 @@ fn wrap_handler_with_retry(
 ///     on_timeout: "error"   # or "skip" or "default_value"
 /// ```
 fn wrap_handler_with_timeout(
-    handler: ArcHandler<SharedState>,
+    handler: ArcHandler<DynState>,
     config: crate::core::node::nodes_trait::TimeoutNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     Box::new(move |state| {
         let handler = handler.clone();
         let config = config.clone();
@@ -1405,9 +1425,9 @@ fn wrap_handler_with_timeout(
 ///     break_condition: "is_done"   # name of a bool state field
 /// ```
 fn wrap_handler_with_loop(
-    handler: ArcHandler<SharedState>,
+    handler: ArcHandler<DynState>,
     config: crate::core::node::advanced_nodes::LoopNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     Box::new(move |state| {
         let handler = handler.clone();
         let config = config.clone();
@@ -1457,7 +1477,7 @@ fn wrap_handler_with_loop(
 /// ```
 fn create_human_in_loop_handler(
     config: crate::core::node::nodes_trait::HumanInTheLoopConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     Box::new(move |state| {
         let config = config.clone();
         Box::pin(async move {
@@ -1486,7 +1506,7 @@ fn create_human_in_loop_handler(
 ///     operation: append_message   # or compress_history, clear_history,
 ///                                 #    get_message_count, format_history_for_context
 /// ```
-fn create_memory_handler(operation: &str) -> Option<Handler<SharedState>> {
+fn create_memory_handler(operation: &str) -> Option<Handler<DynState>> {
     use crate::core::node::memory_handlers;
     match operation {
         "append_message" => Some(Box::new(|state| {
@@ -1543,7 +1563,7 @@ fn create_memory_handler(operation: &str) -> Option<Handler<SharedState>> {
 /// Delegates to `EvaluationNodeConfig::into_standalone_node_fn` — single source of truth.
 fn create_evaluation_standalone_handler(
     config: crate::core::node::evaluation_node::EvaluationNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     config.into_standalone_node_fn()
 }
 
@@ -1570,7 +1590,7 @@ fn create_evaluation_standalone_handler(
 /// ```
 fn create_retry_standalone_handler(
     config: crate::core::node::nodes_trait::RetryNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     use serde_json::json;
 
     Box::new(move |state| {
@@ -1652,7 +1672,7 @@ fn create_retry_standalone_handler(
 /// ```
 fn create_timeout_standalone_handler(
     config: crate::core::node::nodes_trait::TimeoutNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     use serde_json::json;
 
     Box::new(move |state| {
@@ -1768,18 +1788,18 @@ fn create_timeout_standalone_handler(
 /// ```
 fn create_supervisor_handler(
     config: crate::core::node::orchestrator_node::SupervisorNodeConfig,
-    children: Vec<(String, ArcHandler<SharedState>)>,
+    children: Vec<(String, ArcHandler<DynState>)>,
     child_mcps: HashMap<String, Vec<String>>,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     create_supervisor_handler_with_llm(config, children, None, child_mcps)
 }
 
 fn create_supervisor_handler_with_llm(
     config: crate::core::node::orchestrator_node::SupervisorNodeConfig,
-    children: Vec<(String, ArcHandler<SharedState>)>,
+    children: Vec<(String, ArcHandler<DynState>)>,
     llm_client: Option<Arc<dyn LLMClient>>,
     child_mcps: HashMap<String, Vec<String>>,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     use crate::core::node::orchestrator_node::{OrchestrationStrategy, ParallelMergeStrategy};
     use serde_json::json;
 
@@ -1789,7 +1809,7 @@ fn create_supervisor_handler_with_llm(
     //   "key != null"    — skip if state[key] is non-null
     //   "key == null"    — skip if state[key] is null/absent
     //   "key == value"   — skip if state[key].to_string() == value
-    fn should_skip(condition: &str, state: &SharedState) -> bool {
+    fn should_skip(condition: &str, state: &DynState) -> bool {
         let condition = condition.trim();
         if condition.contains("!=") {
             let parts: Vec<&str> = condition.splitn(2, "!=").collect();
@@ -1825,10 +1845,10 @@ fn create_supervisor_handler_with_llm(
     // Run a single child with optional timeout, returning (result, duration_ms).
     async fn run_child(
         name: &str,
-        handler: &ArcHandler<SharedState>,
-        state: SharedState,
+        handler: &ArcHandler<DynState>,
+        state: DynState,
         timeout_ms: Option<u64>,
-    ) -> (crate::core::error::Result<SharedState>, u128) {
+    ) -> (crate::core::error::Result<DynState>, u128) {
         let child_start = std::time::Instant::now();
         let result = if let Some(ms) = timeout_ms {
             tokio::time::timeout(std::time::Duration::from_millis(ms), handler(state))
@@ -1854,7 +1874,7 @@ fn create_supervisor_handler_with_llm(
             let start = std::time::Instant::now();
 
             // Inject per-node MCP assignments into state before running a child
-            let inject_mcps = |child_name: &str, state: &SharedState| {
+            let inject_mcps = |child_name: &str, state: &DynState| {
                 if let Some(mcps) = child_mcps.get(child_name) {
                     state.set("_node_mcps", serde_json::json!(mcps));
                 } else {
@@ -1976,7 +1996,7 @@ fn create_supervisor_handler_with_llm(
                         .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
 
                     // Filter children by skip conditions, cloning so futures own their data
-                    let active_children: Vec<(String, ArcHandler<SharedState>)> = children
+                    let active_children: Vec<(String, ArcHandler<DynState>)> = children
                         .iter()
                         .filter(|(name, _)| {
                             if let Some(cond) = config.skip_conditions.get(name.as_str()) {
@@ -2042,7 +2062,7 @@ fn create_supervisor_handler_with_llm(
 
                     let results = futures::future::join_all(futures).await;
 
-                    let mut successes: Vec<SharedState> = Vec::new();
+                    let mut successes: Vec<DynState> = Vec::new();
                     let mut child_results = Vec::new();
                     let mut errors: Vec<String> = Vec::new();
 
@@ -2086,10 +2106,10 @@ fn create_supervisor_handler_with_llm(
                             // real modifications — avoiding null overwrites from
                             // schema-initialized keys the child never touched.
                             let base_snapshot: Vec<(String, serde_json::Value)> =
-                                base_state.iter_map();
+                                base_state.as_map();
                             let merged = (*base_state).clone();
                             for child_state in successes {
-                                for (key, value) in child_state.iter_map() {
+                                for (key, value) in child_state.as_map() {
                                     // Skip internal supervisor/planner metadata keys
                                     if key.starts_with("__supervisor_meta__")
                                         || key.starts_with("__eval_")
@@ -2151,7 +2171,7 @@ fn create_supervisor_handler_with_llm(
                     }
 
                     // Build O(1) lookup: child name → handler
-                    let child_map: HashMap<String, ArcHandler<SharedState>> = children
+                    let child_map: HashMap<String, ArcHandler<DynState>> = children
                         .iter()
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
@@ -2315,7 +2335,7 @@ fn create_supervisor_handler_with_llm(
                 OrchestrationStrategy::Dynamic => {
                     let mut current = state;
 
-                    let child_map: HashMap<String, ArcHandler<SharedState>> = children
+                    let child_map: HashMap<String, ArcHandler<DynState>> = children
                         .iter()
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
@@ -2335,7 +2355,7 @@ fn create_supervisor_handler_with_llm(
                         println!("\n  ── Dynamic iteration {iteration}/{max_iter} ──");
 
                         // Build a filtered view: separate populated vs null keys, hide internals
-                        let all_keys: Vec<String> = current.keys().collect();
+                        let all_keys: Vec<String> = current.keys();
                         let populated_keys: Vec<&String> = all_keys
                             .iter()
                             .filter(|k| !k.starts_with('_'))
@@ -2776,7 +2796,7 @@ fn create_supervisor_handler_with_llm(
                         .as_deref()
                         .unwrap_or("first_success");
 
-                    let mut successes: Vec<(String, SharedState, u128)> = Vec::new();
+                    let mut successes: Vec<(String, DynState, u128)> = Vec::new();
                     let mut child_results = Vec::new();
                     let mut errors: Vec<String> = Vec::new();
 
@@ -2948,7 +2968,7 @@ fn create_supervisor_handler_with_llm(
                 // ── ConditionalRouting ─────────────────────────────────────────
                 // Routes to the most appropriate agent based on state-driven rules.
                 OrchestrationStrategy::ConditionalRouting => {
-                    let child_map: HashMap<String, ArcHandler<SharedState>> = children
+                    let child_map: HashMap<String, ArcHandler<DynState>> = children
                         .iter()
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
@@ -3010,7 +3030,7 @@ fn create_supervisor_handler_with_llm(
                         children.iter().map(|(n, _)| n.clone()).collect()
                     };
 
-                    let child_map: HashMap<String, ArcHandler<SharedState>> = children
+                    let child_map: HashMap<String, ArcHandler<DynState>> = children
                         .iter()
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
@@ -3108,7 +3128,7 @@ fn create_supervisor_handler_with_llm(
                     };
                     let mut debate_log: Vec<serde_json::Value> = Vec::new();
 
-                    let child_map: HashMap<String, ArcHandler<SharedState>> = children
+                    let child_map: HashMap<String, ArcHandler<DynState>> = children
                         .iter()
                         .map(|(n, h)| (n.clone(), h.clone()))
                         .collect();
@@ -3208,7 +3228,7 @@ fn create_supervisor_handler_with_llm(
 
 fn create_loop_standalone_handler(
     config: crate::core::node::advanced_nodes::LoopNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     use serde_json::json;
 
     Box::new(move |state| {
@@ -3288,7 +3308,7 @@ fn create_loop_standalone_handler(
 /// State: parent state flows in → subgraph executes fully → result flows back to parent
 fn create_subgraph_handler(
     config: crate::core::node::agent_or_graph_node::SubgraphNodeConfig,
-) -> Handler<SharedState> {
+) -> Handler<DynState> {
     Box::new(move |state| {
         let path = config.path.clone();
         let name = config.name.clone();

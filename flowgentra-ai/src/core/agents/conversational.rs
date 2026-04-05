@@ -178,7 +178,7 @@ impl Agent for ConversationalAgent {
 
     fn initialize(
         &mut self,
-        state: &mut crate::core::state::SharedState,
+        state: &mut crate::core::state::DynState,
     ) -> Result<(), FlowgentraError> {
         state.set(
             "__agent_name",
@@ -198,7 +198,7 @@ impl Agent for ConversationalAgent {
     fn process(
         &self,
         input: &str,
-        _state: &crate::core::state::SharedState,
+        _state: &crate::core::state::DynState,
     ) -> Result<String, FlowgentraError> {
         let prompt = self.generate_response_prompt(input);
 
@@ -287,11 +287,11 @@ mod tests {
 
     #[test]
     fn test_process() {
-        use crate::core::state::SharedState;
+        use crate::core::state::DynState;
         let mut agent = ConversationalAgent::default();
         agent.add_user_message("What is AI?");
 
-        let state = SharedState::new(Default::default());
+        let state = DynState::new();
         let result = agent.process("Tell me more", &state);
 
         assert!(result.is_ok());
