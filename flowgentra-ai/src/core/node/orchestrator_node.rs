@@ -277,6 +277,177 @@ pub struct SupervisorNodeConfig {
 pub type OrchestratorNodeConfig = SupervisorNodeConfig;
 
 impl SupervisorNodeConfig {
+    /// Create a config with defaults. Used internally or with `SupervisorNode::from_config`.
+    pub fn new(name: impl Into<String>, children: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        SupervisorNodeConfig {
+            name: name.into(),
+            children: children.into_iter().map(|c| c.into()).collect(),
+            strategy: OrchestrationStrategy::default(),
+            config: HashMap::new(),
+            parallel_aggregation: None,
+            fail_fast: false,
+            child_timeout_ms: None,
+            timeout_ms: None,
+            merge_strategy: ParallelMergeStrategy::default(),
+            collect_stats: true,
+            max_retries_per_child: 0,
+            max_concurrent: None,
+            skip_conditions: HashMap::new(),
+            goal: None,
+            required_outputs: Vec::new(),
+            output_owners: HashMap::new(),
+            max_iterations: 10,
+            selector_prompt: None,
+            tasks_key: None,
+            selection_criteria: None,
+            score_key: None,
+            map_key: None,
+            reduce_key: None,
+            routing_rules: HashMap::new(),
+            fallback_order: Vec::new(),
+            debate_rounds: 2,
+            debate_key: None,
+        }
+    }
+
+    pub fn strategy(mut self, strategy: OrchestrationStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    pub fn fail_fast(mut self, v: bool) -> Self {
+        self.fail_fast = v;
+        self
+    }
+
+    pub fn child_timeout_ms(mut self, ms: u64) -> Self {
+        self.child_timeout_ms = Some(ms);
+        self
+    }
+
+    pub fn timeout_ms(mut self, ms: u64) -> Self {
+        self.timeout_ms = Some(ms);
+        self
+    }
+
+    pub fn merge_strategy(mut self, s: ParallelMergeStrategy) -> Self {
+        self.merge_strategy = s;
+        self
+    }
+
+    pub fn parallel_aggregation(mut self, agg: ParallelAggregation) -> Self {
+        self.parallel_aggregation = Some(agg);
+        self
+    }
+
+    pub fn max_retries_per_child(mut self, n: usize) -> Self {
+        self.max_retries_per_child = n;
+        self
+    }
+
+    pub fn max_concurrent(mut self, n: usize) -> Self {
+        self.max_concurrent = Some(n);
+        self
+    }
+
+    pub fn collect_stats(mut self, v: bool) -> Self {
+        self.collect_stats = v;
+        self
+    }
+
+    pub fn max_iterations(mut self, n: usize) -> Self {
+        self.max_iterations = n;
+        self
+    }
+
+    // ── Skip conditions ──────────────────────────────────────────────────────
+
+    pub fn add_skip_condition(mut self, child: impl Into<String>, condition: impl Into<String>) -> Self {
+        self.skip_conditions.insert(child.into(), condition.into());
+        self
+    }
+
+    // ── Autonomous ───────────────────────────────────────────────────────────
+
+    pub fn goal(mut self, goal: impl Into<String>) -> Self {
+        self.goal = Some(goal.into());
+        self
+    }
+
+    pub fn required_outputs(mut self, outputs: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.required_outputs = outputs.into_iter().map(|s| s.into()).collect();
+        self
+    }
+
+    pub fn add_output_owner(mut self, output_key: impl Into<String>, child: impl Into<String>) -> Self {
+        self.output_owners.insert(output_key.into(), child.into());
+        self
+    }
+
+    // ── Dynamic ──────────────────────────────────────────────────────────────
+
+    pub fn selector_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.selector_prompt = Some(prompt.into());
+        self
+    }
+
+    // ── RoundRobin ───────────────────────────────────────────────────────────
+
+    pub fn tasks_key(mut self, key: impl Into<String>) -> Self {
+        self.tasks_key = Some(key.into());
+        self
+    }
+
+    // ── Broadcast ────────────────────────────────────────────────────────────
+
+    pub fn selection_criteria(mut self, criteria: impl Into<String>) -> Self {
+        self.selection_criteria = Some(criteria.into());
+        self
+    }
+
+    pub fn score_key(mut self, key: impl Into<String>) -> Self {
+        self.score_key = Some(key.into());
+        self
+    }
+
+    // ── MapReduce ────────────────────────────────────────────────────────────
+
+    pub fn map_key(mut self, key: impl Into<String>) -> Self {
+        self.map_key = Some(key.into());
+        self
+    }
+
+    pub fn reduce_key(mut self, key: impl Into<String>) -> Self {
+        self.reduce_key = Some(key.into());
+        self
+    }
+
+    // ── ConditionalRouting ───────────────────────────────────────────────────
+
+    pub fn add_routing_rule(mut self, condition: impl Into<String>, child: impl Into<String>) -> Self {
+        self.routing_rules.insert(condition.into(), child.into());
+        self
+    }
+
+    // ── RetryFallback ────────────────────────────────────────────────────────
+
+    pub fn fallback_order(mut self, order: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.fallback_order = order.into_iter().map(|s| s.into()).collect();
+        self
+    }
+
+    // ── Debate ───────────────────────────────────────────────────────────────
+
+    pub fn debate_rounds(mut self, rounds: usize) -> Self {
+        self.debate_rounds = rounds;
+        self
+    }
+
+    pub fn debate_key(mut self, key: impl Into<String>) -> Self {
+        self.debate_key = Some(key.into());
+        self
+    }
+
     /// Build from a NodeConfig (YAML deserialization target).
     pub fn from_node_config(
         node: &crate::core::node::NodeConfig,
@@ -515,8 +686,137 @@ impl Clone for SupervisorNode {
     }
 }
 
+/// Builder returned by `SupervisorNode::new()`.
+pub struct SupervisorNodeBuilder {
+    config: SupervisorNodeConfig,
+    children: Vec<Arc<dyn PluggableNode<DynState>>>,
+}
+
+impl SupervisorNodeBuilder {
+    pub fn strategy(mut self, s: OrchestrationStrategy) -> Self {
+        self.config.strategy = s;
+        self
+    }
+    pub fn fail_fast(mut self, v: bool) -> Self {
+        self.config.fail_fast = v;
+        self
+    }
+    pub fn child_timeout_ms(mut self, ms: u64) -> Self {
+        self.config.child_timeout_ms = Some(ms);
+        self
+    }
+    pub fn timeout_ms(mut self, ms: u64) -> Self {
+        self.config.timeout_ms = Some(ms);
+        self
+    }
+    pub fn merge_strategy(mut self, s: ParallelMergeStrategy) -> Self {
+        self.config.merge_strategy = s;
+        self
+    }
+    pub fn parallel_aggregation(mut self, agg: ParallelAggregation) -> Self {
+        self.config.parallel_aggregation = Some(agg);
+        self
+    }
+    pub fn max_retries_per_child(mut self, n: usize) -> Self {
+        self.config.max_retries_per_child = n;
+        self
+    }
+    pub fn max_concurrent(mut self, n: usize) -> Self {
+        self.config.max_concurrent = Some(n);
+        self
+    }
+    pub fn collect_stats(mut self, v: bool) -> Self {
+        self.config.collect_stats = v;
+        self
+    }
+    pub fn max_iterations(mut self, n: usize) -> Self {
+        self.config.max_iterations = n;
+        self
+    }
+    pub fn add_skip_condition(mut self, child: impl Into<String>, condition: impl Into<String>) -> Self {
+        self.config = self.config.add_skip_condition(child, condition);
+        self
+    }
+    pub fn goal(mut self, goal: impl Into<String>) -> Self {
+        self.config = self.config.goal(goal);
+        self
+    }
+    pub fn required_outputs(mut self, outputs: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.config = self.config.required_outputs(outputs);
+        self
+    }
+    pub fn add_output_owner(mut self, output_key: impl Into<String>, child: impl Into<String>) -> Self {
+        self.config = self.config.add_output_owner(output_key, child);
+        self
+    }
+    pub fn selector_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.config = self.config.selector_prompt(prompt);
+        self
+    }
+    pub fn tasks_key(mut self, key: impl Into<String>) -> Self {
+        self.config = self.config.tasks_key(key);
+        self
+    }
+    pub fn selection_criteria(mut self, criteria: impl Into<String>) -> Self {
+        self.config = self.config.selection_criteria(criteria);
+        self
+    }
+    pub fn score_key(mut self, key: impl Into<String>) -> Self {
+        self.config = self.config.score_key(key);
+        self
+    }
+    pub fn map_key(mut self, key: impl Into<String>) -> Self {
+        self.config = self.config.map_key(key);
+        self
+    }
+    pub fn reduce_key(mut self, key: impl Into<String>) -> Self {
+        self.config = self.config.reduce_key(key);
+        self
+    }
+    pub fn add_routing_rule(mut self, condition: impl Into<String>, child: impl Into<String>) -> Self {
+        self.config = self.config.add_routing_rule(condition, child);
+        self
+    }
+    pub fn fallback_order(mut self, order: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.config = self.config.fallback_order(order);
+        self
+    }
+    pub fn debate_rounds(mut self, rounds: usize) -> Self {
+        self.config = self.config.debate_rounds(rounds);
+        self
+    }
+    pub fn debate_key(mut self, key: impl Into<String>) -> Self {
+        self.config = self.config.debate_key(key);
+        self
+    }
+    pub fn build(self) -> crate::core::error::Result<SupervisorNode> {
+        SupervisorNode::from_config(self.config, self.children)
+    }
+}
+
 impl SupervisorNode {
+    /// Create a supervisor. Chain optional setter methods then call `.build()`.
+    ///
+    /// ```rust
+    /// let sup = SupervisorNode::new("pipeline", ["researcher", "analyst"], children)
+    ///     .strategy(OrchestrationStrategy::Sequential)
+    ///     .fail_fast(true)
+    ///     .child_timeout_ms(60_000)
+    ///     .build()?;
+    /// ```
     pub fn new(
+        name: impl Into<String>,
+        child_names: impl IntoIterator<Item = impl Into<String>>,
+        children: Vec<Arc<dyn PluggableNode<DynState>>>,
+    ) -> SupervisorNodeBuilder {
+        SupervisorNodeBuilder {
+            config: SupervisorNodeConfig::new(name, child_names),
+            children,
+        }
+    }
+
+    /// Create directly from a pre-built `SupervisorNodeConfig`.
+    pub fn from_config(
         config: SupervisorNodeConfig,
         children: Vec<Arc<dyn PluggableNode<DynState>>>,
     ) -> crate::core::error::Result<Self> {

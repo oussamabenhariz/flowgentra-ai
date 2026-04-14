@@ -9,6 +9,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub use super::filter::{FilterExpr, MetadataFilter};
+
 /// Configuration for vector stores
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RAGConfig {
@@ -73,6 +75,20 @@ impl RAGConfig {
     ) -> Result<Self, VectorStoreError> {
         Ok(Self {
             store_type: VectorStoreType::Qdrant,
+            api_key: None,
+            endpoint: Some(endpoint.to_string()),
+            index_name: collection.to_string(),
+            embedding_dim,
+        })
+    }
+
+    pub fn milvus(
+        endpoint: &str,
+        collection: &str,
+        embedding_dim: usize,
+    ) -> Result<Self, VectorStoreError> {
+        Ok(Self {
+            store_type: VectorStoreType::Milvus,
             api_key: None,
             endpoint: Some(endpoint.to_string()),
             index_name: collection.to_string(),
@@ -161,10 +177,7 @@ pub struct SearchResult {
     pub metadata: HashMap<String, Value>,
 }
 
-/// Metadata filter for scoping search results
-///
-/// Example: `MetadataFilter::eq("source", "report.pdf")`
-pub type MetadataFilter = HashMap<String, Value>;
+// MetadataFilter is re-exported from filter.rs above.
 
 /// Abstraction for vector store operations
 #[async_trait]
@@ -194,6 +207,15 @@ pub trait VectorStoreBackend: Send + Sync {
 
     /// Clear all documents
     async fn clear(&self) -> Result<(), VectorStoreError>;
+
+    /// Whether this backend supports the `list()` operation.
+    ///
+    /// Cloud vector DBs (Pinecone, Qdrant) do not expose a list-all endpoint
+    /// in their standard APIs. Check this before calling `list()` to avoid a
+    /// runtime `NotImplemented` error.
+    fn supports_list(&self) -> bool {
+        true
+    }
 
     /// Batch search — run multiple queries in parallel.
     ///
@@ -238,6 +260,26 @@ impl VectorStore {
         self.backend.index(doc).await
     }
 
+    /// Index a document along with its pre-computed embedding.
+    ///
+    /// Use this instead of `index_document` when you have already computed the
+    /// embedding externally (e.g. via `IngestionPipeline`) to avoid a second
+    /// embedding call inside the backend.
+    pub async fn index_document_with_embedding(
+        &self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+        metadata: Value,
+        embedding: Vec<f32>,
+    ) -> Result<(), VectorStoreError> {
+        let mut doc = Document::new(id, text);
+        if let Value::Object(map) = metadata {
+            doc.metadata = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        }
+        doc.embedding = Some(embedding);
+        self.backend.index(doc).await
+    }
+
     pub async fn search(
         &self,
         query_embedding: Vec<f32>,
@@ -275,6 +317,12 @@ impl VectorStore {
         filter: Option<MetadataFilter>,
     ) -> Result<Vec<Vec<SearchResult>>, VectorStoreError> {
         self.backend.search_batch(queries, top_k, filter).await
+    }
+
+    /// Returns `false` for backends that do not implement `list()`.
+    /// Check this before calling `list()` to avoid a runtime error.
+    pub fn supports_list(&self) -> bool {
+        self.backend.supports_list()
     }
 
     pub fn config(&self) -> &RAGConfig {
@@ -319,11 +367,46 @@ impl InMemoryVectorStore {
         dot_product / (norm_a * norm_b)
     }
 
-    /// Check if a document's metadata matches the filter
-    fn matches_filter(metadata: &HashMap<String, Value>, filter: &MetadataFilter) -> bool {
-        filter
-            .iter()
-            .all(|(key, expected)| metadata.get(key) == Some(expected))
+    /// Evaluate a `FilterExpr` against a document's metadata map.
+    fn matches_filter(metadata: &HashMap<String, Value>, filter: &FilterExpr) -> bool {
+        match filter {
+            FilterExpr::Eq(k, v) => metadata.get(k) == Some(v),
+            FilterExpr::Ne(k, v) => metadata.get(k) != Some(v),
+            FilterExpr::Gt(k, v) => Self::cmp_values(metadata.get(k), v)
+                == Some(std::cmp::Ordering::Greater),
+            FilterExpr::Lt(k, v) => Self::cmp_values(metadata.get(k), v)
+                == Some(std::cmp::Ordering::Less),
+            FilterExpr::Gte(k, v) => matches!(
+                Self::cmp_values(metadata.get(k), v),
+                Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
+            ),
+            FilterExpr::Lte(k, v) => matches!(
+                Self::cmp_values(metadata.get(k), v),
+                Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
+            ),
+            FilterExpr::In(k, vs) => metadata
+                .get(k)
+                .map(|v| vs.contains(v))
+                .unwrap_or(false),
+            FilterExpr::And(exprs) => exprs
+                .iter()
+                .all(|e| Self::matches_filter(metadata, e)),
+            FilterExpr::Or(exprs) => exprs
+                .iter()
+                .any(|e| Self::matches_filter(metadata, e)),
+        }
+    }
+
+    /// Compare two JSON values for ordering (numbers and strings only).
+    fn cmp_values(a: Option<&Value>, b: &Value) -> Option<std::cmp::Ordering> {
+        let a = a?;
+        match (a, b) {
+            (Value::Number(an), Value::Number(bn)) => {
+                an.as_f64()?.partial_cmp(&bn.as_f64()?)
+            }
+            (Value::String(as_), Value::String(bs)) => Some(as_.cmp(bs)),
+            _ => None,
+        }
     }
 }
 
@@ -413,6 +496,7 @@ impl VectorStoreBackend for InMemoryVectorStore {
 /// Pinecone vector store using the Pinecone REST API.
 ///
 /// Requires `api_key` and `endpoint` (your Pinecone index host URL) in the config.
+/// The `index_name` field is used as the Pinecone *namespace*.
 pub struct PineconeStore {
     config: RAGConfig,
     client: reqwest::Client,
@@ -450,6 +534,28 @@ impl PineconeStore {
             .endpoint
             .as_deref()
             .unwrap_or("https://api.pinecone.io")
+    }
+
+    /// Convert a `FilterExpr` into Pinecone's metadata filter JSON.
+    ///
+    /// Pinecone format: `{"field": {"$eq": value}}` for leaves,
+    /// `{"$and": [...]}` / `{"$or": [...]}` for compound expressions.
+    fn to_pinecone_filter(f: &FilterExpr) -> Value {
+        match f {
+            FilterExpr::Eq(k, v)  => serde_json::json!({ k: { "$eq":  v } }),
+            FilterExpr::Ne(k, v)  => serde_json::json!({ k: { "$ne":  v } }),
+            FilterExpr::Gt(k, v)  => serde_json::json!({ k: { "$gt":  v } }),
+            FilterExpr::Lt(k, v)  => serde_json::json!({ k: { "$lt":  v } }),
+            FilterExpr::Gte(k, v) => serde_json::json!({ k: { "$gte": v } }),
+            FilterExpr::Lte(k, v) => serde_json::json!({ k: { "$lte": v } }),
+            FilterExpr::In(k, vs) => serde_json::json!({ k: { "$in":  vs } }),
+            FilterExpr::And(exprs) => serde_json::json!({
+                "$and": exprs.iter().map(Self::to_pinecone_filter).collect::<Vec<_>>()
+            }),
+            FilterExpr::Or(exprs) => serde_json::json!({
+                "$or": exprs.iter().map(Self::to_pinecone_filter).collect::<Vec<_>>()
+            }),
+        }
     }
 }
 
@@ -505,7 +611,7 @@ impl VectorStoreBackend for PineconeStore {
         });
 
         if let Some(f) = filter {
-            payload["filter"] = serde_json::json!(f);
+            payload["filter"] = Self::to_pinecone_filter(&f);
         }
 
         let resp = self
@@ -656,6 +762,10 @@ impl VectorStoreBackend for PineconeStore {
         })
     }
 
+    fn supports_list(&self) -> bool {
+        false
+    }
+
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         // Pinecone doesn't have a list-all endpoint in the standard API.
         // Users should track document IDs externally.
@@ -730,6 +840,42 @@ impl QdrantStore {
     fn collection(&self) -> &str {
         &self.config.index_name
     }
+
+    /// Build a Qdrant top-level filter object from a `FilterExpr`.
+    ///
+    /// Qdrant format: `{"must": [...]}` / `{"should": [...]}` at the top level,
+    /// with leaf conditions `{"key": k, "match": {"value": v}}`.
+    fn to_qdrant_filter(f: &FilterExpr) -> Value {
+        match f {
+            FilterExpr::And(exprs) => serde_json::json!({
+                "must": exprs.iter().map(Self::qdrant_condition).collect::<Vec<_>>()
+            }),
+            FilterExpr::Or(exprs) => serde_json::json!({
+                "should": exprs.iter().map(Self::qdrant_condition).collect::<Vec<_>>()
+            }),
+            // Single leaf: wrap in must
+            other => serde_json::json!({ "must": [Self::qdrant_condition(other)] }),
+        }
+    }
+
+    /// Build a single Qdrant condition object (leaf or nested).
+    fn qdrant_condition(f: &FilterExpr) -> Value {
+        match f {
+            FilterExpr::Eq(k, v)  => serde_json::json!({ "key": k, "match":  { "value": v } }),
+            FilterExpr::Ne(k, v)  => serde_json::json!({ "key": k, "match":  { "except": [v] } }),
+            FilterExpr::Gt(k, v)  => serde_json::json!({ "key": k, "range":  { "gt":  v } }),
+            FilterExpr::Lt(k, v)  => serde_json::json!({ "key": k, "range":  { "lt":  v } }),
+            FilterExpr::Gte(k, v) => serde_json::json!({ "key": k, "range":  { "gte": v } }),
+            FilterExpr::Lte(k, v) => serde_json::json!({ "key": k, "range":  { "lte": v } }),
+            FilterExpr::In(k, vs) => serde_json::json!({ "key": k, "match":  { "any":  vs } }),
+            FilterExpr::And(exprs) => serde_json::json!({
+                "filter": { "must": exprs.iter().map(Self::qdrant_condition).collect::<Vec<_>>() }
+            }),
+            FilterExpr::Or(exprs) => serde_json::json!({
+                "filter": { "should": exprs.iter().map(Self::qdrant_condition).collect::<Vec<_>>() }
+            }),
+        }
+    }
 }
 
 #[async_trait]
@@ -789,17 +935,7 @@ impl VectorStoreBackend for QdrantStore {
         });
 
         if let Some(f) = filter {
-            // Convert simple key-value filter to Qdrant filter format
-            let must: Vec<serde_json::Value> = f
-                .iter()
-                .map(|(k, v)| {
-                    serde_json::json!({
-                        "key": k,
-                        "match": { "value": v }
-                    })
-                })
-                .collect();
-            body["filter"] = serde_json::json!({ "must": must });
+            body["filter"] = Self::to_qdrant_filter(&f);
         }
 
         let resp = self
@@ -951,6 +1087,10 @@ impl VectorStoreBackend for QdrantStore {
         })
     }
 
+    fn supports_list(&self) -> bool {
+        false
+    }
+
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         Err(VectorStoreError::NotImplemented(
             "Qdrant list-all requires scroll API. Use search with empty filter instead.".into(),
@@ -996,5 +1136,130 @@ impl VectorStoreBackend for QdrantStore {
             )));
         }
         Ok(())
+    }
+}
+
+// ============================================================================
+// Per-backend config structs (clear field names, no overloaded index_name)
+// ============================================================================
+
+/// Config for [`PineconeStore`] with explicit field names.
+///
+/// Converts into [`RAGConfig`] via `From<PineconeConfig>`.
+#[derive(Debug, Clone)]
+pub struct PineconeConfig {
+    /// Pinecone API key
+    pub api_key: String,
+    /// Index host URL (e.g. `https://<index>-<project>.svc.pinecone.io`)
+    pub endpoint: String,
+    /// Namespace within the index (maps to `index_name` in RAGConfig)
+    pub namespace: String,
+    /// Embedding dimension (e.g. 1536 for OpenAI text-embedding-ada-002)
+    pub embedding_dim: usize,
+}
+
+impl From<PineconeConfig> for RAGConfig {
+    fn from(c: PineconeConfig) -> Self {
+        Self {
+            store_type: VectorStoreType::Pinecone,
+            api_key: Some(c.api_key),
+            endpoint: Some(c.endpoint),
+            index_name: c.namespace,
+            embedding_dim: c.embedding_dim,
+        }
+    }
+}
+
+/// Config for [`QdrantStore`] with explicit field names.
+#[derive(Debug, Clone)]
+pub struct QdrantConfig {
+    /// Qdrant base URL (e.g. `http://localhost:6333`)
+    pub endpoint: String,
+    /// Collection name (maps to `index_name` in RAGConfig)
+    pub collection: String,
+    /// Embedding dimension
+    pub embedding_dim: usize,
+    /// Optional API key for Qdrant Cloud
+    pub api_key: Option<String>,
+}
+
+impl From<QdrantConfig> for RAGConfig {
+    fn from(c: QdrantConfig) -> Self {
+        Self {
+            store_type: VectorStoreType::Qdrant,
+            api_key: c.api_key,
+            endpoint: Some(c.endpoint),
+            index_name: c.collection,
+            embedding_dim: c.embedding_dim,
+        }
+    }
+}
+
+/// Config for [`ChromaStore`] with explicit field names.
+#[derive(Debug, Clone)]
+pub struct ChromaConfig {
+    /// ChromaDB base URL (e.g. `http://localhost:8000`)
+    pub endpoint: String,
+    /// Collection name (maps to `index_name` in RAGConfig)
+    pub collection: String,
+}
+
+impl From<ChromaConfig> for RAGConfig {
+    fn from(c: ChromaConfig) -> Self {
+        Self {
+            store_type: VectorStoreType::Chroma,
+            api_key: None,
+            endpoint: Some(c.endpoint),
+            index_name: c.collection,
+            embedding_dim: 1536,
+        }
+    }
+}
+
+/// Config for [`MilvusStore`] with explicit field names.
+#[derive(Debug, Clone)]
+pub struct MilvusConfig {
+    /// Milvus REST endpoint (e.g. `http://localhost:19530`)
+    pub endpoint: String,
+    /// Collection name (maps to `index_name` in RAGConfig)
+    pub collection: String,
+    /// Embedding dimension
+    pub embedding_dim: usize,
+    /// Optional Bearer token
+    pub api_key: Option<String>,
+}
+
+impl From<MilvusConfig> for RAGConfig {
+    fn from(c: MilvusConfig) -> Self {
+        Self {
+            store_type: VectorStoreType::Milvus,
+            api_key: c.api_key,
+            endpoint: Some(c.endpoint),
+            index_name: c.collection,
+            embedding_dim: c.embedding_dim,
+        }
+    }
+}
+
+/// Config for [`WeaviateStore`] with explicit field names.
+#[derive(Debug, Clone)]
+pub struct WeaviateConfig {
+    /// Weaviate base URL (e.g. `http://localhost:8080`)
+    pub endpoint: String,
+    /// Class name — auto-capitalised if needed (maps to `index_name` in RAGConfig)
+    pub class: String,
+    /// Optional Bearer API key
+    pub api_key: Option<String>,
+}
+
+impl From<WeaviateConfig> for RAGConfig {
+    fn from(c: WeaviateConfig) -> Self {
+        Self {
+            store_type: VectorStoreType::Weaviate,
+            api_key: c.api_key,
+            endpoint: Some(c.endpoint),
+            index_name: c.class,
+            embedding_dim: 1536,
+        }
     }
 }

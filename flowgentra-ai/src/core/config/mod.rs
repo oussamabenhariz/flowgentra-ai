@@ -247,7 +247,12 @@ fn substitute_env_vars(input: &str) -> String {
 /// - Graph structure (nodes and edges)
 /// - Optional state schema documentation
 /// - Optional state validation schema
+///
+/// Unknown keys in the YAML/JSON are rejected at parse time (`deny_unknown_fields`)
+/// to catch typos in config files early and to prevent silent injection of
+/// unexpected configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     /// Unique name for this agent
     pub name: String,
@@ -297,6 +302,7 @@ pub struct AgentConfig {
 
 /// Planner configuration for LLM-driven dynamic routing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlannerConfig {
     /// Enable planner (optional). Default false.
     #[serde(default)]
@@ -330,6 +336,7 @@ impl Default for PlannerConfig {
 /// Defines the workflow: which nodes exist, how they're connected,
 /// and what MCPs are available.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphConfig {
     /// All computation nodes in the graph
     pub nodes: Vec<NodeConfig>,
@@ -492,31 +499,74 @@ pub struct RAGGraphConfig {
 }
 
 /// Vector store configuration
+///
+/// String fields (`endpoint`, `api_key`, `namespace`) support `${ENV_VAR}` substitution:
+/// the value `${PINECONE_API_KEY}` is replaced at runtime by the environment variable
+/// `PINECONE_API_KEY`.  Use [`VectorStoreConfig::resolved`] to get a copy with all
+/// substitutions applied.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorStoreConfig {
-    /// Store type: "chroma", "pinecone", "memory", etc.
+    /// Store type: "chroma", "pinecone", "weaviate", "milvus", "qdrant", "memory".
     #[serde(rename = "type")]
     pub store_type: VectorStoreType,
 
-    /// Endpoint URL (for chroma, weaviate, etc.)
+    /// Endpoint URL.  Supports `${ENV_VAR}` substitution.
     #[serde(default)]
     pub endpoint: Option<String>,
 
-    /// Collection/index name
+    /// Collection / index / class name.
     #[serde(default = "default_collection_name")]
     pub collection: String,
 
-    /// API key (for pinecone, etc.)
+    /// API key or bearer token.  Supports `${ENV_VAR}` substitution.
     #[serde(default)]
     pub api_key: Option<String>,
 
-    /// Embedding dimension (auto-detected from embeddings config if omitted)
+    /// Logical namespace within an index (Pinecone namespaces, etc.).
+    /// Supports `${ENV_VAR}` substitution.
+    #[serde(default)]
+    pub namespace: Option<String>,
+
+    /// Embedding dimension (auto-detected from embeddings config if omitted).
     #[serde(default)]
     pub embedding_dim: Option<usize>,
 }
 
+impl VectorStoreConfig {
+    /// Return a clone of this config with all `${ENV_VAR}` tokens resolved.
+    pub fn resolved(&self) -> Self {
+        Self {
+            store_type: self.store_type.clone(),
+            endpoint: self.endpoint.as_deref().map(resolve_config_env_vars),
+            collection: resolve_config_env_vars(&self.collection),
+            api_key: self.api_key.as_deref().map(resolve_config_env_vars),
+            namespace: self.namespace.as_deref().map(resolve_config_env_vars),
+            embedding_dim: self.embedding_dim,
+        }
+    }
+}
+
 fn default_collection_name() -> String {
     "documents".to_string()
+}
+
+/// Replace `${VAR_NAME}` tokens in `s` with the corresponding environment variable.
+///
+/// Unknown variables are left as-is.
+fn resolve_config_env_vars(s: &str) -> String {
+    let mut result = s.to_string();
+    loop {
+        let Some(start) = result.find("${") else { break };
+        let Some(rel_end) = result[start..].find('}') else { break };
+        let end = start + rel_end;
+        let var_name = &result[start + 2..end];
+        if let Ok(val) = std::env::var(var_name) {
+            result = format!("{}{}{}", &result[..start], val, &result[end + 1..]);
+        } else {
+            break; // unknown variable — stop to avoid an infinite loop
+        }
+    }
+    result
 }
 
 /// Embeddings provider configuration

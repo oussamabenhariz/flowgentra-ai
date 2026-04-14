@@ -314,26 +314,125 @@ impl Tool for WebRequestTool {
 // File Tool
 // =============================================================================
 
-/// Tool for file operations (read, write, list)
-pub struct FilesTool;
+/// Tool for file operations (read, write, list).
+///
+/// All paths are resolved relative to `sandbox_root` and must remain inside it.
+/// Attempts to escape via `..`, symlinks, or absolute paths outside the root
+/// are rejected with an error.
+pub struct FilesTool {
+    /// Absolute path of the directory that this tool is sandboxed to.
+    /// All file operations are restricted to this directory tree.
+    sandbox_root: std::path::PathBuf,
+}
 
 impl FilesTool {
-    pub fn new() -> Self {
-        FilesTool
+    /// Create a `FilesTool` sandboxed to `root`.
+    /// The root must already exist; it is canonicalized at construction time.
+    pub fn new_with_root(root: impl AsRef<std::path::Path>) -> Result<Self> {
+        let canonical = fs::canonicalize(root.as_ref()).map_err(|e| {
+            FlowgentraError::ToolError(format!(
+                "Cannot canonicalize sandbox root '{}': {}",
+                root.as_ref().display(),
+                e
+            ))
+        })?;
+        Ok(Self { sandbox_root: canonical })
+    }
+
+    /// Resolve `user_path` to an absolute, canonical path and verify it is
+    /// inside `sandbox_root`.  Returns the canonicalized path on success.
+    fn safe_path(&self, user_path: &str) -> Result<std::path::PathBuf> {
+        // Reject bare `..` or paths that *start with* a `..` component before
+        // canonicalization (fast-fail; canonicalize below is the real guard).
+        let p = std::path::Path::new(user_path);
+        for component in p.components() {
+            if component == std::path::Component::ParentDir {
+                return Err(FlowgentraError::ToolError(
+                    "Path traversal via '..' is not allowed".to_string(),
+                ));
+            }
+        }
+
+        // Join relative paths onto the sandbox root; leave absolute paths as-is
+        // so canonicalize can evaluate them before we check containment.
+        let joined = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.sandbox_root.join(p)
+        };
+
+        // Resolve symlinks and normalize (this also verifies the path exists
+        // for read/list; for write the parent must exist).
+        let canonical = fs::canonicalize(&joined).map_err(|e| {
+            FlowgentraError::ToolError(format!("Path '{}' is invalid: {}", user_path, e))
+        })?;
+
+        // The canonical path must start with the canonical sandbox root.
+        if !canonical.starts_with(&self.sandbox_root) {
+            return Err(FlowgentraError::ToolError(format!(
+                "Path '{}' resolves outside the allowed sandbox directory",
+                user_path
+            )));
+        }
+
+        Ok(canonical)
+    }
+
+    /// Like `safe_path` but used for write targets where the file may not exist yet.
+    /// We canonicalize the *parent* directory and verify containment.
+    fn safe_write_path(&self, user_path: &str) -> Result<std::path::PathBuf> {
+        let p = std::path::Path::new(user_path);
+        for component in p.components() {
+            if component == std::path::Component::ParentDir {
+                return Err(FlowgentraError::ToolError(
+                    "Path traversal via '..' is not allowed".to_string(),
+                ));
+            }
+        }
+
+        let joined = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.sandbox_root.join(p)
+        };
+
+        // Canonicalize the parent so the file itself doesn't need to exist.
+        let parent = joined.parent().ok_or_else(|| {
+            FlowgentraError::ToolError(format!("Path '{}' has no parent directory", user_path))
+        })?;
+        let canonical_parent = fs::canonicalize(parent).map_err(|e| {
+            FlowgentraError::ToolError(format!("Parent directory of '{}' is invalid: {}", user_path, e))
+        })?;
+
+        if !canonical_parent.starts_with(&self.sandbox_root) {
+            return Err(FlowgentraError::ToolError(format!(
+                "Path '{}' resolves outside the allowed sandbox directory",
+                user_path
+            )));
+        }
+
+        // Reconstruct the full target path with the canonicalized parent.
+        let file_name = joined.file_name().ok_or_else(|| {
+            FlowgentraError::ToolError(format!("Path '{}' has no file name", user_path))
+        })?;
+        Ok(canonical_parent.join(file_name))
     }
 
     async fn read_file(&self, path: &str) -> Result<String> {
-        fs::read_to_string(path)
+        let safe = self.safe_path(path)?;
+        fs::read_to_string(&safe)
             .map_err(|e| FlowgentraError::ToolError(format!("Failed to read file: {}", e)))
     }
 
     async fn write_file(&self, path: &str, content: &str) -> Result<()> {
-        fs::write(path, content)
+        let safe = self.safe_write_path(path)?;
+        fs::write(&safe, content)
             .map_err(|e| FlowgentraError::ToolError(format!("Failed to write file: {}", e)))
     }
 
     async fn list_files(&self, path: &str) -> Result<Vec<String>> {
-        let entries = fs::read_dir(path)
+        let safe = self.safe_path(path)?;
+        let entries = fs::read_dir(&safe)
             .map_err(|e| FlowgentraError::ToolError(format!("Failed to list files: {}", e)))?;
 
         let files: Vec<String> = entries
@@ -349,8 +448,12 @@ impl FilesTool {
 }
 
 impl Default for FilesTool {
+    /// Creates a `FilesTool` sandboxed to the current working directory.
+    /// Panics if the current directory cannot be canonicalized (should not
+    /// happen in normal operation).
     fn default() -> Self {
-        Self::new()
+        Self::new_with_root(std::env::current_dir().expect("Failed to get current directory"))
+            .expect("Failed to canonicalize current directory")
     }
 }
 

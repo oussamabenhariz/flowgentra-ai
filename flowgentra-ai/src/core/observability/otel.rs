@@ -166,16 +166,8 @@ pub async fn export_to_otlp(
 }
 
 fn rand_id() -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-    hasher.finish()
+    // Use UUID v4 (cryptographically random, stable across Rust versions)
+    // instead of DefaultHasher over a timestamp (not cryptographically random,
+    // version-unstable, and easily predictable under low timer resolution).
+    uuid::Uuid::new_v4().as_u128() as u64
 }

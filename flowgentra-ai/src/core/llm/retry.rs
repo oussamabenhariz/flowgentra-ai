@@ -154,15 +154,17 @@ impl RetryLLMClient {
 fn is_llm_retryable(err: &FlowgentraError) -> bool {
     match err {
         FlowgentraError::LLMError(msg) => {
-            // Rate limit (429), server errors (5xx), timeouts, connection failures
+            // Rate limit (429), server errors (5xx), timeouts, connection failures.
+            // Status codes are matched as standalone numbers to avoid false positives
+            // from model names like "gpt-3500" or error IDs like "ERR_5001".
             let lower = msg.to_lowercase();
-            lower.contains("429")
+            http_status_present(&lower, 429)
+                || http_status_present(&lower, 500)
+                || http_status_present(&lower, 502)
+                || http_status_present(&lower, 503)
+                || http_status_present(&lower, 504)
                 || lower.contains("rate limit")
                 || lower.contains("too many requests")
-                || lower.contains("500")
-                || lower.contains("502")
-                || lower.contains("503")
-                || lower.contains("504")
                 || lower.contains("server error")
                 || lower.contains("timeout")
                 || lower.contains("timed out")
@@ -172,6 +174,30 @@ fn is_llm_retryable(err: &FlowgentraError) -> bool {
         FlowgentraError::TimeoutError | FlowgentraError::ExecutionTimeout(_) => true,
         _ => false,
     }
+}
+
+/// Returns `true` if `msg` contains `code` as a standalone number
+/// (not embedded inside a longer digit sequence such as a model name or ID).
+fn http_status_present(msg: &str, code: u16) -> bool {
+    let code_str = code.to_string();
+    let code_bytes = code_str.as_bytes();
+    let code_len = code_bytes.len();
+    let bytes = msg.as_bytes();
+
+    if bytes.len() < code_len {
+        return false;
+    }
+
+    for i in 0..=(bytes.len() - code_len) {
+        if &bytes[i..i + code_len] == code_bytes {
+            let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+            let after_ok = i + code_len >= bytes.len() || !bytes[i + code_len].is_ascii_digit();
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[async_trait::async_trait]
@@ -255,5 +281,20 @@ mod tests {
         assert!(!is_llm_retryable(&FlowgentraError::ConfigError(
             "bad config".into()
         )));
+    }
+
+    #[test]
+    fn test_http_status_no_false_positive_from_model_name() {
+        // "gpt-3500" contains "500" but it is embedded in a longer digit sequence
+        assert!(!http_status_present("model gpt-3500 not found", 500));
+        // "ERR_5001" also embeds "500"
+        assert!(!http_status_present("err_5001 occurred", 500));
+        // Standalone "500" should still match
+        assert!(http_status_present("http 500 internal server error", 500));
+        assert!(http_status_present("status: 500", 500));
+        // 429 at end of string
+        assert!(http_status_present("rate limited: 429", 429));
+        // Surrounded by non-digit punctuation
+        assert!(http_status_present("(503)", 503));
     }
 }

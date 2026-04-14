@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use super::filter::FilterExpr;
 use super::vector_db::{
     Document, MetadataFilter, RAGConfig, SearchResult, VectorStoreBackend, VectorStoreError,
 };
@@ -144,6 +145,28 @@ impl ChromaStore {
     }
 }
 
+/// Convert a `FilterExpr` to a ChromaDB `where` clause JSON.
+///
+/// ChromaDB format: `{"field": {"$eq": value}}` for leaves,
+/// `{"$and": [...]}` / `{"$or": [...]}` for compound expressions.
+fn chroma_filter(f: &FilterExpr) -> serde_json::Value {
+    match f {
+        FilterExpr::Eq(k, v)  => serde_json::json!({ k: { "$eq":  v } }),
+        FilterExpr::Ne(k, v)  => serde_json::json!({ k: { "$ne":  v } }),
+        FilterExpr::Gt(k, v)  => serde_json::json!({ k: { "$gt":  v } }),
+        FilterExpr::Lt(k, v)  => serde_json::json!({ k: { "$lt":  v } }),
+        FilterExpr::Gte(k, v) => serde_json::json!({ k: { "$gte": v } }),
+        FilterExpr::Lte(k, v) => serde_json::json!({ k: { "$lte": v } }),
+        FilterExpr::In(k, vs) => serde_json::json!({ k: { "$in":  vs } }),
+        FilterExpr::And(exprs) => serde_json::json!({
+            "$and": exprs.iter().map(chroma_filter).collect::<Vec<_>>()
+        }),
+        FilterExpr::Or(exprs) => serde_json::json!({
+            "$or": exprs.iter().map(chroma_filter).collect::<Vec<_>>()
+        }),
+    }
+}
+
 #[async_trait]
 impl VectorStoreBackend for ChromaStore {
     async fn index(&self, doc: Document) -> Result<(), VectorStoreError> {
@@ -193,11 +216,9 @@ impl VectorStoreBackend for ChromaStore {
             "include": ["documents", "distances", "metadatas"]
         });
 
-        // Pass metadata filter as ChromaDB `where` clause
+        // Convert FilterExpr to ChromaDB `where` clause
         if let Some(f) = filter {
-            if !f.is_empty() {
-                body["where"] = serde_json::json!(f);
-            }
+            body["where"] = chroma_filter(&f);
         }
 
         let resp = self

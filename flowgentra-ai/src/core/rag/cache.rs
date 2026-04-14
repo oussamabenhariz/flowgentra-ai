@@ -4,19 +4,19 @@
 //! Thread-safe via `DashMap`. Purely in-memory (no disk persistence).
 
 use dashmap::DashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::embeddings::{EmbeddingError, EmbeddingsProvider};
 
-/// Content-hash key for cache lookups
+/// Content-hash key for cache lookups.
+///
+/// Uses blake3 instead of DefaultHasher for collision resistance and
+/// cross-version stability.
 fn content_hash(text: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    hasher.finish()
+    let hash = blake3::hash(text.as_bytes());
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
 }
 
 /// Caching wrapper around any `EmbeddingsProvider`.

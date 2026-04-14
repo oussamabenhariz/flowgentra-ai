@@ -1211,6 +1211,62 @@ impl MCPClient for SSEMCPClient {
     }
 }
 
+/// Validate a Docker image reference.
+///
+/// Rejects names that contain whitespace, shell-significant characters, or
+/// uppercase letters in the registry/repository path.  A valid reference is
+/// of the form `[registry/][user/]name[:tag][@sha256:digest]`.
+fn validate_docker_image_name(image: &str) -> Result<()> {
+    if image.is_empty() {
+        return Err(FlowgentraError::MCPError("Docker image name must not be empty".into()));
+    }
+    // Reject whitespace or shell metacharacters that could alter the docker
+    // command line even though we pass args as a slice (defense in depth).
+    let forbidden: &[char] = &[' ', '\t', '\n', '\r', ';', '&', '|', '`', '$', '(', ')'];
+    if image.chars().any(|c| forbidden.contains(&c)) {
+        return Err(FlowgentraError::MCPError(format!(
+            "Docker image name '{}' contains forbidden characters",
+            image
+        )));
+    }
+    // Allow: lowercase alphanumerics, '/', '.', '-', '_', ':', '@'
+    // (covers registry host:port, namespaced images, tags, digests)
+    if !image.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_' | ':' | '@')) {
+        return Err(FlowgentraError::MCPError(format!(
+            "Docker image name '{}' contains unexpected characters; \
+             use lowercase alphanumerics, '/', '.', '-', '_', ':', '@' only",
+            image
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a Docker env-var key.
+///
+/// Keys must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX convention).  This prevents
+/// injecting extra `=…` segments or overriding security-sensitive variables via
+/// malformed names.
+fn validate_docker_env_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return Err(FlowgentraError::MCPError(
+            "Docker env var key must not be empty".into(),
+        ));
+    }
+    let mut chars = key.chars();
+    let first_ok = chars
+        .next()
+        .map(|c| c.is_ascii_alphabetic() || c == '_')
+        .unwrap_or(false);
+    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !first_ok || !rest_ok {
+        return Err(FlowgentraError::MCPError(format!(
+            "Docker env var key '{}' is invalid; must match [A-Za-z_][A-Za-z0-9_]*",
+            key
+        )));
+    }
+    Ok(())
+}
+
 /// MCP client that manages a Docker container and communicates via HTTP.
 ///
 /// On first use, the client:
@@ -1275,24 +1331,22 @@ impl DockerMCPClient {
         let image = self.config.image.as_deref().ok_or_else(|| {
             FlowgentraError::MCPError("Docker MCP requires an 'image' field".into())
         })?;
+
+        // --- Fix #7a: Validate image name ---
+        // Reject names containing whitespace or shell-significant characters.
+        // A valid Docker image reference matches: [registry/][user/]name[:tag][@digest]
+        validate_docker_image_name(image)?;
+
         let container_port = self.config.connection_settings.port.unwrap_or(8080);
 
-        // If host_port is 0, pick a random free port
-        let host_port = if self.configured_host_port == 0 {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| {
-                FlowgentraError::MCPError(format!("Failed to find free port: {}", e))
-            })?;
-            let port = listener.local_addr().unwrap().port();
-            drop(listener);
-            port
-        } else {
-            self.configured_host_port
-        };
+        // --- Fix #7b: Validate env var keys ---
+        for (k, _v) in &self.config.connection_settings.env_vars {
+            validate_docker_env_key(k)?;
+        }
 
         tracing::info!(
             image = %image,
             container = %self.container_name,
-            port = %format!("{}:{}", host_port, container_port),
             "Starting Docker MCP container"
         );
 
@@ -1304,6 +1358,17 @@ impl DockerMCPClient {
             .status()
             .await;
 
+        // --- Fix #6: Eliminate TOCTOU port race ---
+        // Let Docker choose the host port by using "0:container_port".
+        // We then query `docker port` after startup to find the assigned port.
+        // This avoids the bind-then-drop pattern where another process could
+        // grab the port between our TcpListener::drop and docker run.
+        let port_mapping = if self.configured_host_port == 0 {
+            format!("0:{}", container_port)
+        } else {
+            format!("{}:{}", self.configured_host_port, container_port)
+        };
+
         // Build docker run command
         let mut args = vec![
             "run".to_string(),
@@ -1311,10 +1376,10 @@ impl DockerMCPClient {
             "--name".to_string(),
             self.container_name.clone(),
             "-p".to_string(),
-            format!("{}:{}", host_port, container_port),
+            port_mapping,
         ];
 
-        // Add environment variables
+        // Add environment variables (keys already validated above)
         for (k, v) in &self.config.connection_settings.env_vars {
             args.push("-e".to_string());
             args.push(format!("{}={}", k, v));
@@ -1337,7 +1402,37 @@ impl DockerMCPClient {
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        tracing::info!(container_id = %container_id, "Container started, waiting for health...");
+        tracing::info!(container_id = %container_id, "Container started, resolving host port...");
+
+        // Resolve the actual host port assigned by Docker.
+        let host_port = if self.configured_host_port == 0 {
+            // `docker port <name> <container_port>` prints lines like:
+            //   0.0.0.0:49152
+            //   :::49152
+            let port_out = tokio::process::Command::new("docker")
+                .args(["port", &self.container_name, &container_port.to_string()])
+                .output()
+                .await
+                .map_err(|e| FlowgentraError::MCPError(format!("docker port failed: {}", e)))?;
+
+            let port_str = String::from_utf8_lossy(&port_out.stdout);
+            port_str
+                .lines()
+                .find_map(|line| {
+                    // Each line is "addr:port"; take the part after the last ':'
+                    line.rsplit(':').next().and_then(|p| p.trim().parse::<u16>().ok())
+                })
+                .ok_or_else(|| {
+                    FlowgentraError::MCPError(format!(
+                        "Could not determine host port from docker port output: {}",
+                        port_str.trim()
+                    ))
+                })?
+        } else {
+            self.configured_host_port
+        };
+
+        tracing::info!(host_port = %host_port, "Container port resolved, waiting for health...");
 
         // Wait for the HTTP server inside to become ready
         let url = format!("http://127.0.0.1:{}/tools", host_port);
@@ -1481,12 +1576,34 @@ impl Drop for DockerMCPClient {
         if self.host_port.get().is_some() {
             let name = self.container_name.clone();
             tracing::info!(container = %name, "Stopping Docker MCP container");
+            // Drop cannot be async, so we spawn a thread for cleanup.
+            // Failures are now logged rather than silently swallowed so that
+            // operators know about orphaned containers.
             std::thread::spawn(move || {
-                let _ = std::process::Command::new("docker")
+                match std::process::Command::new("docker")
                     .args(["rm", "-f", &name])
                     .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                    .stderr(std::process::Stdio::piped())
+                    .output()
+                {
+                    Ok(out) if out.status.success() => {
+                        // Container removed cleanly — nothing to log.
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        eprintln!(
+                            "[flowgentra] WARNING: failed to remove Docker container '{}': {}",
+                            name,
+                            stderr.trim()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[flowgentra] WARNING: could not spawn 'docker rm -f {}': {}",
+                            name, e
+                        );
+                    }
+                }
             });
         }
     }

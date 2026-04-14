@@ -4,6 +4,7 @@
 //! Automatically detects the type from the file extension and applies
 //! appropriate preprocessing (e.g. stripping HTML tags).
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::pdf;
@@ -16,6 +17,21 @@ pub struct LoadedDocument {
     pub text: String,
     pub source: String,
     pub file_type: FileType,
+    /// Optional key/value metadata (source URL, file path, page number, etc.)
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+impl LoadedDocument {
+    /// Convert to a `vector_db::Document` for indexing. Embedding must be
+    /// computed separately via an `Embeddings` provider.
+    pub fn into_document(self) -> super::vector_db::Document {
+        super::vector_db::Document {
+            id: self.id,
+            text: self.text,
+            embedding: None,
+            metadata: self.metadata,
+        }
+    }
 }
 
 /// Supported file types
@@ -41,25 +57,35 @@ impl FileType {
     }
 }
 
-/// Strip HTML tags from text (simple regex-free approach)
+/// Strip HTML tags from text, including the contents of `<script>` and `<style>` blocks.
 fn strip_html_tags(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let mut in_tag = false;
-    let in_script = false;
+    let mut in_skip_block = false; // true while inside <script> or <style>
+    let mut tag_buf = String::new(); // accumulates tag content for name detection
 
     for ch in html.chars() {
         match ch {
             '<' => {
                 in_tag = true;
+                tag_buf.clear();
             }
             '>' => {
                 in_tag = false;
+                let tag_lower = tag_buf.trim().to_lowercase();
+                // Opening <script> or <style> — start skipping content
+                if tag_lower.starts_with("script") || tag_lower.starts_with("style") {
+                    in_skip_block = true;
+                }
+                // Closing </script> or </style> — resume collecting content
+                if tag_lower.starts_with("/script") || tag_lower.starts_with("/style") {
+                    in_skip_block = false;
+                }
             }
             _ if in_tag => {
-                // Check for script/style tags to skip their content
-                // (simplified — just tracks basic open/close)
+                tag_buf.push(ch);
             }
-            _ if !in_script => {
+            _ if !in_skip_block => {
                 result.push(ch);
             }
             _ => {}
@@ -154,11 +180,18 @@ pub async fn load_document(path: impl AsRef<Path>) -> Result<LoadedDocument, Vec
             .map_err(|e| VectorStoreError::Unknown(format!("Failed to read file: {}", e)))?,
     };
 
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "source".to_string(),
+        serde_json::Value::String(source.clone()),
+    );
+
     Ok(LoadedDocument {
         id,
         text,
         source,
         file_type,
+        metadata,
     })
 }
 
@@ -226,6 +259,25 @@ mod tests {
         let html = "<h1>Title</h1><p>Hello &amp; world</p>";
         let stripped = strip_html_tags(html);
         assert_eq!(stripped, "TitleHello & world");
+    }
+
+    #[test]
+    fn test_strip_html_skips_script_content() {
+        let html = "<p>Before</p><script>alert('xss')</script><p>After</p>";
+        let stripped = strip_html_tags(html);
+        assert!(stripped.contains("Before"));
+        assert!(stripped.contains("After"));
+        assert!(!stripped.contains("alert"));
+        assert!(!stripped.contains("xss"));
+    }
+
+    #[test]
+    fn test_strip_html_skips_style_content() {
+        let html = "<p>Text</p><style>body { color: red; }</style><p>More</p>";
+        let stripped = strip_html_tags(html);
+        assert!(stripped.contains("Text"));
+        assert!(stripped.contains("More"));
+        assert!(!stripped.contains("color"));
     }
 
     #[test]

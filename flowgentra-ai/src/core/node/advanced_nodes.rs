@@ -102,11 +102,16 @@ impl LoopNodeConfig {
         })
     }
 
-    /// Create a new loop node configuration
+    /// Create a new loop node configuration.
+    ///
+    /// Defaults to `max_iterations = 3`. Call `.with_max_iterations(n)` to override.
+    ///
+    /// **Note:** `break_condition` is stored but not yet evaluated at runtime.
+    /// Use a conditional edge in the parent graph to implement early-exit logic.
     pub fn new(handler: impl Into<String>) -> Self {
         LoopNodeConfig {
             handler: handler.into(),
-            max_iterations: 1,
+            max_iterations: 3,
             break_condition: None,
             accumulate_results: false,
             config: std::collections::HashMap::new(),

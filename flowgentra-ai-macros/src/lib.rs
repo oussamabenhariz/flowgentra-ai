@@ -56,8 +56,10 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
     let struct_name = &input.ident;
     let vis = &input.vis;
 
-    // Use relative crate path - macros always work relative to the target crate
-    let flowgentra_ai_crate = quote! { crate };
+    // Use the absolute crate path. `crate::` in generated code resolves to the
+    // *calling* crate (where the derive is used), not to `flowgentra_ai` itself,
+    // so we must use `::flowgentra_ai::` to reference library types correctly.
+    let flowgentra_ai_crate = quote! { ::flowgentra_ai };
 
     let fields = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
@@ -185,6 +187,13 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
 /// - Takes `(&S, &Context)` parameters
 /// - Returns `Result<S::Update>`
 ///
+/// # Crate name requirement
+///
+/// The generated code references `::flowgentra_ai` as an absolute crate path.
+/// Your `Cargo.toml` dependency **must** be named `flowgentra-ai` (the default).
+/// If you alias it (e.g. `flowgentra_ai = { package = "flowgentra-ai" }`), the
+/// generated code will still work because the crate name in code is `flowgentra_ai`.
+///
 /// # Example
 ///
 /// ```ignore
@@ -204,9 +213,11 @@ pub fn register_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #input
 
         inventory::submit! {
-            flowgentra_ai::core::agent::HandlerEntry::new(
+            // Use the absolute path (leading `::`) so this compiles correctly
+            // regardless of how the calling crate imports `flowgentra_ai`.
+            ::flowgentra_ai::core::agent::HandlerEntry::new(
                 #handler_name,
-                std::sync::Arc::new(|state, ctx| Box::pin(#func_name(state, ctx)))
+                ::std::sync::Arc::new(|state, ctx| ::std::boxed::Box::pin(#func_name(state, ctx)))
             )
         }
     };
@@ -271,15 +282,15 @@ pub fn node(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #input
 
         /// Auto-generated node factory for use with `StateGraphBuilder::add_node`.
-        pub fn #node_factory_name() -> std::sync::Arc<
-            flowgentra_ai::core::state_graph::node::FunctionNode<
+        pub fn #node_factory_name() -> ::std::sync::Arc<
+            ::flowgentra_ai::core::state_graph::node::FunctionNode<
                 _,
-                impl Fn(&_, &flowgentra_ai::core::state::Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = flowgentra_ai::core::state_graph::error::Result<_>> + Send>> + Send + Sync,
+                impl Fn(&_, &::flowgentra_ai::core::state::Context) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::flowgentra_ai::core::state_graph::error::Result<_>> + Send>> + Send + Sync,
             >
         > {
-            std::sync::Arc::new(flowgentra_ai::core::state_graph::node::FunctionNode::new(
+            ::std::sync::Arc::new(::flowgentra_ai::core::state_graph::node::FunctionNode::new(
                 #node_name_str,
-                |state, ctx| Box::pin(#func_name(state, ctx)),
+                |state, ctx| ::std::boxed::Box::pin(#func_name(state, ctx)),
             ))
         }
     };

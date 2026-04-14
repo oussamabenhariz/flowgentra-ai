@@ -173,13 +173,12 @@ impl RetryPolicy {
         delay.min(config.max_delay_ms)
     }
 
-    /// Calculate temperature adjustment for retry
+    /// Calculate temperature adjustment for retry.
     ///
-    /// Higher temperature = more creative/diverse output
+    /// Higher temperature = more creative/diverse output.
+    /// Capped at 1.0 — values above 1.0 are rejected by most providers.
     pub fn get_temperature_adjustment(retry_count: u32) -> f64 {
-        // Start at base (usually 0.7), increase by 0.2 per retry
-        // This encourages more diverse attempts
-        0.7 + (retry_count as f64 * 0.15)
+        (0.7 + (retry_count as f64 * 0.15)).min(1.0)
     }
 
     /// Build retry feedback prompt
@@ -248,8 +247,10 @@ impl RetryPolicy {
         report
     }
 
-    /// Generate ASCII confidence visualization
+    /// Generate ASCII confidence visualization.
+    /// Input is clamped to [0.0, 1.0] to prevent panic on out-of-range values.
     fn confidence_bar(confidence: f64) -> String {
+        let confidence = confidence.clamp(0.0, 1.0);
         let bar_len = (confidence * 20.0) as usize;
         let filled = "█".repeat(bar_len);
         let empty = "░".repeat(20 - bar_len);
@@ -345,5 +346,20 @@ mod tests {
         assert!(bar_high.contains("█"));
         assert!(bar_low.contains("░"));
         assert_eq!(bar_low.len(), bar_high.len());
+    }
+
+    #[test]
+    fn test_temperature_never_exceeds_one() {
+        for retry in 0..=10 {
+            let temp = RetryPolicy::get_temperature_adjustment(retry);
+            assert!(temp <= 1.0, "Temperature {} at retry {} exceeds 1.0", temp, retry);
+        }
+    }
+
+    #[test]
+    fn test_confidence_bar_out_of_range_no_panic() {
+        // Must not panic for values outside [0, 1]
+        let _ = RetryPolicy::confidence_bar(1.5);
+        let _ = RetryPolicy::confidence_bar(-0.1);
     }
 }

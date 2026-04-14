@@ -309,8 +309,8 @@ pub struct LLMConfig {
     /// Only tokens with cumulative probability up to top_p are considered
     pub top_p: Option<f32>,
 
-    /// API key or authentication token for the provider
-    /// Use environment variable syntax like `${OPENAI_API_KEY}`
+    /// API key or authentication token for the provider.
+    /// Must be passed explicitly. Leave empty for providers that don't need auth (e.g. Ollama).
     pub api_key: String,
 
     /// Response format — set to `Json` or `JsonSchema` for structured output

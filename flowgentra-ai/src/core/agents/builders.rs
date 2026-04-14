@@ -29,6 +29,10 @@ pub struct PrebuiltAgentConfig {
     /// LLM configuration
     pub llm_model: String,
 
+    /// API key for the LLM provider. Required for cloud providers (OpenAI, Anthropic, etc.).
+    /// Leave as `None` for local providers that don't need authentication (e.g. Ollama).
+    pub api_key: Option<String>,
+
     /// System prompt/instructions
     pub system_prompt: String,
 
@@ -65,6 +69,7 @@ impl Default for PrebuiltAgentConfig {
             name: "agent".to_string(),
             agent_type: "default".to_string(),
             llm_model: "gpt-4".to_string(),
+            api_key: None,
             system_prompt: String::new(),
             tools: HashMap::new(),
             mcps: Vec::new(),

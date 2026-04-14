@@ -53,34 +53,27 @@ fn resolve_provider(model: &str) -> LLMProvider {
     }
 }
 
-/// Resolve the API key environment variable name for a provider.
-fn api_key_env_var(provider: &LLMProvider) -> &'static str {
-    match provider {
-        LLMProvider::OpenAI => "OPENAI_API_KEY",
-        LLMProvider::Anthropic => "ANTHROPIC_API_KEY",
-        LLMProvider::Mistral => "MISTRAL_API_KEY",
-        LLMProvider::Groq => "GROQ_API_KEY",
-        LLMProvider::HuggingFace => "HF_API_TOKEN",
-        LLMProvider::Ollama => "",
-        LLMProvider::Azure => "AZURE_OPENAI_KEY",
-        LLMProvider::Custom(_) => "LLM_API_KEY",
-    }
+/// Returns true for providers that require an API key.
+fn provider_requires_api_key(provider: &LLMProvider) -> bool {
+    !matches!(provider, LLMProvider::Ollama)
 }
 
-/// Create an LLM client from an PrebuiltAgentConfig.
+/// Create an LLM client from a PrebuiltAgentConfig.
 fn create_client_from_config(
     config: &PrebuiltAgentConfig,
 ) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
     let provider = resolve_provider(&config.llm_model);
-    let env_var = api_key_env_var(&provider);
-    let api_key = std::env::var(env_var).unwrap_or_default();
 
-    if api_key.is_empty() && !matches!(provider, LLMProvider::Ollama) {
-        return Err(FlowgentraError::ConfigError(format!(
-            "API key not found. Set the {} environment variable.",
-            env_var
-        )));
-    }
+    let api_key = match &config.api_key {
+        Some(key) => key.clone(),
+        None if provider_requires_api_key(&provider) => {
+            return Err(FlowgentraError::ConfigError(format!(
+                "api_key is required for provider '{}'. Pass it via PrebuiltAgentConfig::api_key.",
+                config.llm_model
+            )));
+        }
+        None => String::new(),
+    };
 
     let mut llm_config = LLMConfig::new(provider, config.llm_model.clone(), api_key);
     llm_config = llm_config.with_temperature(config.temperature);

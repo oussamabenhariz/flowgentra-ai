@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use super::embeddings::{EmbeddingError, Embeddings};
-use super::vector_db::{Document, VectorStore, VectorStoreError};
+use super::vector_db::{VectorStore, VectorStoreError};
 
 /// Ingestion statistics
 #[derive(Debug, Clone, Default)]
@@ -50,12 +50,16 @@ impl IngestionPipeline {
             match self.embeddings.embed_batch(texts).await {
                 Ok(embeddings) => {
                     for ((id, text), embedding) in batch.iter().zip(embeddings) {
-                        let mut doc = Document::new(id.as_str(), text.as_str());
-                        doc.embedding = Some(embedding);
-
+                        // Pass the pre-computed embedding so the backend doesn't
+                        // need to re-embed, and the embedding is actually stored.
                         match self
                             .store
-                            .index_document(&doc.id, &doc.text, serde_json::json!({}))
+                            .index_document_with_embedding(
+                                id.as_str(),
+                                text.as_str(),
+                                serde_json::json!({}),
+                                embedding,
+                            )
                             .await
                         {
                             Ok(_) => {
@@ -100,50 +104,33 @@ impl IngestionPipeline {
 
             match self.embeddings.embed_batch(texts).await {
                 Ok(embeddings) => {
-                    for ((id, text, metadata), embedding) in batch.iter().zip(embeddings) {
-                        let mut doc = Document::new(id.as_str(), text.as_str());
-                        doc.embedding = Some(embedding);
-
-                        if let serde_json::Value::Object(map) = metadata {
-                            doc.metadata =
-                                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                        }
-
-                        match self
-                            .store
-                            .index_document(&doc.id, &doc.text, metadata.clone())
-                            .await
-                        {
-                            Ok(_) => stats.chunks_indexed += 1,
-                            Err(e) => stats
-                                .errors
-                                .push(format!("Index error for '{}': {}", id, e)),
-                        }
-                    }
+                    index_batch_with_metadata(&self.store, batch, embeddings, &mut stats).await;
                 }
                 Err(EmbeddingError::RateLimited { retry_after_ms }) => {
                     let wait = retry_after_ms.unwrap_or(1000);
                     tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
-                    // Re-try this batch
-                    let texts: Vec<&str> = batch.iter().map(|(_, text, _)| text.as_str()).collect();
-                    if let Ok(embeddings) = self.embeddings.embed_batch(texts).await {
-                        for ((id, text, metadata), embedding) in batch.iter().zip(embeddings) {
-                            let mut doc = Document::new(id.as_str(), text.as_str());
-                            doc.embedding = Some(embedding);
-                            if let serde_json::Value::Object(map) = metadata {
-                                doc.metadata =
-                                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                            }
-                            match self
-                                .store
-                                .index_document(&doc.id, &doc.text, metadata.clone())
-                                .await
-                            {
-                                Ok(_) => stats.chunks_indexed += 1,
-                                Err(e) => stats
-                                    .errors
-                                    .push(format!("Index error for '{}': {}", id, e)),
-                            }
+                    // Retry the batch once after the back-off.
+                    let texts: Vec<&str> =
+                        batch.iter().map(|(_, text, _)| text.as_str()).collect();
+                    match self.embeddings.embed_batch(texts).await {
+                        Ok(embeddings) => {
+                            index_batch_with_metadata(
+                                &self.store,
+                                batch,
+                                embeddings,
+                                &mut stats,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            // Retry also failed — record all IDs as errors (not silently dropped).
+                            let ids: Vec<&str> =
+                                batch.iter().map(|(id, _, _)| id.as_str()).collect();
+                            stats.errors.push(format!(
+                                "Embedding retry after rate-limit also failed for [{}]: {}",
+                                ids.join(", "),
+                                e
+                            ));
                         }
                     }
                 }
@@ -161,6 +148,32 @@ impl IngestionPipeline {
         }
 
         Ok(stats)
+    }
+}
+
+/// Index one batch of `(id, text, metadata)` tuples using pre-computed embeddings.
+/// Errors are collected into `stats` rather than aborting the batch.
+async fn index_batch_with_metadata(
+    store: &VectorStore,
+    batch: &[(String, String, serde_json::Value)],
+    embeddings: Vec<Vec<f32>>,
+    stats: &mut IngestionStats,
+) {
+    for ((id, text, metadata), embedding) in batch.iter().zip(embeddings) {
+        match store
+            .index_document_with_embedding(
+                id.as_str(),
+                text.as_str(),
+                metadata.clone(),
+                embedding,
+            )
+            .await
+        {
+            Ok(_) => stats.chunks_indexed += 1,
+            Err(e) => stats
+                .errors
+                .push(format!("Index error for '{}': {}", id, e)),
+        }
     }
 }
 

@@ -51,7 +51,7 @@ pub fn create_node_from_config(
                 )));
             }
 
-            Ok(Box::new(SupervisorNode::new(cfg, children)?))
+            Ok(Box::new(SupervisorNode::from_config(cfg, children)?))
         }
 
         // ── Subgraph (aliases: agent, agent_or_graph) ──────────────────────

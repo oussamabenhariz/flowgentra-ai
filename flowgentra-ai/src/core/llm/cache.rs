@@ -3,15 +3,18 @@
 //! Provides in-memory and file-based caching for LLM responses.
 //! Caches by message content hash to avoid duplicate API calls during development.
 
-use std::collections::HashMap;
-use std::sync::RwLock;
+use lru::LruCache;
+use std::num::NonZeroUsize;
+use std::sync::Mutex;
 
 use super::{LLMClient, Message, TokenUsage, ToolDefinition};
 
 /// In-memory LLM response cache.
 ///
 /// Wraps any `LLMClient` and caches responses by message content hash.
-/// Cache hits avoid API calls entirely.
+/// Cache hits avoid API calls entirely.  Uses an LRU eviction policy so that
+/// only the *least recently used* entry is dropped when the cache is full —
+/// not all entries at once (which would cause a thundering herd of API calls).
 ///
 /// # Example
 /// ```ignore
@@ -23,8 +26,9 @@ use super::{LLMClient, Message, TokenUsage, ToolDefinition};
 /// ```
 pub struct CachedLLMClient {
     inner: std::sync::Arc<dyn LLMClient>,
-    cache: RwLock<HashMap<u64, CachedResponse>>,
-    max_entries: usize,
+    /// LruCache is wrapped in Mutex (not RwLock) because `get` promotes an
+    /// entry to most-recently-used and therefore requires exclusive access.
+    cache: Mutex<LruCache<u64, CachedResponse>>,
 }
 
 #[derive(Clone)]
@@ -37,55 +41,68 @@ impl CachedLLMClient {
     pub fn new(inner: std::sync::Arc<dyn LLMClient>) -> Self {
         Self {
             inner,
-            cache: RwLock::new(HashMap::new()),
-            max_entries: 1000,
+            cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(1000).unwrap(),
+            )),
         }
     }
 
     /// Set the maximum number of cached entries.
-    pub fn with_max_entries(mut self, max: usize) -> Self {
-        self.max_entries = max;
-        self
+    pub fn with_max_entries(self, max: usize) -> Self {
+        let cap = NonZeroUsize::new(max).unwrap_or(NonZeroUsize::new(1).unwrap());
+        // Drain existing entries into a new cache with the new capacity.
+        let old = self.cache.into_inner().unwrap_or_else(|p| p.into_inner());
+        let mut new_cache = LruCache::new(cap);
+        // Re-insert in LRU order (oldest first) so the new cache respects the cap.
+        let entries: Vec<_> = old.iter().map(|(k, v)| (*k, v.clone())).collect();
+        for (k, v) in entries {
+            new_cache.put(k, v);
+        }
+        Self {
+            inner: self.inner,
+            cache: Mutex::new(new_cache),
+        }
     }
 
     /// Get the number of cached entries.
     pub fn cache_size(&self) -> usize {
-        self.cache.read().map(|c| c.len()).unwrap_or(0)
+        self.cache.lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// Clear all cached entries.
     pub fn clear_cache(&self) {
-        if let Ok(mut cache) = self.cache.write() {
+        if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
         }
     }
 
     fn hash_messages(messages: &[Message]) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
+        // Use blake3 (collision-resistant, stable across Rust versions) instead of
+        // DefaultHasher (non-crypto, version-unstable) to prevent cache poisoning.
+        let mut hasher = blake3::Hasher::new();
         for msg in messages {
-            format!("{:?}", msg.role).hash(&mut hasher);
-            msg.content.hash(&mut hasher);
+            hasher.update(format!("{:?}", msg.role).as_bytes());
+            hasher.update(b"\x00"); // separator
+            hasher.update(msg.content.as_bytes());
+            hasher.update(b"\x01"); // separator
         }
-        hasher.finish()
+        let hash = hasher.finalize();
+        // Truncate to u64 — still 64 bits of collision resistance
+        u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
     }
 
     fn get_cached(&self, key: u64) -> Option<CachedResponse> {
         self.cache
-            .read()
+            .lock()
             .ok()
-            .and_then(|cache| cache.get(&key).cloned())
+            .and_then(|mut cache| cache.get(&key).cloned())
     }
 
     fn set_cached(&self, key: u64, response: CachedResponse) {
-        if let Ok(mut cache) = self.cache.write() {
-            // Simple eviction: clear when at capacity
-            if cache.len() >= self.max_entries {
-                cache.clear();
-            }
-            cache.insert(key, response);
+        if let Ok(mut cache) = self.cache.lock() {
+            // LruCache::put automatically evicts the least-recently-used entry
+            // when the cache is at capacity — no thundering herd.
+            cache.put(key, response);
         }
     }
 }

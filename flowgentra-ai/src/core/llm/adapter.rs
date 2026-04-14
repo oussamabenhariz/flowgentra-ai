@@ -84,11 +84,37 @@ pub struct HttpLLMClient {
 }
 
 impl HttpLLMClient {
-    /// Create a new HTTP LLM client with the given adapter
+    /// Create a new HTTP LLM client with sensible default timeouts:
+    /// - Connect timeout: 10 s
+    /// - Total request timeout: 120 s
     pub fn new(config: LLMConfig, adapter: impl ProviderAdapter + 'static) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
-            client: reqwest::Client::new(),
+            client,
+            adapter: std::sync::Arc::new(adapter),
+        }
+    }
+
+    /// Create with explicit timeouts.
+    pub fn with_timeouts(
+        config: LLMConfig,
+        adapter: impl ProviderAdapter + 'static,
+        connect_timeout: std::time::Duration,
+        request_timeout: std::time::Duration,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self {
+            config,
+            client,
             adapter: std::sync::Arc::new(adapter),
         }
     }
@@ -107,7 +133,11 @@ impl LLMClient for HttpLLMClient {
     ) -> crate::core::error::Result<(Message, Option<TokenUsage>)> {
         let name = self.adapter.provider_name();
         let endpoint = self.adapter.endpoint(&self.config);
-        let payload = self.adapter.build_payload(&self.config, &messages);
+        // Use the tool-aware payload builder so that any tool_calls / tool_call_id in
+        // conversation history are preserved, even for non-tool-calling requests.
+        let payload = self
+            .adapter
+            .build_payload_with_tools(&self.config, &messages, &[]);
 
         let mut request = self
             .client
@@ -285,6 +315,11 @@ impl LLMClient for HttpLLMClient {
                     }
                     Err(e) => {
                         tracing::error!("Stream error from {}: {}", provider_name, e);
+                        // Signal the error to the consumer so it can distinguish
+                        // a mid-stream failure from a clean end-of-stream.
+                        let _ = tx
+                            .send(format!("[STREAM_ERROR: {}]", e))
+                            .await;
                         break;
                     }
                 }
@@ -706,25 +741,39 @@ impl ProviderAdapter for AnthropicAdapter {
 
 /// Build the Anthropic messages payload (shared between build_payload and build_payload_with_tools).
 fn anthropic_build_payload(config: &LLMConfig, messages: &[Message]) -> Value {
-    let mut system_prompt = String::new();
+    // Collect and concatenate all system messages (multiple system messages are valid).
+    let mut system_parts: Vec<String> = Vec::new();
     let chat_messages: Vec<Value> = messages
         .iter()
         .filter_map(|m| {
             if m.role == MessageRole::System {
-                system_prompt = m.content.clone();
-                None
-            } else {
-                Some(json!({
-                    "role": match m.role {
-                        MessageRole::User => "user",
-                        MessageRole::Assistant => "assistant",
-                        _ => "user",
-                    },
-                    "content": m.content,
-                }))
+                system_parts.push(m.content.clone());
+                return None;
             }
+            // Tool results require Anthropic's structured content format.
+            if m.role == MessageRole::Tool {
+                let tool_use_id = m.tool_call_id.as_deref().unwrap_or("");
+                return Some(json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": m.content,
+                    }]
+                }));
+            }
+            Some(json!({
+                "role": match m.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    _ => "user",
+                },
+                "content": m.content,
+            }))
         })
         .collect();
+
+    let mut system_prompt = system_parts.join("\n\n");
 
     // For JSON mode, append instruction to the system prompt
     match &config.response_format {

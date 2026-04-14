@@ -89,6 +89,9 @@ pub struct CompiledGraph {
     pub critical_path: Vec<String>,
     pub parallelizable_pairs: Vec<(String, String)>,
     pub stats: CompilationStats,
+    /// Direct adjacency map (node → outgoing neighbors) for correct graph traversal.
+    /// Private to avoid confusion with the public `predecessors`/`successors` methods.
+    adjacency: HashMap<String, Vec<String>>,
 }
 
 impl CompiledGraph {
@@ -109,42 +112,21 @@ impl CompiledGraph {
         self.stats.total_nodes as f64 / self.stats.stages.max(1) as f64
     }
 
-    /// Get nodes that must execute before a given node
+    /// Get nodes that have a direct edge **into** the given node (direct predecessors only).
     pub fn predecessors(&self, node: &str) -> Vec<String> {
-        // Find predecessors by examining topological order before this node
-        let mut result = Vec::new();
-        let mut found = false;
-
-        for n in &self.topological_order {
-            if n == node {
-                found = true;
-                break;
-            }
-            result.push(n.clone());
-        }
-
-        if found {
-            result
-        } else {
-            Vec::new()
-        }
+        self.adjacency
+            .iter()
+            .filter(|(_, neighbors)| neighbors.iter().any(|n| n == node))
+            .map(|(from, _)| from.clone())
+            .collect()
     }
 
-    /// Get nodes that must execute after a given node
+    /// Get nodes that the given node has a direct edge **to** (direct successors only).
     pub fn successors(&self, node: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut take = false;
-
-        for n in &self.topological_order {
-            if take {
-                result.push(n.clone());
-            }
-            if n == node {
-                take = true;
-            }
-        }
-
-        result
+        self.adjacency
+            .get(node)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Check if two nodes can execute in parallel
@@ -331,13 +313,13 @@ impl GraphCompiler {
         // Validation phase
         self.validate()?;
 
-        // Compute depths (distance from START)
-        let node_depths = self.compute_depths()?;
-
-        // Detect cycles if enabled
+        // Cycle detection first — fail fast before expensive BFS/topo computations
         if self.options.detect_cycles {
             self.detect_cycles()?;
         }
+
+        // Compute depths (distance from START) — safe to run after cycle check
+        let node_depths = self.compute_depths()?;
 
         // Compute topological order
         let topological_order = self.topological_sort()?;
@@ -390,6 +372,7 @@ impl GraphCompiler {
             critical_path,
             parallelizable_pairs,
             stats,
+            adjacency: self.adjacency.clone(),
         })
     }
 
@@ -496,46 +479,61 @@ impl GraphCompiler {
 
     fn detect_cycles(&self) -> Result<(), CompilationError> {
         let mut visited = HashSet::new();
-        let mut rec_stack = HashSet::new();
+        let mut rec_stack: Vec<String> = Vec::new();
+        let mut rec_set: HashSet<String> = HashSet::new();
 
         for node in &self.nodes {
-            if !visited.contains(node) && self.dfs_has_cycle(node, &mut visited, &mut rec_stack)? {
-                let path = self.find_cycle_path();
-                return Err(CompilationError::InfiniteLoop(path));
+            if !visited.contains(node) {
+                if let Some(cycle) =
+                    self.dfs_find_cycle(node, &mut visited, &mut rec_stack, &mut rec_set)
+                {
+                    return Err(CompilationError::InfiniteLoop(cycle));
+                }
             }
         }
 
         Ok(())
     }
 
-    fn dfs_has_cycle(
+    /// DFS that returns the actual cycle path when one is found.
+    ///
+    /// Uses both a `Vec` (for ordered reconstruction) and a `HashSet` (for O(1) lookup)
+    /// to track the current recursion stack.
+    fn dfs_find_cycle(
         &self,
         node: &str,
         visited: &mut HashSet<String>,
-        rec_stack: &mut HashSet<String>,
-    ) -> Result<bool, CompilationError> {
+        rec_stack: &mut Vec<String>,
+        rec_set: &mut HashSet<String>,
+    ) -> Option<Vec<String>> {
         visited.insert(node.to_string());
-        rec_stack.insert(node.to_string());
+        rec_stack.push(node.to_string());
+        rec_set.insert(node.to_string());
 
         if let Some(neighbors) = self.adjacency.get(node) {
             for neighbor in neighbors {
                 if !visited.contains(neighbor) {
-                    if self.dfs_has_cycle(neighbor, visited, rec_stack)? {
-                        return Ok(true);
+                    if let Some(cycle) =
+                        self.dfs_find_cycle(neighbor, visited, rec_stack, rec_set)
+                    {
+                        return Some(cycle);
                     }
-                } else if rec_stack.contains(neighbor) {
-                    return Ok(true);
+                } else if rec_set.contains(neighbor) {
+                    // Back-edge found — reconstruct the cycle from the stack
+                    let mut cycle: Vec<String> = rec_stack
+                        .iter()
+                        .skip_while(|n| n.as_str() != neighbor)
+                        .cloned()
+                        .collect();
+                    cycle.push(neighbor.to_string()); // close the loop
+                    return Some(cycle);
                 }
             }
         }
 
-        rec_stack.remove(node);
-        Ok(false)
-    }
-
-    fn find_cycle_path(&self) -> Vec<String> {
-        // Simple cycle finder - returns a path with cycle
-        vec!["<cycle>".to_string()]
+        rec_stack.pop();
+        rec_set.remove(node);
+        None
     }
 
     // =========================================================================
@@ -803,6 +801,63 @@ mod tests {
         // task_a and task_b should be parallelizable
         assert!(compiled.can_run_parallel("task_a", "task_b"));
         assert_eq!(compiled.max_parallelism(), 2);
+    }
+
+    #[test]
+    fn test_predecessors_and_successors() {
+        let nodes = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+        ];
+        let edges = vec![
+            ("START".to_string(), "a".to_string()),
+            ("a".to_string(), "b".to_string()),
+            ("a".to_string(), "c".to_string()),
+            ("b".to_string(), "END".to_string()),
+            ("c".to_string(), "END".to_string()),
+        ];
+        let compiler = GraphCompiler::new(nodes, edges, CompilerOptions::default());
+        let compiled = compiler.compile().unwrap();
+
+        // "a" has only START as predecessor
+        assert_eq!(compiled.predecessors("a"), vec!["START".to_string()]);
+
+        // "b" and "c" have "a" as predecessor
+        let mut pred_b = compiled.predecessors("b");
+        pred_b.sort();
+        assert_eq!(pred_b, vec!["a".to_string()]);
+
+        // "a" reaches "b" and "c"
+        let mut succ_a = compiled.successors("a");
+        succ_a.sort();
+        assert_eq!(succ_a, vec!["b".to_string(), "c".to_string()]);
+
+        // "START" is not a successor of any node
+        assert!(!compiled.successors("END").iter().any(|n| n == "START"));
+    }
+
+    #[test]
+    fn test_cycle_error_includes_nodes() {
+        let nodes = vec!["node1".to_string(), "node2".to_string()];
+        let edges = vec![
+            ("START".to_string(), "node1".to_string()),
+            ("node1".to_string(), "node2".to_string()),
+            ("node2".to_string(), "node1".to_string()), // cycle
+            ("node2".to_string(), "END".to_string()),
+        ];
+        let compiler = GraphCompiler::new(nodes, edges, CompilerOptions::default());
+        match compiler.compile() {
+            Err(CompilationError::InfiniteLoop(path)) => {
+                assert!(!path.is_empty(), "Cycle path must not be empty");
+                assert_ne!(path[0], "<cycle>", "Must report actual node names");
+                assert!(
+                    path.iter().any(|n| n == "node1" || n == "node2"),
+                    "Cycle path should contain the cycling nodes"
+                );
+            }
+            other => panic!("Expected InfiniteLoop, got {:?}", other),
+        }
     }
 
     #[test]

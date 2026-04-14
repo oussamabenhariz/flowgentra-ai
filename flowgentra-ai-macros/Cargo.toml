@@ -5,7 +5,11 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/flowgentra-ai-macros"
 description = "Procedural macros for FlowgentraAI handler registration"
+keywords = ["macro", "codegen", "agent", "handler", "ai"]
+categories = ["development-tools", "rust-patterns"]
 
 [lib]
 proc-macro = true

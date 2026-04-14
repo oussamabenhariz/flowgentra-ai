@@ -63,6 +63,12 @@ pub struct StdioConnection {
     working_dir: Option<String>,
     pub(crate) process: Arc<Mutex<Option<StdioProcess>>>,
     timeout: std::time::Duration,
+    /// Optional set of allowed command basenames or absolute paths.
+    ///
+    /// When non-empty, `start()` returns an error if `command` is not in this
+    /// set (compared by basename for relative/absolute matches).  Leave empty
+    /// to allow any command (suitable when the config source is fully trusted).
+    allowed_commands: Vec<String>,
 }
 
 impl StdioConnection {
@@ -75,7 +81,18 @@ impl StdioConnection {
             working_dir: None,
             process: Arc::new(Mutex::new(None)),
             timeout: std::time::Duration::from_secs(30),
+            allowed_commands: Vec::new(),
         }
+    }
+
+    /// Restrict which commands may be spawned.
+    ///
+    /// Pass a list of allowed basenames (`"python"`) or absolute paths
+    /// (`"/usr/bin/python3"`).  Both the literal command string and its
+    /// basename are checked against the allowlist.
+    pub fn with_allowed_commands(mut self, commands: Vec<String>) -> Self {
+        self.allowed_commands = commands;
+        self
     }
 
     /// Add environment variable for the subprocess
@@ -96,8 +113,52 @@ impl StdioConnection {
         self
     }
 
+    /// Validate `self.command` against `self.allowed_commands` (if non-empty).
+    fn check_command_allowed(&self) -> Result<()> {
+        if self.allowed_commands.is_empty() {
+            return Ok(());
+        }
+        let cmd_path = std::path::Path::new(&self.command);
+        let cmd_basename = cmd_path.file_name().and_then(|n| n.to_str()).unwrap_or(&self.command);
+
+        let allowed = self.allowed_commands.iter().any(|allowed| {
+            allowed == &self.command
+                || std::path::Path::new(allowed)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|b| b == cmd_basename)
+                    .unwrap_or(false)
+        });
+
+        if !allowed {
+            return Err(FlowgentraError::MCPError(format!(
+                "Command '{}' is not in the allowed commands list",
+                self.command
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate `self.working_dir` — must not contain `..` components.
+    fn check_working_dir(&self) -> Result<()> {
+        if let Some(ref dir) = self.working_dir {
+            for component in std::path::Path::new(dir).components() {
+                if component == std::path::Component::ParentDir {
+                    return Err(FlowgentraError::MCPError(
+                        "Stdio working_dir must not contain '..' components".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Start the subprocess
     pub async fn start(&self) -> Result<()> {
+        // Validate before spawning anything
+        self.check_command_allowed()?;
+        self.check_working_dir()?;
+
         tracing::info!(command = %self.command, args = ?self.args, "Starting Stdio MCP process");
 
         let mut cmd = tokio::process::Command::new(&self.command);
@@ -256,6 +317,7 @@ pub struct StdioConnectionBuilder {
     env_vars: HashMap<String, String>,
     working_dir: Option<String>,
     timeout: std::time::Duration,
+    allowed_commands: Vec<String>,
 }
 
 impl StdioConnectionBuilder {
@@ -267,6 +329,7 @@ impl StdioConnectionBuilder {
             env_vars: HashMap::new(),
             working_dir: None,
             timeout: std::time::Duration::from_secs(30),
+            allowed_commands: Vec::new(),
         }
     }
 
@@ -300,6 +363,16 @@ impl StdioConnectionBuilder {
         self
     }
 
+    /// Restrict which commands may be spawned.
+    ///
+    /// Basenames (`"python"`) or absolute paths (`"/usr/bin/python3"`) are
+    /// both accepted.  When the list is non-empty, `start()` rejects any
+    /// command not found in it.
+    pub fn allowed_commands(mut self, commands: Vec<String>) -> Self {
+        self.allowed_commands = commands;
+        self
+    }
+
     /// Build StdioConnection
     pub fn build(self) -> StdioConnection {
         StdioConnection {
@@ -309,6 +382,7 @@ impl StdioConnectionBuilder {
             working_dir: self.working_dir,
             process: Arc::new(Mutex::new(None)),
             timeout: self.timeout,
+            allowed_commands: self.allowed_commands,
         }
     }
 }

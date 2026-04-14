@@ -2,11 +2,11 @@
 name = "flowgentra-ai"
 version.workspace = true
 edition.workspace = true
-description = "A  Rust library for building AI agents with graphs"
+description = "A Rust library for building AI agents with graphs"
 authors.workspace = true
 license.workspace = true
-repository = "https://github.com/oussamabenhariz/FlowgentraAI"
-homepage = "https://github.com/oussamabenhariz/FlowgentraAI"
+repository.workspace = true
+homepage.workspace = true
 documentation = "https://docs.rs/flowgentra-ai"
 keywords = ["ai", "agent", "llm", "graph", "workflow"]
 categories = ["algorithms", "development-tools"]
@@ -47,6 +47,9 @@ uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
 regex = "1.10"
 dotenv = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
+blake3 = "1"
+lru = "0.12"
+urlencoding = "2.1"
 
 # Auto-registration via inventory
 inventory = "0.1"
@@ -64,15 +67,76 @@ tower = { version = "0.4", features = ["util", "retry", "timeout"] }
 # PDF text extraction
 pdf-extract = "0.7"
 
+# ZIP archive parsing (used by DOCX loader — DOCX is a zip of XML files)
+zip = "0.6"
+
 # Metrics (Prometheus)
 metrics = "0.23"
 metrics-exporter-prometheus = { version = "0.15", default-features = false, features = ["http-listener"] }
+
+# SQL databases (optional — enable the backends you need)
+sqlx = { version = "0.7", optional = true, features = ["macros", "runtime-tokio-native-tls"] }
+
+# NoSQL / document databases (optional)
+mongodb = { version = "2.8", optional = true }
+
+# Redis (used for both vector store and document store)
+redis = { version = "0.25", optional = true, features = ["tokio-comp"] }
+
+# Neo4j graph database
+neo4rs = { version = "0.7", optional = true }
+
+# Microsoft SQL Server (tiberius async driver + bb8 connection pool)
+tiberius    = { version = "0.12", optional = true, default-features = false, features = ["rustls", "sql-browser-tokio"] }
+bb8         = { version = "0.8",  optional = true }
+bb8-tiberius = { version = "0.11", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 [features]
+## SQL backends — each pulls in sqlx with the right driver.
+sqlite          = ["dep:sqlx", "sqlx/sqlite"]
+postgres        = ["dep:sqlx", "sqlx/postgres"]
+mysql           = ["dep:sqlx", "sqlx/mysql"]
+## mssql: Microsoft SQL Server via tiberius async driver + bb8 connection pool.
+mssql           = ["dep:tiberius", "dep:bb8", "dep:bb8-tiberius"]
+## REST-based SQL backends — no extra driver needed (reqwest is always present).
+bigquery-sql    = []
+databricks-sql  = []
+## NoSQL / document store backends
+mongodb-store        = ["dep:mongodb"]
+redis-store          = ["dep:redis"]
+neo4j-store          = ["dep:neo4rs"]
+cassandra-store      = []   # reqwest only
+elasticsearch-store  = []   # reqwest only
+## Vector store backends (compile only what you need)
+pinecone             = []
+qdrant               = []
+chroma               = []
+milvus               = []
+weaviate             = []
+pgvector-store       = ["dep:sqlx", "sqlx/postgres"]
+redis-vector         = ["dep:redis"]
+elasticsearch-vector = []   # reqwest only
+opensearch-store     = []   # reqwest only
+upstash-store        = []   # reqwest only
+astra-db-store       = []   # reqwest only
+mongodb-atlas-store  = ["dep:mongodb"]
+## Convenience bundles
+sql          = ["sqlite", "postgres", "mysql", "mssql"]
+nosql        = ["mongodb-store", "redis-store"]
+all-db       = ["sql", "nosql", "cassandra-store", "elasticsearch-store", "neo4j-store"]
+all-vector   = ["pinecone", "qdrant", "chroma", "milvus", "weaviate", "pgvector-store",
+                "redis-vector", "elasticsearch-vector", "opensearch-store", "upstash-store",
+                "astra-db-store", "mongodb-atlas-store"]
+all-backends = ["all-db", "all-vector"]
+## Checkpointer bundles
+sqlite-checkpointer   = ["sqlite"]
+postgres-checkpointer = ["postgres"]
+redis-checkpointer    = ["redis-store"]
+all-checkpointers     = ["sqlite-checkpointer", "postgres-checkpointer", "redis-checkpointer"]
 
 [lib]
 name = "flowgentra_ai"

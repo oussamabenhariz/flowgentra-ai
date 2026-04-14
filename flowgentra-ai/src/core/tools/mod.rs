@@ -496,7 +496,7 @@ impl ToolRegistry {
             .register("web_request", Arc::new(builtin::WebRequestTool::new()))
             .expect("Failed to register web_request tool");
         registry
-            .register("file", Arc::new(builtin::FilesTool::new()))
+            .register("file", Arc::new(builtin::FilesTool::default()))
             .expect("Failed to register file tool");
         // Register web tools
         registry

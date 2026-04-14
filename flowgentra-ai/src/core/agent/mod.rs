@@ -962,14 +962,20 @@ fn from_config_path_impl(
                 let arc = handlers_map
                     .get("__builtin_planner__")
                     .cloned()
-                    .expect("planner was pre-injected");
+                    .ok_or_else(|| FlowgentraError::ConfigError(
+                        "planner node declared but no LLM is configured — \
+                         add an `llm:` section to your agent config".into(),
+                    ))?;
                 Box::new(move |state| arc(state))
             }
             None if node_config.handler == "builtin::planner" => {
                 let arc = handlers_map
                     .get("__builtin_planner__")
                     .cloned()
-                    .expect("planner was pre-injected");
+                    .ok_or_else(|| FlowgentraError::ConfigError(
+                        "handler 'builtin::planner' used but no LLM is configured — \
+                         add an `llm:` section to your agent config".into(),
+                    ))?;
                 Box::new(move |state| arc(state))
             }
 
@@ -1087,7 +1093,7 @@ fn from_config_path_impl(
             let node_config = supervisor_nodes
                 .iter()
                 .find(|n| &n.name == sup_name)
-                .unwrap();
+                .expect("sup_name originates from supervisor_nodes — must exist");
             use crate::core::node::orchestrator_node::SupervisorNodeConfig;
             let cfg = SupervisorNodeConfig::from_node_config(node_config)?;
 
@@ -1142,7 +1148,10 @@ fn from_config_path_impl(
                 let arc: ArcHandler<DynState> = Arc::new(move |state| handler(state));
                 built_supervisor_arcs.insert(sup_name.clone(), arc);
                 second_pass_handlers.insert(sup_name.clone(), {
-                    let arc = built_supervisor_arcs.get(sup_name).unwrap().clone();
+                    let arc = built_supervisor_arcs
+                        .get(sup_name)
+                        .expect("just inserted above")
+                        .clone();
                     Box::new(move |state| arc(state))
                 });
             } else {
@@ -1156,7 +1165,7 @@ fn from_config_path_impl(
                 let node_config = supervisor_nodes
                     .iter()
                     .find(|n| &n.name == sup_name)
-                    .unwrap();
+                    .expect("sup_name originates from supervisor_nodes — must exist");
                 use crate::core::node::orchestrator_node::SupervisorNodeConfig;
                 let cfg = SupervisorNodeConfig::from_node_config(node_config)?;
                 for child_name in &cfg.children {
@@ -1815,7 +1824,7 @@ fn create_supervisor_handler_with_llm(
             let rhs = parts[1].trim();
             let val = state.get(key);
             if rhs == "null" {
-                return val.is_some() && !val.unwrap().is_null();
+                return val.map_or(false, |v| !v.is_null());
             }
             return val
                 .map(|v| v.to_string().trim_matches('"') != rhs)
@@ -1827,7 +1836,7 @@ fn create_supervisor_handler_with_llm(
             let rhs = parts[1].trim();
             let val = state.get(key);
             if rhs == "null" {
-                return val.is_none() || val.unwrap().is_null();
+                return val.map_or(true, |v| v.is_null());
             }
             return val
                 .map(|v| v.to_string().trim_matches('"') == rhs)

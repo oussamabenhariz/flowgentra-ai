@@ -110,13 +110,13 @@ impl MockEmbeddings {
     }
 
     fn hash_with_seed(s: &str, seed: u64) -> f32 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        seed.hash(&mut hasher);
-        s.hash(&mut hasher);
-        (hasher.finish() % 10000) as f32 / 10000.0
+        // Use blake3 for stable, reproducible mock embeddings across Rust versions.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&seed.to_le_bytes());
+        hasher.update(s.as_bytes());
+        let hash = hasher.finalize();
+        let raw = u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap());
+        (raw % 10000) as f32 / 10000.0
     }
 }
 

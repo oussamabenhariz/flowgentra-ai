@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
+use tokio::time::Instant;
 
 /// SSE message from MCP server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +101,8 @@ impl SSEConnection {
             )));
         }
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        // Bounded channel — prevents unbounded memory growth if the consumer is slow.
+        let (tx, rx) = mpsc::channel(256);
 
         // Store stream state
         {
@@ -123,12 +125,15 @@ impl SSEConnection {
         tokio::spawn(async move {
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
+            // Fixed deadline computed once — prevents a slow server from evading
+            // the timeout by sending one byte just before each per-iteration sleep.
+            let deadline = Instant::now() + timeout;
 
             loop {
                 tokio::select! {
-                    _ = tokio::time::sleep(timeout) => {
-                        tracing::warn!(stream_id = %stream_id_clone, "SSE stream timeout");
-                        let _ = tx.send(Err(FlowgentraError::MCPError("Stream timeout".into())));
+                    _ = tokio::time::sleep_until(deadline) => {
+                        tracing::warn!(stream_id = %stream_id_clone, "SSE stream timed out");
+                        let _ = tx.send(Err(FlowgentraError::MCPError("Stream timeout".into()))).await;
                         break;
                     }
                     result = futures::stream::StreamExt::next(&mut stream) => {
@@ -149,7 +154,10 @@ impl SSEConnection {
                                             }
                                             drop(streams);
 
-                                            let _ = tx.send(Ok(message));
+                                            if tx.send(Ok(message)).await.is_err() {
+                                                // Receiver dropped — stop the task
+                                                break;
+                                            }
                                         }
                                         Err(e) => {
                                             tracing::warn!(error = %e, "Failed to parse SSE event");
@@ -159,7 +167,7 @@ impl SSEConnection {
                             }
                             Some(Err(e)) => {
                                 tracing::error!(error = %e, stream_id = %stream_id_clone, "SSE stream error");
-                                let _ = tx.send(Err(FlowgentraError::MCPError(format!("Stream error: {}", e))));
+                                let _ = tx.send(Err(FlowgentraError::MCPError(format!("Stream error: {}", e)))).await;
                                 break;
                             }
                             None => {
@@ -194,7 +202,7 @@ impl SSEConnection {
 /// Receiver for SSE stream messages
 pub struct SSEStreamReceiver {
     pub id: String,
-    receiver: mpsc::UnboundedReceiver<Result<SSEMessage>>,
+    receiver: mpsc::Receiver<Result<SSEMessage>>,
 }
 
 impl SSEStreamReceiver {

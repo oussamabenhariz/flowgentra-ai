@@ -20,6 +20,7 @@ pub mod reducer;
 
 // Core modules
 pub mod agent;
+pub mod db;
 pub mod agents;
 pub mod config;
 pub mod error;
@@ -94,9 +95,15 @@ pub use observability::{
 pub use parallel::{BranchResult, BranchSync, ParallelExecutor};
 pub use plugins::{Plugin, PluginContext, PluginId, PluginRegistry};
 pub use rag::{
-    Document, EmbeddingModel, Embeddings, RAGConfig, RAGHandlers, RAGNodeConfig, RetrievalConfig,
-    RetrieverStrategy, SearchResult, VectorStore, VectorStoreError,
+    AstraDbConfig, AstraDbStore, ChromaConfig, Document, ElasticsearchConfig, ElasticsearchStore,
+    EmbeddingModel, Embeddings, FilterExpr, MetadataFilter, MilvusConfig,
+    MongoAtlasConfig, MongoAtlasVectorStore, OpenSearchConfig, OpenSearchStore,
+    PgVectorConfig, PgVectorStore, PineconeConfig, QdrantConfig, RAGConfig, RAGHandlers,
+    RAGNodeConfig, RedisVectorConfig, RedisVectorStore, RetrievalConfig, RetrieverStrategy,
+    SearchResult, UpstashVectorConfig, UpstashVectorStore, VectorStore, VectorStoreBackend,
+    VectorStoreError, WeaviateConfig,
 };
+pub use db::{DbError, DocumentStore, SqlDatabase};
 pub use routing::{ComparisonOp, Condition, ConditionBuilder, FieldTypeCheck};
 pub use runtime::AgentRuntime;
 pub use tools::{
