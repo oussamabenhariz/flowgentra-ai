@@ -20,9 +20,9 @@ pub mod reducer;
 
 // Core modules
 pub mod agent;
-pub mod db;
 pub mod agents;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod evaluation;
 pub mod graph;
@@ -69,6 +69,7 @@ pub use advanced_nodes::{
     JoinNodeConfig, JoinType, LoopNodeConfig, MergeStrategy, ParallelNodeConfig, SubgraphNodeConfig,
 };
 pub use context::ExecutionContext;
+pub use db::{DbError, DocumentStore, SqlDatabase};
 pub use graph::Graph;
 pub use llm::{LLMConfig, LLMProvider, Message, MessageRole};
 pub use mcp::{MCPConfig, MCPConnectionType};
@@ -96,14 +97,17 @@ pub use parallel::{BranchResult, BranchSync, ParallelExecutor};
 pub use plugins::{Plugin, PluginContext, PluginId, PluginRegistry};
 pub use rag::{
     AstraDbConfig, AstraDbStore, ChromaConfig, Document, ElasticsearchConfig, ElasticsearchStore,
-    EmbeddingModel, Embeddings, FilterExpr, MetadataFilter, MilvusConfig,
-    MongoAtlasConfig, MongoAtlasVectorStore, OpenSearchConfig, OpenSearchStore,
-    PgVectorConfig, PgVectorStore, PineconeConfig, QdrantConfig, RAGConfig, RAGHandlers,
-    RAGNodeConfig, RedisVectorConfig, RedisVectorStore, RetrievalConfig, RetrieverStrategy,
-    SearchResult, UpstashVectorConfig, UpstashVectorStore, VectorStore, VectorStoreBackend,
-    VectorStoreError, WeaviateConfig,
+    EmbeddingModel, Embeddings, FilterExpr, MetadataFilter, MilvusConfig, OpenSearchConfig,
+    OpenSearchStore, PineconeConfig, QdrantConfig, RAGConfig, RAGHandlers, RAGNodeConfig,
+    RetrievalConfig, RetrieverStrategy, SearchResult, UpstashVectorConfig, UpstashVectorStore,
+    VectorStore, VectorStoreBackend, VectorStoreError, WeaviateConfig,
 };
-pub use db::{DbError, DocumentStore, SqlDatabase};
+#[cfg(feature = "mongodb-atlas-store")]
+pub use rag::{MongoAtlasConfig, MongoAtlasVectorStore};
+#[cfg(feature = "pgvector-store")]
+pub use rag::{PgVectorConfig, PgVectorStore};
+#[cfg(feature = "redis-vector")]
+pub use rag::{RedisVectorConfig, RedisVectorStore};
 pub use routing::{ComparisonOp, Condition, ConditionBuilder, FieldTypeCheck};
 pub use runtime::AgentRuntime;
 pub use tools::{

@@ -110,17 +110,11 @@ impl IngestionPipeline {
                     let wait = retry_after_ms.unwrap_or(1000);
                     tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
                     // Retry the batch once after the back-off.
-                    let texts: Vec<&str> =
-                        batch.iter().map(|(_, text, _)| text.as_str()).collect();
+                    let texts: Vec<&str> = batch.iter().map(|(_, text, _)| text.as_str()).collect();
                     match self.embeddings.embed_batch(texts).await {
                         Ok(embeddings) => {
-                            index_batch_with_metadata(
-                                &self.store,
-                                batch,
-                                embeddings,
-                                &mut stats,
-                            )
-                            .await;
+                            index_batch_with_metadata(&self.store, batch, embeddings, &mut stats)
+                                .await;
                         }
                         Err(e) => {
                             // Retry also failed — record all IDs as errors (not silently dropped).
@@ -161,12 +155,7 @@ async fn index_batch_with_metadata(
 ) {
     for ((id, text, metadata), embedding) in batch.iter().zip(embeddings) {
         match store
-            .index_document_with_embedding(
-                id.as_str(),
-                text.as_str(),
-                metadata.clone(),
-                embedding,
-            )
+            .index_document_with_embedding(id.as_str(), text.as_str(), metadata.clone(), embedding)
             .await
         {
             Ok(_) => stats.chunks_indexed += 1,

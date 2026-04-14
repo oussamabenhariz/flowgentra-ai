@@ -448,6 +448,7 @@ impl Tool for NamedToolWrapper {
 }
 
 impl NamedToolWrapper {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(tool: Arc<dyn Tool>, name: String) -> Arc<dyn Tool> {
         Arc::new(NamedToolWrapper {
             inner: tool,

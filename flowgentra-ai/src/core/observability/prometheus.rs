@@ -105,17 +105,11 @@ impl MetricsCollector {
         // Track graph start time for overall duration
         let mut graph_start: Option<std::time::Instant> = None;
 
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    self.record_event(&event, &mut graph_start);
-                    match event {
-                        ExecutionEvent::GraphCompleted { .. }
-                        | ExecutionEvent::GraphFailed { .. } => break,
-                        _ => {}
-                    }
-                }
-                Err(_) => break, // broadcaster dropped / lagged
+        while let Ok(event) = rx.recv().await {
+            self.record_event(&event, &mut graph_start);
+            match event {
+                ExecutionEvent::GraphCompleted { .. } | ExecutionEvent::GraphFailed { .. } => break,
+                _ => {}
             }
         }
     }

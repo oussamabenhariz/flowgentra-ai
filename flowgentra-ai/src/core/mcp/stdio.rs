@@ -119,7 +119,10 @@ impl StdioConnection {
             return Ok(());
         }
         let cmd_path = std::path::Path::new(&self.command);
-        let cmd_basename = cmd_path.file_name().and_then(|n| n.to_str()).unwrap_or(&self.command);
+        let cmd_basename = cmd_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&self.command);
 
         let allowed = self.allowed_commands.iter().any(|allowed| {
             allowed == &self.command

@@ -3,8 +3,8 @@
 //! Crawls a website starting from a root URL, following internal links up to
 //! a configurable depth. Each discovered page becomes a [`LoadedDocument`].
 
-use std::collections::{HashSet, VecDeque};
 use std::collections::HashMap;
+use std::collections::{HashSet, VecDeque};
 
 use serde_json::json;
 
@@ -58,7 +58,9 @@ impl RecursiveUrlLoader {
             .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
             .build()?;
 
-        let prefix = self.config.url_prefix
+        let prefix = self
+            .config
+            .url_prefix
             .clone()
             .unwrap_or_else(|| base_url(&self.root_url));
 
@@ -72,7 +74,12 @@ impl RecursiveUrlLoader {
             if visited.contains(&url) || docs.len() >= self.config.max_pages {
                 continue;
             }
-            if self.config.exclude_patterns.iter().any(|p| url.contains(p.as_str())) {
+            if self
+                .config
+                .exclude_patterns
+                .iter()
+                .any(|p| url.contains(p.as_str()))
+            {
                 continue;
             }
             visited.insert(url.clone());

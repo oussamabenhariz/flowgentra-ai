@@ -17,9 +17,9 @@
 //! let docs = JsonlLoader::new("content").load("data.jsonl").await?;
 //! ```
 
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
-use serde_json::Value;
 
 use crate::core::rag::{document_loader::LoadedDocument, vector_db::VectorStoreError};
 
@@ -48,7 +48,10 @@ impl JsonLoader {
     }
 
     /// Load documents from a JSON array file.
-    pub async fn load(&self, path: impl AsRef<Path>) -> Result<Vec<LoadedDocument>, VectorStoreError> {
+    pub async fn load(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Vec<LoadedDocument>, VectorStoreError> {
         let path = path.as_ref();
         let source = path
             .file_name()
@@ -64,7 +67,11 @@ impl JsonLoader {
     }
 
     /// Parse a JSON string (array of objects).
-    pub fn parse_json(&self, content: &str, source: &str) -> Result<Vec<LoadedDocument>, VectorStoreError> {
+    pub fn parse_json(
+        &self,
+        content: &str,
+        source: &str,
+    ) -> Result<Vec<LoadedDocument>, VectorStoreError> {
         let value: Value = serde_json::from_str(content)
             .map_err(|e| VectorStoreError::SerializationError(format!("JSON parse error: {e}")))?;
 
@@ -140,7 +147,10 @@ impl JsonlLoader {
         self
     }
 
-    pub async fn load(&self, path: impl AsRef<Path>) -> Result<Vec<LoadedDocument>, VectorStoreError> {
+    pub async fn load(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Vec<LoadedDocument>, VectorStoreError> {
         let path = path.as_ref();
         let source = path
             .file_name()
@@ -156,7 +166,11 @@ impl JsonlLoader {
     }
 
     /// Parse JSONL content from a string.
-    pub fn parse_jsonl(&self, content: &str, source: &str) -> Result<Vec<LoadedDocument>, VectorStoreError> {
+    pub fn parse_jsonl(
+        &self,
+        content: &str,
+        source: &str,
+    ) -> Result<Vec<LoadedDocument>, VectorStoreError> {
         let mut docs = Vec::new();
 
         for (line_no, line) in content.lines().enumerate() {
@@ -172,9 +186,7 @@ impl JsonlLoader {
             })?;
 
             let obj = value.as_object().ok_or_else(|| {
-                VectorStoreError::Unknown(format!(
-                    "JSONL line {line_no} is not a JSON object"
-                ))
+                VectorStoreError::Unknown(format!("JSONL line {line_no} is not a JSON object"))
             })?;
 
             let text = obj

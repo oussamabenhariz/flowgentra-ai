@@ -127,8 +127,7 @@ impl ParentDocumentRetriever {
 
         for parent in documents {
             // Store the full parent
-            self.parent_store
-                .insert(parent.id.clone(), parent.clone());
+            self.parent_store.insert(parent.id.clone(), parent.clone());
 
             // Split into child chunks
             let chunks = splitter.split_text(&parent.text);
@@ -169,10 +168,7 @@ impl ParentDocumentRetriever {
     /// 2. Look up the parent_id in each chunk's metadata.
     /// 3. Fetch each unique parent from the doc store.
     /// 4. Return up to `max_parents` parents, ordered by best child-chunk score.
-    pub async fn retrieve(
-        &self,
-        query: &str,
-    ) -> Result<Vec<ParentDocument>, VectorStoreError> {
+    pub async fn retrieve(&self, query: &str) -> Result<Vec<ParentDocument>, VectorStoreError> {
         let query_embedding = self
             .embeddings
             .embed(query)
@@ -292,18 +288,16 @@ mod tests {
         let docs = vec![
             ParentDocument {
                 id: "doc1".to_string(),
-                text:
-                    "Rust is a systems programming language focused on safety and performance. \
+                text: "Rust is a systems programming language focused on safety and performance. \
                      It prevents memory bugs at compile time using ownership rules."
-                        .to_string(),
+                    .to_string(),
                 metadata: HashMap::new(),
             },
             ParentDocument {
                 id: "doc2".to_string(),
-                text:
-                    "Python is a high-level scripting language known for its simplicity. \
+                text: "Python is a high-level scripting language known for its simplicity. \
                      It is widely used in data science and machine learning."
-                        .to_string(),
+                    .to_string(),
                 metadata: HashMap::new(),
             },
         ];
@@ -311,7 +305,10 @@ mod tests {
         retriever.add_documents(docs).await.unwrap();
         assert_eq!(retriever.parent_count(), 2);
 
-        let parents = retriever.retrieve("memory safety programming").await.unwrap();
+        let parents = retriever
+            .retrieve("memory safety programming")
+            .await
+            .unwrap();
         assert!(!parents.is_empty());
         // Should return the Rust doc since it mentions memory safety
         assert!(parents.iter().any(|p| p.id == "doc1"));

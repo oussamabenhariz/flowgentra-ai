@@ -63,7 +63,7 @@ impl VectorView {
     /// Extract the text(s) to embed for this view.
     pub fn texts(&self) -> Vec<String> {
         match self {
-            VectorView::Chunk => vec![],            // handled separately via splitter
+            VectorView::Chunk => vec![], // handled separately via splitter
             VectorView::Summary(s) => vec![s.clone()],
             VectorView::HypotheticalQuestions(qs) => qs.clone(),
             VectorView::Custom { text, .. } => vec![text.clone()],
@@ -153,17 +153,18 @@ impl MultiVectorRetriever {
             views
         };
 
-        self.parent_store
-            .insert(parent.id.clone(), parent.clone());
+        self.parent_store.insert(parent.id.clone(), parent.clone());
 
-        let splitter = RecursiveCharacterTextSplitter::new(
-            self.config.chunk_size,
-            self.config.chunk_overlap,
-        );
+        let splitter =
+            RecursiveCharacterTextSplitter::new(self.config.chunk_size, self.config.chunk_overlap);
 
         for view in &views {
             let chunk_texts: Vec<String> = if matches!(view, VectorView::Chunk) {
-                splitter.split_text(&parent.text).into_iter().map(|c| c.text).collect()
+                splitter
+                    .split_text(&parent.text)
+                    .into_iter()
+                    .map(|c| c.text)
+                    .collect()
             } else {
                 view.texts()
             };
@@ -199,10 +200,7 @@ impl MultiVectorRetriever {
     /// Retrieve full parent documents for a query.
     ///
     /// All views are searched simultaneously; results are deduplicated by parent id.
-    pub async fn retrieve(
-        &self,
-        query: &str,
-    ) -> Result<Vec<MultiVectorParent>, VectorStoreError> {
+    pub async fn retrieve(&self, query: &str) -> Result<Vec<MultiVectorParent>, VectorStoreError> {
         let query_embedding = self
             .embeddings
             .embed(query)
@@ -302,8 +300,7 @@ mod tests {
     async fn test_multi_vector_chunk_and_summary() {
         let embeddings = Arc::new(Embeddings::mock(16));
         let store = Arc::new(InMemoryVectorStore::new());
-        let retriever =
-            MultiVectorRetriever::new(store, embeddings, MultiVectorConfig::default());
+        let retriever = MultiVectorRetriever::new(store, embeddings, MultiVectorConfig::default());
 
         let parent = MultiVectorParent {
             id: "doc1".to_string(),

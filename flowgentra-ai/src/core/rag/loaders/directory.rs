@@ -27,7 +27,7 @@ use crate::core::rag::{
     document_loader::{load_document, FileType, LoadedDocument},
     loaders::{
         csv::CsvLoader,
-        json_loader::{JsonlLoader, JsonLoader},
+        json_loader::{JsonLoader, JsonlLoader},
     },
     vector_db::VectorStoreError,
 };
@@ -159,30 +159,33 @@ impl DirectoryLoader {
         match ext {
             "json" => {
                 let loader = JsonLoader::new(self.config.json_text_field.clone());
-                loader.load(path).await.map_err(|e| {
-                    VectorStoreError::Unknown(format!("{}: {}", path.display(), e))
-                })
+                loader
+                    .load(path)
+                    .await
+                    .map_err(|e| VectorStoreError::Unknown(format!("{}: {}", path.display(), e)))
             }
             "jsonl" | "ndjson" => {
                 let loader = JsonlLoader::new(self.config.jsonl_text_field.clone());
-                loader.load(path).await.map_err(|e| {
-                    VectorStoreError::Unknown(format!("{}: {}", path.display(), e))
-                })
+                loader
+                    .load(path)
+                    .await
+                    .map_err(|e| VectorStoreError::Unknown(format!("{}: {}", path.display(), e)))
             }
             "csv" => {
                 let loader = CsvLoader::new();
-                loader.load(path).await.map_err(|e| {
-                    VectorStoreError::Unknown(format!("{}: {}", path.display(), e))
-                })
+                loader
+                    .load(path)
+                    .await
+                    .map_err(|e| VectorStoreError::Unknown(format!("{}: {}", path.display(), e)))
             }
             "txt" | "md" | "markdown" | "html" | "htm" | "pdf" => {
                 let file_type = FileType::from_path(path);
                 if file_type == FileType::Unknown {
                     return Ok(vec![]); // skip unknown types
                 }
-                let doc = load_document(path).await.map_err(|e| {
-                    VectorStoreError::Unknown(format!("{}: {}", path.display(), e))
-                })?;
+                let doc = load_document(path)
+                    .await
+                    .map_err(|e| VectorStoreError::Unknown(format!("{}: {}", path.display(), e)))?;
                 Ok(vec![doc])
             }
             _ => Ok(vec![]), // silently skip unsupported extensions
@@ -203,7 +206,9 @@ mod tests {
         // Create a temp dir with some files
         let dir = tempfile::tempdir().unwrap();
         let txt_path = dir.path().join("hello.txt");
-        tokio::fs::write(&txt_path, "Hello from text file").await.unwrap();
+        tokio::fs::write(&txt_path, "Hello from text file")
+            .await
+            .unwrap();
 
         let loader = DirectoryLoader::default_for(dir.path());
         let docs = loader.load().await.unwrap();
@@ -214,13 +219,20 @@ mod tests {
     #[tokio::test]
     async fn test_directory_loader_extension_filter() {
         let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("a.txt"), "text file").await.unwrap();
-        tokio::fs::write(dir.path().join("b.md"), "# Markdown").await.unwrap();
+        tokio::fs::write(dir.path().join("a.txt"), "text file")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("b.md"), "# Markdown")
+            .await
+            .unwrap();
 
-        let loader = DirectoryLoader::new(dir.path(), DirectoryLoaderConfig {
-            extensions: vec!["txt".into()],
-            ..Default::default()
-        });
+        let loader = DirectoryLoader::new(
+            dir.path(),
+            DirectoryLoaderConfig {
+                extensions: vec!["txt".into()],
+                ..Default::default()
+            },
+        );
         let docs = loader.load().await.unwrap();
         assert_eq!(docs.len(), 1);
         assert!(docs[0].text.contains("text file"));

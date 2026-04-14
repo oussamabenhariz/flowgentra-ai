@@ -21,8 +21,8 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx::{Column, Row as SqlxRow, TypeInfo};
 use sqlx::mysql::{MySqlPool, MySqlRow};
+use sqlx::{Column, Row as SqlxRow, TypeInfo};
 use std::collections::HashMap;
 
 use super::{DbError, Row, SqlDatabase};
@@ -72,7 +72,8 @@ impl MySqlDatabase {
                     .and_then(|f| serde_json::Number::from_f64(f).map(Value::Number))
                     .unwrap_or(Value::Null)
             } else if type_name == "JSON" {
-                row.try_get::<serde_json::Value, _>(i).unwrap_or(Value::Null)
+                row.try_get::<serde_json::Value, _>(i)
+                    .unwrap_or(Value::Null)
             } else {
                 // VARCHAR, TEXT, CHAR, DATE, DATETIME, TIMESTAMP, BLOB, ENUM, etc.
                 row.try_get::<String, _>(i)
@@ -117,14 +118,18 @@ fn bind_value<'q>(
     value: &'q Value,
 ) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
     match value {
-        Value::Null      => query.bind(Option::<String>::None),
-        Value::Bool(b)   => query.bind(*b),
+        Value::Null => query.bind(Option::<String>::None),
+        Value::Bool(b) => query.bind(*b),
         Value::Number(n) => {
-            if let Some(i) = n.as_i64() { query.bind(i) }
-            else if let Some(f) = n.as_f64() { query.bind(f) }
-            else { query.bind(n.to_string()) }
+            if let Some(i) = n.as_i64() {
+                query.bind(i)
+            } else if let Some(f) = n.as_f64() {
+                query.bind(f)
+            } else {
+                query.bind(n.to_string())
+            }
         }
         Value::String(s) => query.bind(s.as_str()),
-        other            => query.bind(other.to_string()),
+        other => query.bind(other.to_string()),
     }
 }

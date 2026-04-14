@@ -20,10 +20,10 @@
 //! println!("{}", doc.text);
 //! ```
 
+use serde_json::json;
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::collections::HashMap;
-use serde_json::json;
 
 use crate::core::rag::{document_loader::LoadedDocument, vector_db::VectorStoreError};
 
@@ -105,13 +105,9 @@ impl DocxLoader {
         })?;
 
         // Extract word/document.xml
-        let mut doc_xml_entry = archive
-            .by_name("word/document.xml")
-            .map_err(|_| {
-                VectorStoreError::Unknown(format!(
-                    "word/document.xml not found in '{source}'"
-                ))
-            })?;
+        let mut doc_xml_entry = archive.by_name("word/document.xml").map_err(|_| {
+            VectorStoreError::Unknown(format!("word/document.xml not found in '{source}'"))
+        })?;
 
         let mut xml_content = String::new();
         doc_xml_entry

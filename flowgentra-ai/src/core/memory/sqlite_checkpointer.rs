@@ -70,9 +70,7 @@ mod inner {
                 .bind(thread_id)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| {
-                    FlowgentraError::StateError(format!("SQLite delete error: {e}"))
-                })?;
+                .map_err(|e| FlowgentraError::StateError(format!("SQLite delete error: {e}")))?;
             Ok(())
         }
 
@@ -82,9 +80,7 @@ mod inner {
                 sqlx::query_as("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|e| {
-                        FlowgentraError::StateError(format!("SQLite query error: {e}"))
-                    })?;
+                    .map_err(|e| FlowgentraError::StateError(format!("SQLite query error: {e}")))?;
             Ok(rows.into_iter().map(|(id,)| id).collect())
         }
     }
@@ -105,21 +101,19 @@ mod inner {
                     .bind(thread_id)
                     .fetch_optional(&self.pool)
                     .await
-                    .map_err(|e| {
-                        FlowgentraError::StateError(format!("SQLite load error: {e}"))
-                    })?;
+                    .map_err(|e| FlowgentraError::StateError(format!("SQLite load error: {e}")))?;
 
                     match row {
                         None => Ok(None),
                         Some((state_json, metadata_json)) => {
-                            let state_value: serde_json::Value =
-                                serde_json::from_str(&state_json).map_err(|e| {
+                            let state_value: serde_json::Value = serde_json::from_str(&state_json)
+                                .map_err(|e| {
                                     FlowgentraError::StateError(format!(
                                         "Deserialize state error: {e}"
                                     ))
                                 })?;
-                            let metadata: CheckpointMetadata =
-                                serde_json::from_str(&metadata_json).map_err(|e| {
+                            let metadata: CheckpointMetadata = serde_json::from_str(&metadata_json)
+                                .map_err(|e| {
                                     FlowgentraError::StateError(format!(
                                         "Deserialize metadata error: {e}"
                                     ))
@@ -136,8 +130,7 @@ mod inner {
 
         fn list_threads(&self) -> Result<Vec<String>> {
             tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { self.thread_ids().await })
+                tokio::runtime::Handle::current().block_on(async { self.thread_ids().await })
             })
         }
     }
@@ -149,9 +142,8 @@ mod inner {
             state: &DynState,
             metadata: &CheckpointMetadata,
         ) -> Result<()> {
-            let state_json = serde_json::to_string(&state.to_value()).map_err(|e| {
-                FlowgentraError::StateError(format!("Serialize state error: {e}"))
-            })?;
+            let state_json = serde_json::to_string(&state.to_value())
+                .map_err(|e| FlowgentraError::StateError(format!("Serialize state error: {e}")))?;
             let metadata_json = serde_json::to_string(metadata).map_err(|e| {
                 FlowgentraError::StateError(format!("Serialize metadata error: {e}"))
             })?;
@@ -169,9 +161,7 @@ mod inner {
                     .bind(saved_at)
                     .execute(&self.pool)
                     .await
-                    .map_err(|e| {
-                        FlowgentraError::StateError(format!("SQLite save error: {e}"))
-                    })?;
+                    .map_err(|e| FlowgentraError::StateError(format!("SQLite save error: {e}")))?;
                     Ok(())
                 })
             })

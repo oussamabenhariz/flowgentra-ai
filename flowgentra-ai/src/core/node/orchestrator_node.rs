@@ -278,7 +278,10 @@ pub type OrchestratorNodeConfig = SupervisorNodeConfig;
 
 impl SupervisorNodeConfig {
     /// Create a config with defaults. Used internally or with `SupervisorNode::from_config`.
-    pub fn new(name: impl Into<String>, children: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        children: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         SupervisorNodeConfig {
             name: name.into(),
             children: children.into_iter().map(|c| c.into()).collect(),
@@ -362,7 +365,11 @@ impl SupervisorNodeConfig {
 
     // ── Skip conditions ──────────────────────────────────────────────────────
 
-    pub fn add_skip_condition(mut self, child: impl Into<String>, condition: impl Into<String>) -> Self {
+    pub fn add_skip_condition(
+        mut self,
+        child: impl Into<String>,
+        condition: impl Into<String>,
+    ) -> Self {
         self.skip_conditions.insert(child.into(), condition.into());
         self
     }
@@ -374,12 +381,19 @@ impl SupervisorNodeConfig {
         self
     }
 
-    pub fn required_outputs(mut self, outputs: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn required_outputs(
+        mut self,
+        outputs: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         self.required_outputs = outputs.into_iter().map(|s| s.into()).collect();
         self
     }
 
-    pub fn add_output_owner(mut self, output_key: impl Into<String>, child: impl Into<String>) -> Self {
+    pub fn add_output_owner(
+        mut self,
+        output_key: impl Into<String>,
+        child: impl Into<String>,
+    ) -> Self {
         self.output_owners.insert(output_key.into(), child.into());
         self
     }
@@ -424,7 +438,11 @@ impl SupervisorNodeConfig {
 
     // ── ConditionalRouting ───────────────────────────────────────────────────
 
-    pub fn add_routing_rule(mut self, condition: impl Into<String>, child: impl Into<String>) -> Self {
+    pub fn add_routing_rule(
+        mut self,
+        condition: impl Into<String>,
+        child: impl Into<String>,
+    ) -> Self {
         self.routing_rules.insert(condition.into(), child.into());
         self
     }
@@ -733,7 +751,11 @@ impl SupervisorNodeBuilder {
         self.config.max_iterations = n;
         self
     }
-    pub fn add_skip_condition(mut self, child: impl Into<String>, condition: impl Into<String>) -> Self {
+    pub fn add_skip_condition(
+        mut self,
+        child: impl Into<String>,
+        condition: impl Into<String>,
+    ) -> Self {
         self.config = self.config.add_skip_condition(child, condition);
         self
     }
@@ -741,11 +763,18 @@ impl SupervisorNodeBuilder {
         self.config = self.config.goal(goal);
         self
     }
-    pub fn required_outputs(mut self, outputs: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn required_outputs(
+        mut self,
+        outputs: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         self.config = self.config.required_outputs(outputs);
         self
     }
-    pub fn add_output_owner(mut self, output_key: impl Into<String>, child: impl Into<String>) -> Self {
+    pub fn add_output_owner(
+        mut self,
+        output_key: impl Into<String>,
+        child: impl Into<String>,
+    ) -> Self {
         self.config = self.config.add_output_owner(output_key, child);
         self
     }
@@ -773,7 +802,11 @@ impl SupervisorNodeBuilder {
         self.config = self.config.reduce_key(key);
         self
     }
-    pub fn add_routing_rule(mut self, condition: impl Into<String>, child: impl Into<String>) -> Self {
+    pub fn add_routing_rule(
+        mut self,
+        condition: impl Into<String>,
+        child: impl Into<String>,
+    ) -> Self {
         self.config = self.config.add_routing_rule(condition, child);
         self
     }
@@ -797,13 +830,17 @@ impl SupervisorNodeBuilder {
 impl SupervisorNode {
     /// Create a supervisor. Chain optional setter methods then call `.build()`.
     ///
-    /// ```rust
+    /// ```rust,no_run
+    /// use flowgentra_ai::core::node::{SupervisorNode, OrchestrationStrategy};
+    /// # let children = vec![];
     /// let sup = SupervisorNode::new("pipeline", ["researcher", "analyst"], children)
     ///     .strategy(OrchestrationStrategy::Sequential)
     ///     .fail_fast(true)
     ///     .child_timeout_ms(60_000)
     ///     .build()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         name: impl Into<String>,
         child_names: impl IntoIterator<Item = impl Into<String>>,

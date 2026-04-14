@@ -32,7 +32,10 @@ pub struct WikipediaRetriever {
 
 impl WikipediaRetriever {
     pub fn new(top_k: usize) -> Self {
-        Self { top_k, lang: "en".to_string() }
+        Self {
+            top_k,
+            lang: "en".to_string(),
+        }
     }
 
     pub fn with_lang(mut self, lang: impl Into<String>) -> Self {
@@ -65,10 +68,7 @@ impl AsyncRetriever for WikipediaRetriever {
             .await
             .map_err(|e| VectorStoreError::Unknown(format!("Wikipedia JSON: {e}")))?;
 
-        let titles = arr[1]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let titles = arr[1].as_array().cloned().unwrap_or_default();
 
         let mut results = Vec::new();
         for (i, title_val) in titles.iter().enumerate().take(self.top_k) {
@@ -86,10 +86,7 @@ impl AsyncRetriever for WikipediaRetriever {
                 .await
             {
                 if let Ok(summary_json) = resp.json::<serde_json::Value>().await {
-                    let extract = summary_json["extract"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
+                    let extract = summary_json["extract"].as_str().unwrap_or("").to_string();
                     let page_url = summary_json["content_urls"]["desktop"]["page"]
                         .as_str()
                         .unwrap_or("")
@@ -127,7 +124,10 @@ pub struct ArxivRetriever {
 
 impl ArxivRetriever {
     pub fn new(top_k: usize) -> Self {
-        Self { top_k, sort_by: "relevance".to_string() }
+        Self {
+            top_k,
+            sort_by: "relevance".to_string(),
+        }
     }
 
     pub fn sort_by_date(mut self) -> Self {
@@ -196,7 +196,7 @@ fn parse_arxiv_feed(xml: &str) -> Vec<SearchResult> {
     results
 }
 
-fn extract_xml_tag<'a>(xml: &'a str, tag: &str) -> Option<String> {
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = xml.find(&open)? + open.len();

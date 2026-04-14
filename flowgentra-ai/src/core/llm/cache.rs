@@ -41,9 +41,7 @@ impl CachedLLMClient {
     pub fn new(inner: std::sync::Arc<dyn LLMClient>) -> Self {
         Self {
             inner,
-            cache: Mutex::new(LruCache::new(
-                NonZeroUsize::new(1000).unwrap(),
-            )),
+            cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
         }
     }
 

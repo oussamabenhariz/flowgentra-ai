@@ -39,7 +39,9 @@ use sqlx::postgres::PgPool;
 use std::collections::HashMap;
 
 use super::filter::FilterExpr;
-use super::vector_db::{Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError};
+use super::vector_db::{
+    Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError,
+};
 
 /// Configuration for [`PgVectorStore`].
 #[derive(Debug, Clone)]
@@ -113,25 +115,41 @@ impl PgVectorStore {
             }
             FilterExpr::Gt(k, v) => {
                 params.push(v.clone());
-                format!("(metadata->>'{}')::numeric > (${})::numeric", k, offset + params.len())
+                format!(
+                    "(metadata->>'{}')::numeric > (${})::numeric",
+                    k,
+                    offset + params.len()
+                )
             }
             FilterExpr::Lt(k, v) => {
                 params.push(v.clone());
-                format!("(metadata->>'{}')::numeric < (${})::numeric", k, offset + params.len())
+                format!(
+                    "(metadata->>'{}')::numeric < (${})::numeric",
+                    k,
+                    offset + params.len()
+                )
             }
             FilterExpr::Gte(k, v) => {
                 params.push(v.clone());
-                format!("(metadata->>'{}')::numeric >= (${})::numeric", k, offset + params.len())
+                format!(
+                    "(metadata->>'{}')::numeric >= (${})::numeric",
+                    k,
+                    offset + params.len()
+                )
             }
             FilterExpr::Lte(k, v) => {
                 params.push(v.clone());
-                format!("(metadata->>'{}')::numeric <= (${})::numeric", k, offset + params.len())
+                format!(
+                    "(metadata->>'{}')::numeric <= (${})::numeric",
+                    k,
+                    offset + params.len()
+                )
             }
             FilterExpr::In(k, vs) => {
                 let placeholders: Vec<String> = vs
                     .iter()
                     .enumerate()
-                    .map(|(i, v)| {
+                    .map(|(_i, v)| {
                         params.push(v.clone());
                         format!("${}", offset + params.len())
                     })
@@ -168,7 +186,11 @@ impl VectorStoreBackend for PgVectorStore {
         // pgvector stores vectors as '[0.1, 0.2, ...]' text format
         let vec_str = format!(
             "[{}]",
-            embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(",")
+            embedding
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         );
 
         let sql = format!(
@@ -199,7 +221,11 @@ impl VectorStoreBackend for PgVectorStore {
     ) -> Result<Vec<SearchResult>, VectorStoreError> {
         let vec_str = format!(
             "[{}]",
-            query_embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(",")
+            query_embedding
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         );
 
         let (where_clause, filter_params) = if let Some(f) = filter {
@@ -242,7 +268,12 @@ impl VectorStoreBackend for PgVectorStore {
                 let metadata: Value = row.try_get("metadata").ok()?;
                 let meta_map: HashMap<String, Value> =
                     serde_json::from_value(metadata).unwrap_or_default();
-                Some(SearchResult { id, text, score: score as f32, metadata: meta_map })
+                Some(SearchResult {
+                    id,
+                    text,
+                    score: score as f32,
+                    metadata: meta_map,
+                })
             })
             .collect();
         Ok(results)
@@ -275,18 +306,26 @@ impl VectorStoreBackend for PgVectorStore {
             .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
 
         use sqlx::Row;
-        let id: String = row.try_get("id").map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
-        let text: String = row.try_get("text").map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
-        let metadata: Value = row.try_get("metadata").map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
+        let id: String = row
+            .try_get("id")
+            .map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
+        let text: String = row
+            .try_get("text")
+            .map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
+        let metadata: Value = row
+            .try_get("metadata")
+            .map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
         let meta_map: HashMap<String, Value> = serde_json::from_value(metadata).unwrap_or_default();
-        Ok(Document { id, text, embedding: None, metadata: meta_map })
+        Ok(Document {
+            id,
+            text,
+            embedding: None,
+            metadata: meta_map,
+        })
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
-        let sql = format!(
-            "SELECT id, text, metadata FROM {table}",
-            table = self.table
-        );
+        let sql = format!("SELECT id, text, metadata FROM {table}", table = self.table);
         let rows = sqlx::query(&sql)
             .fetch_all(&self.pool)
             .await
@@ -301,7 +340,12 @@ impl VectorStoreBackend for PgVectorStore {
                 let metadata: Value = row.try_get("metadata").ok()?;
                 let meta_map: HashMap<String, Value> =
                     serde_json::from_value(metadata).unwrap_or_default();
-                Some(Document { id, text, embedding: None, metadata: meta_map })
+                Some(Document {
+                    id,
+                    text,
+                    embedding: None,
+                    metadata: meta_map,
+                })
             })
             .collect();
         Ok(docs)

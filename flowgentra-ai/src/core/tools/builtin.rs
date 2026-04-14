@@ -336,7 +336,9 @@ impl FilesTool {
                 e
             ))
         })?;
-        Ok(Self { sandbox_root: canonical })
+        Ok(Self {
+            sandbox_root: canonical,
+        })
     }
 
     /// Resolve `user_path` to an absolute, canonical path and verify it is
@@ -401,7 +403,10 @@ impl FilesTool {
             FlowgentraError::ToolError(format!("Path '{}' has no parent directory", user_path))
         })?;
         let canonical_parent = fs::canonicalize(parent).map_err(|e| {
-            FlowgentraError::ToolError(format!("Parent directory of '{}' is invalid: {}", user_path, e))
+            FlowgentraError::ToolError(format!(
+                "Parent directory of '{}' is invalid: {}",
+                user_path, e
+            ))
         })?;
 
         if !canonical_parent.starts_with(&self.sandbox_root) {

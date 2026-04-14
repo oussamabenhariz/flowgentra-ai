@@ -1218,7 +1218,9 @@ impl MCPClient for SSEMCPClient {
 /// of the form `[registry/][user/]name[:tag][@sha256:digest]`.
 fn validate_docker_image_name(image: &str) -> Result<()> {
     if image.is_empty() {
-        return Err(FlowgentraError::MCPError("Docker image name must not be empty".into()));
+        return Err(FlowgentraError::MCPError(
+            "Docker image name must not be empty".into(),
+        ));
     }
     // Reject whitespace or shell metacharacters that could alter the docker
     // command line even though we pass args as a slice (defense in depth).
@@ -1231,7 +1233,10 @@ fn validate_docker_image_name(image: &str) -> Result<()> {
     }
     // Allow: lowercase alphanumerics, '/', '.', '-', '_', ':', '@'
     // (covers registry host:port, namespaced images, tags, digests)
-    if !image.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_' | ':' | '@')) {
+    if !image
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_' | ':' | '@'))
+    {
         return Err(FlowgentraError::MCPError(format!(
             "Docker image name '{}' contains unexpected characters; \
              use lowercase alphanumerics, '/', '.', '-', '_', ':', '@' only",
@@ -1340,7 +1345,7 @@ impl DockerMCPClient {
         let container_port = self.config.connection_settings.port.unwrap_or(8080);
 
         // --- Fix #7b: Validate env var keys ---
-        for (k, _v) in &self.config.connection_settings.env_vars {
+        for k in self.config.connection_settings.env_vars.keys() {
             validate_docker_env_key(k)?;
         }
 
@@ -1420,7 +1425,9 @@ impl DockerMCPClient {
                 .lines()
                 .find_map(|line| {
                     // Each line is "addr:port"; take the part after the last ':'
-                    line.rsplit(':').next().and_then(|p| p.trim().parse::<u16>().ok())
+                    line.rsplit(':')
+                        .next()
+                        .and_then(|p| p.trim().parse::<u16>().ok())
                 })
                 .ok_or_else(|| {
                     FlowgentraError::MCPError(format!(

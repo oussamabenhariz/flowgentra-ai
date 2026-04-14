@@ -130,10 +130,7 @@ where
         let top_k = self.config.retrieval.top_k;
         let threshold = self.config.retrieval.similarity_threshold;
 
-        let mut results = self
-            .store
-            .search(query_embedding, top_k, filter)
-            .await?;
+        let mut results = self.store.search(query_embedding, top_k, filter).await?;
 
         // Step 5: Apply similarity threshold
         results.retain(|r| r.score >= threshold);
@@ -238,12 +235,10 @@ mod tests {
 
         let config = SelfQueryConfig::default();
 
-        let retriever = SelfQueryRetriever::new(
-            store,
-            embeddings,
-            config,
-            |_query: String| async move { Ok(Some(FilterExpr::eq("year", json!(2024)))) },
-        );
+        let retriever =
+            SelfQueryRetriever::new(store, embeddings, config, |_query: String| async move {
+                Ok(Some(FilterExpr::eq("year", json!(2024))))
+            });
 
         let results = retriever.retrieve("Rust posts").await.unwrap();
         // All results should have year == 2024 (InMemoryVectorStore filters metadata)

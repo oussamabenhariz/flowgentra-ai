@@ -48,12 +48,15 @@ impl RedisDocumentStore {
     /// - `redis://:password@host:6379/0`
     /// - `rediss://host:6380/` (TLS)
     pub async fn connect(url: &str) -> Result<Self, DbError> {
-        let client = redis::Client::open(url)
-            .map_err(|e| DbError::Connection(e.to_string()))?;
+        let client = redis::Client::open(url).map_err(|e| DbError::Connection(e.to_string()))?;
         // Verify the connection is reachable.
-        let mut conn = client.get_async_connection().await
+        let mut conn = client
+            .get_async_connection()
+            .await
             .map_err(|e| DbError::Connection(e.to_string()))?;
-        redis::cmd("PING").query_async::<_, ()>(&mut conn).await
+        redis::cmd("PING")
+            .query_async::<_, ()>(&mut conn)
+            .await
             .map_err(|e| DbError::Connection(e.to_string()))?;
         Ok(Self { client })
     }
@@ -67,7 +70,9 @@ impl RedisDocumentStore {
     }
 
     async fn conn(&self) -> Result<redis::aio::Connection, DbError> {
-        self.client.get_async_connection().await
+        self.client
+            .get_async_connection()
+            .await
             .map_err(|e| DbError::Connection(e.to_string()))
     }
 }
@@ -75,21 +80,24 @@ impl RedisDocumentStore {
 #[async_trait]
 impl DocumentStore for RedisDocumentStore {
     async fn insert(&self, collection: &str, doc: Value) -> Result<String, DbError> {
-        let id = doc.get("id")
+        let id = doc
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-        let json_str = serde_json::to_string(&doc)
-            .map_err(|e| DbError::Serialization(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&doc).map_err(|e| DbError::Serialization(e.to_string()))?;
 
         let mut conn = self.conn().await?;
         let key = Self::doc_key(collection, &id);
         // Store the full document JSON under a single "data" hash field.
-        conn.hset::<_, _, _, ()>(&key, "data", &json_str).await
+        conn.hset::<_, _, _, ()>(&key, "data", &json_str)
+            .await
             .map_err(|e| DbError::Query(e.to_string()))?;
         // Track IDs in a set so `find` can enumerate them.
-        conn.sadd::<_, _, ()>(Self::index_key(collection), &id).await
+        conn.sadd::<_, _, ()>(Self::index_key(collection), &id)
+            .await
             .map_err(|e| DbError::Query(e.to_string()))?;
 
         Ok(id)
@@ -99,13 +107,17 @@ impl DocumentStore for RedisDocumentStore {
         let mut conn = self.conn().await?;
 
         // Collect all document IDs for this collection.
-        let ids: Vec<String> = conn.smembers(Self::index_key(collection)).await
+        let ids: Vec<String> = conn
+            .smembers(Self::index_key(collection))
+            .await
             .map_err(|e| DbError::Query(e.to_string()))?;
 
         let mut results = Vec::new();
         for id in ids {
             let key = Self::doc_key(collection, &id);
-            let raw: Option<String> = conn.hget(&key, "data").await
+            let raw: Option<String> = conn
+                .hget(&key, "data")
+                .await
                 .map_err(|e| DbError::Query(e.to_string()))?;
             if let Some(json_str) = raw {
                 let doc: Value = serde_json::from_str(&json_str)
@@ -121,9 +133,11 @@ impl DocumentStore for RedisDocumentStore {
     async fn delete(&self, collection: &str, id: &str) -> Result<(), DbError> {
         let mut conn = self.conn().await?;
         let key = Self::doc_key(collection, id);
-        conn.del::<_, ()>(&key).await
+        conn.del::<_, ()>(&key)
+            .await
             .map_err(|e| DbError::Query(e.to_string()))?;
-        conn.srem::<_, _, ()>(Self::index_key(collection), id).await
+        conn.srem::<_, _, ()>(Self::index_key(collection), id)
+            .await
             .map_err(|e| DbError::Query(e.to_string()))?;
         Ok(())
     }
@@ -163,7 +177,7 @@ fn matches_filter(doc: &Value, filter: &Value) -> bool {
             }
             field => {
                 let doc_val = doc_field(doc, field);
-                if !matches_condition(doc_val.as_ref(), cond) {
+                if !matches_condition(doc_val, cond) {
                     return false;
                 }
             }
@@ -186,13 +200,19 @@ fn matches_condition(doc_val: Option<&Value>, cond: &Value) -> bool {
         // Operator form: {"$eq": ...}
         for (op, expected) in cond_obj {
             let ok = match op.as_str() {
-                "$eq"  => doc_val.map_or(false, |v| v == expected),
-                "$ne"  => doc_val.map_or(true,  |v| v != expected),
-                "$gt"  => cmp_values(doc_val, expected) == Some(std::cmp::Ordering::Greater),
-                "$gte" => matches!(cmp_values(doc_val, expected), Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)),
-                "$lt"  => cmp_values(doc_val, expected) == Some(std::cmp::Ordering::Less),
-                "$lte" => matches!(cmp_values(doc_val, expected), Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)),
-                "$in"  => {
+                "$eq" => doc_val.map_or(false, |v| v == expected),
+                "$ne" => doc_val.map_or(true, |v| v != expected),
+                "$gt" => cmp_values(doc_val, expected) == Some(std::cmp::Ordering::Greater),
+                "$gte" => matches!(
+                    cmp_values(doc_val, expected),
+                    Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
+                ),
+                "$lt" => cmp_values(doc_val, expected) == Some(std::cmp::Ordering::Less),
+                "$lte" => matches!(
+                    cmp_values(doc_val, expected),
+                    Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
+                ),
+                "$in" => {
                     if let Some(arr) = expected.as_array() {
                         doc_val.map_or(false, |v| arr.contains(v))
                     } else {

@@ -33,7 +33,9 @@ impl MyDocumentStore {
         //     .await
         //     .map_err(|e| DbError::Connection(e.to_string()))?;
         // Ok(Self { client })
-        Err(DbError::Config("MyDocumentStore: not yet implemented".into()))
+        Err(DbError::Config(
+            "MyDocumentStore: not yet implemented".into(),
+        ))
     }
 }
 
@@ -43,20 +45,26 @@ impl DocumentStore for MyDocumentStore {
         // let result = self.client.insert(collection, doc).await
         //     .map_err(|e| DbError::Query(e.to_string()))?;
         // Ok(result.id.to_string())
-        Err(DbError::Config("MyDocumentStore: not yet implemented".into()))
+        Err(DbError::Config(
+            "MyDocumentStore: not yet implemented".into(),
+        ))
     }
 
     async fn find(&self, _collection: &str, _filter: Value) -> Result<Vec<Value>, DbError> {
         // let docs = self.client.find(collection, filter).await
         //     .map_err(|e| DbError::Query(e.to_string()))?;
         // Ok(docs.into_iter().map(to_json).collect())
-        Err(DbError::Config("MyDocumentStore: not yet implemented".into()))
+        Err(DbError::Config(
+            "MyDocumentStore: not yet implemented".into(),
+        ))
     }
 
     async fn delete(&self, _collection: &str, _id: &str) -> Result<(), DbError> {
         // self.client.delete(collection, id).await
         //     .map_err(|e| DbError::Query(e.to_string()))?;
         // Ok(())
-        Err(DbError::Config("MyDocumentStore: not yet implemented".into()))
+        Err(DbError::Config(
+            "MyDocumentStore: not yet implemented".into(),
+        ))
     }
 }

@@ -136,7 +136,11 @@ impl MilvusStore {
 
         let exists = resp
             .ok()
-            .and_then(|v| v.get("data").and_then(|d| d.get("has")).and_then(|h| h.as_bool()))
+            .and_then(|v| {
+                v.get("data")
+                    .and_then(|d| d.get("has"))
+                    .and_then(|h| h.as_bool())
+            })
             .unwrap_or(false);
 
         if exists {
@@ -225,10 +229,10 @@ impl MilvusStore {
     /// Milvus format: `field == "value"`, `field > 5`, `(a) && (b)`, etc.
     fn build_filter(f: &FilterExpr) -> String {
         match f {
-            FilterExpr::Eq(k, v)  => format!("{k} == {}", Self::milvus_val(v)),
-            FilterExpr::Ne(k, v)  => format!("{k} != {}", Self::milvus_val(v)),
-            FilterExpr::Gt(k, v)  => format!("{k} > {}",  Self::milvus_val(v)),
-            FilterExpr::Lt(k, v)  => format!("{k} < {}",  Self::milvus_val(v)),
+            FilterExpr::Eq(k, v) => format!("{k} == {}", Self::milvus_val(v)),
+            FilterExpr::Ne(k, v) => format!("{k} != {}", Self::milvus_val(v)),
+            FilterExpr::Gt(k, v) => format!("{k} > {}", Self::milvus_val(v)),
+            FilterExpr::Lt(k, v) => format!("{k} < {}", Self::milvus_val(v)),
             FilterExpr::Gte(k, v) => format!("{k} >= {}", Self::milvus_val(v)),
             FilterExpr::Lte(k, v) => format!("{k} <= {}", Self::milvus_val(v)),
             FilterExpr::In(k, vs) => {
@@ -252,8 +256,8 @@ impl MilvusStore {
         match v {
             Value::String(s) => format!("\"{s}\""),
             Value::Number(n) => n.to_string(),
-            Value::Bool(b)   => b.to_string(),
-            _                => format!("\"{v}\""),
+            Value::Bool(b) => b.to_string(),
+            _ => format!("\"{v}\""),
         }
     }
 }
@@ -325,13 +329,10 @@ impl VectorStoreBackend for MilvusStore {
                 let metadata = hit
                     .get("metadata_json")
                     .and_then(|v| v.as_str())
-                    .map(|s| Self::decode_metadata(s))
+                    .map(Self::decode_metadata)
                     .unwrap_or_default();
                 // Milvus COSINE metric returns similarity directly (1 = identical).
-                let score = hit
-                    .get("distance")
-                    .and_then(|s| s.as_f64())
-                    .unwrap_or(0.0) as f32;
+                let score = hit.get("distance").and_then(|s| s.as_f64()).unwrap_or(0.0) as f32;
                 Some(SearchResult {
                     id,
                     text,
@@ -408,7 +409,7 @@ impl VectorStoreBackend for MilvusStore {
         let metadata = entity
             .get("metadata_json")
             .and_then(|v| v.as_str())
-            .map(|s| Self::decode_metadata(s))
+            .map(Self::decode_metadata)
             .unwrap_or_default();
 
         Ok(Document {
@@ -454,7 +455,7 @@ impl VectorStoreBackend for MilvusStore {
                 let metadata = e
                     .get("metadata_json")
                     .and_then(|v| v.as_str())
-                    .map(|s| Self::decode_metadata(s))
+                    .map(Self::decode_metadata)
                     .unwrap_or_default();
                 Document {
                     id,

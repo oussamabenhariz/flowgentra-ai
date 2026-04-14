@@ -224,8 +224,8 @@ pub mod redis_doc_store {
 
     impl RedisDocStore {
         pub async fn new(url: &str, key_prefix: impl Into<String>) -> DocStoreResult<Self> {
-            let client = redis::Client::open(url)
-                .map_err(|e| DocStoreError::Backend(e.to_string()))?;
+            let client =
+                redis::Client::open(url).map_err(|e| DocStoreError::Backend(e.to_string()))?;
             let manager = ConnectionManager::new(client)
                 .await
                 .map_err(|e| DocStoreError::Backend(e.to_string()))?;
@@ -259,13 +259,19 @@ pub mod redis_doc_store {
                 let key = self.key(&doc.id);
                 let mut mgr = self.manager.clone();
                 if let Some(ttl) = self.ttl_secs {
-                    let _: () = mgr.set_ex(&key, &json, ttl).await
+                    let _: () = mgr
+                        .set_ex(&key, &json, ttl)
+                        .await
                         .map_err(|e| DocStoreError::Backend(e.to_string()))?;
                 } else {
-                    let _: () = mgr.set(&key, &json).await
+                    let _: () = mgr
+                        .set(&key, &json)
+                        .await
                         .map_err(|e| DocStoreError::Backend(e.to_string()))?;
                 }
-                let _: () = mgr.sadd(self.index_key(), &doc.id).await
+                let _: () = mgr
+                    .sadd(self.index_key(), &doc.id)
+                    .await
                     .map_err(|e| DocStoreError::Backend(e.to_string()))?;
             }
             Ok(())
@@ -275,7 +281,9 @@ pub mod redis_doc_store {
             let mut result = Vec::new();
             for id in ids {
                 let mut mgr = self.manager.clone();
-                let json: Option<String> = mgr.get(self.key(id)).await
+                let json: Option<String> = mgr
+                    .get(self.key(id))
+                    .await
                     .map_err(|e| DocStoreError::Backend(e.to_string()))?;
                 match json {
                     None => result.push(None),
@@ -292,9 +300,13 @@ pub mod redis_doc_store {
         async fn mdelete(&self, ids: &[&str]) -> DocStoreResult<()> {
             for id in ids {
                 let mut mgr = self.manager.clone();
-                let _: () = mgr.del(self.key(id)).await
+                let _: () = mgr
+                    .del(self.key(id))
+                    .await
                     .map_err(|e| DocStoreError::Backend(e.to_string()))?;
-                let _: () = mgr.srem(self.index_key(), id).await
+                let _: () = mgr
+                    .srem(self.index_key(), id)
+                    .await
                     .map_err(|e| DocStoreError::Backend(e.to_string()))?;
             }
             Ok(())
@@ -302,7 +314,9 @@ pub mod redis_doc_store {
 
         async fn yield_keys(&self) -> DocStoreResult<Vec<String>> {
             let mut mgr = self.manager.clone();
-            let keys: Vec<String> = mgr.smembers(self.index_key()).await
+            let keys: Vec<String> = mgr
+                .smembers(self.index_key())
+                .await
                 .map_err(|e| DocStoreError::Backend(e.to_string()))?;
             Ok(keys)
         }
@@ -314,8 +328,8 @@ pub mod redis_doc_store {
 #[cfg(feature = "mongodb-store")]
 pub mod mongo_doc_store {
     use super::*;
-    use mongodb::{bson::doc, Client};
     use futures::TryStreamExt;
+    use mongodb::{bson::doc, Client};
 
     /// Stores documents as MongoDB documents.
     pub struct MongoDocStore {
@@ -323,11 +337,7 @@ pub mod mongo_doc_store {
     }
 
     impl MongoDocStore {
-        pub async fn new(
-            url: &str,
-            db: &str,
-            collection: &str,
-        ) -> DocStoreResult<Self> {
+        pub async fn new(url: &str, db: &str, collection: &str) -> DocStoreResult<Self> {
             let client = Client::with_uri_str(url)
                 .await
                 .map_err(|e| DocStoreError::Backend(e.to_string()))?;

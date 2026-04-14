@@ -36,6 +36,7 @@ impl MyDatabase {
     }
 
     /// Convert a backend row to the shared `Row` type.
+    #[allow(dead_code)]
     fn row_to_map(_row: &()) -> Row {
         // Iterate columns, extract values as serde_json::Value.
         std::collections::HashMap::new()

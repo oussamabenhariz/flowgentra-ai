@@ -137,7 +137,10 @@ impl VectorStoreBackend for SingleStoreVectorStore {
     }
 
     async fn delete(&self, id: &str) -> Result<(), VectorStoreError> {
-        let sql = format!("DELETE FROM {}.{} WHERE id='{id}'", self.database, self.table);
+        let sql = format!(
+            "DELETE FROM {}.{} WHERE id='{id}'",
+            self.database, self.table
+        );
         self.post("/api/v2/exec", json!({ "sql": sql })).await?;
         Ok(())
     }
@@ -147,7 +150,10 @@ impl VectorStoreBackend for SingleStoreVectorStore {
     }
 
     async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
-        let sql = format!("SELECT id, text, metadata FROM {}.{} WHERE id='{doc_id}'", self.database, self.table);
+        let sql = format!(
+            "SELECT id, text, metadata FROM {}.{} WHERE id='{doc_id}'",
+            self.database, self.table
+        );
         let resp = self.post("/api/v2/exec", json!({ "sql": sql })).await?;
         let rows = resp["results"].as_array().cloned().unwrap_or_default();
         if let Some(r) = rows.first() {
@@ -158,18 +164,26 @@ impl VectorStoreBackend for SingleStoreVectorStore {
                 metadata: HashMap::new(),
             });
         }
-        Err(VectorStoreError::Unknown(format!("Document {doc_id} not found")))
+        Err(VectorStoreError::Unknown(format!(
+            "Document {doc_id} not found"
+        )))
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         let sql = format!("SELECT id, text FROM {}.{}", self.database, self.table);
         let resp = self.post("/api/v2/exec", json!({ "sql": sql })).await?;
-        Ok(resp["results"].as_array().cloned().unwrap_or_default().iter().map(|r| Document {
-            id: r["id"].as_str().unwrap_or("").to_string(),
-            text: r["text"].as_str().unwrap_or("").to_string(),
-            embedding: None,
-            metadata: HashMap::new(),
-        }).collect())
+        Ok(resp["results"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|r| Document {
+                id: r["id"].as_str().unwrap_or("").to_string(),
+                text: r["text"].as_str().unwrap_or("").to_string(),
+                embedding: None,
+                metadata: HashMap::new(),
+            })
+            .collect())
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
@@ -226,8 +240,13 @@ impl AzureAISearchStore {
         if let Some(b) = body {
             req = req.json(&b);
         }
-        let resp = req.send().await.map_err(|e| http_err("Azure Search HTTP", e))?;
-        resp.json::<Value>().await.map_err(|e| http_err("Azure Search JSON", e))
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| http_err("Azure Search HTTP", e))?;
+        resp.json::<Value>()
+            .await
+            .map_err(|e| http_err("Azure Search JSON", e))
     }
 }
 
@@ -316,13 +335,21 @@ impl VectorStoreBackend for AzureAISearchStore {
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         let url = format!("{}/search", self.base_url());
         let body = json!({ "search": "*", "top": 1000 });
-        let resp = self.request(reqwest::Method::POST, &url, Some(body)).await?;
-        Ok(resp["value"].as_array().cloned().unwrap_or_default().iter().map(|r| Document {
-            id: r["id"].as_str().unwrap_or("").to_string(),
-            text: r["text"].as_str().unwrap_or("").to_string(),
-            embedding: None,
-            metadata: HashMap::new(),
-        }).collect())
+        let resp = self
+            .request(reqwest::Method::POST, &url, Some(body))
+            .await?;
+        Ok(resp["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|r| Document {
+                id: r["id"].as_str().unwrap_or("").to_string(),
+                text: r["text"].as_str().unwrap_or("").to_string(),
+                embedding: None,
+                metadata: HashMap::new(),
+            })
+            .collect())
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
@@ -345,11 +372,7 @@ pub struct VectaraStore {
 }
 
 impl VectaraStore {
-    pub fn new(
-        customer_id: impl Into<String>,
-        corpus_id: u64,
-        api_key: impl Into<String>,
-    ) -> Self {
+    pub fn new(customer_id: impl Into<String>, corpus_id: u64, api_key: impl Into<String>) -> Self {
         Self {
             customer_id: customer_id.into(),
             corpus_id,
@@ -369,7 +392,9 @@ impl VectaraStore {
             .send()
             .await
             .map_err(|e| http_err("Vectara HTTP", e))?;
-        resp.json::<Value>().await.map_err(|e| http_err("Vectara JSON", e))
+        resp.json::<Value>()
+            .await
+            .map_err(|e| http_err("Vectara JSON", e))
     }
 }
 
@@ -420,15 +445,22 @@ impl VectorStoreBackend for VectaraStore {
     }
 
     async fn get(&self, _doc_id: &str) -> Result<Document, VectorStoreError> {
-        Err(VectorStoreError::Unknown("VectaraStore.get() not supported via REST API".into()))
+        Err(VectorStoreError::Unknown(
+            "VectaraStore.get() not supported via REST API".into(),
+        ))
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
-        Err(VectorStoreError::Unknown("VectaraStore.list() not supported via REST API".into()))
+        Err(VectorStoreError::Unknown(
+            "VectaraStore.list() not supported via REST API".into(),
+        ))
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
-        Err(VectorStoreError::Unknown("VectaraStore.clear() not supported via REST API — delete documents individually".into()))
+        Err(VectorStoreError::Unknown(
+            "VectaraStore.clear() not supported via REST API — delete documents individually"
+                .into(),
+        ))
     }
 }
 
@@ -481,10 +513,7 @@ impl TurbopufferStore {
     }
 
     fn base_url(&self) -> String {
-        format!(
-            "https://api.turbopuffer.com/v1/vectors/{}",
-            self.namespace
-        )
+        format!("https://api.turbopuffer.com/v1/vectors/{}", self.namespace)
     }
 
     async fn request(
@@ -501,8 +530,13 @@ impl TurbopufferStore {
         if let Some(b) = body {
             req = req.json(&b);
         }
-        let resp = req.send().await.map_err(|e| http_err("Turbopuffer HTTP", e))?;
-        resp.json::<Value>().await.map_err(|e| http_err("Turbopuffer JSON", e))
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| http_err("Turbopuffer HTTP", e))?;
+        resp.json::<Value>()
+            .await
+            .map_err(|e| http_err("Turbopuffer JSON", e))
     }
 }
 
@@ -568,12 +602,8 @@ impl VectorStoreBackend for TurbopufferStore {
 
     async fn delete(&self, id: &str) -> Result<(), VectorStoreError> {
         let url = format!("{}/delete", self.base_url());
-        self.request(
-            reqwest::Method::POST,
-            &url,
-            Some(json!({ "ids": [id] })),
-        )
-        .await?;
+        self.request(reqwest::Method::POST, &url, Some(json!({ "ids": [id] })))
+            .await?;
         Ok(())
     }
 
@@ -584,11 +614,16 @@ impl VectorStoreBackend for TurbopufferStore {
     async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
         let url = format!("{}/vectors", self.base_url());
         let body = json!({ "ids": [doc_id] });
-        let resp = self.request(reqwest::Method::POST, &url, Some(body)).await?;
+        let resp = self
+            .request(reqwest::Method::POST, &url, Some(body))
+            .await?;
         let item = &resp[0];
         Ok(Document {
             id: item["id"].as_str().unwrap_or(doc_id).to_string(),
-            text: item["attributes"]["text"].as_str().unwrap_or("").to_string(),
+            text: item["attributes"]["text"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             embedding: None,
             metadata: HashMap::new(),
         })
@@ -597,12 +632,21 @@ impl VectorStoreBackend for TurbopufferStore {
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         let url = format!("{}/vectors", self.base_url());
         let resp = self.request(reqwest::Method::GET, &url, None).await?;
-        Ok(resp.as_array().cloned().unwrap_or_default().iter().map(|item| Document {
-            id: item["id"].as_str().unwrap_or("").to_string(),
-            text: item["attributes"]["text"].as_str().unwrap_or("").to_string(),
-            embedding: None,
-            metadata: HashMap::new(),
-        }).collect())
+        Ok(resp
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|item| Document {
+                id: item["id"].as_str().unwrap_or("").to_string(),
+                text: item["attributes"]["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
+                embedding: None,
+                metadata: HashMap::new(),
+            })
+            .collect())
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
@@ -669,7 +713,9 @@ impl Neo4jVectorStore {
             .send()
             .await
             .map_err(|e| http_err("Neo4j HTTP", e))?;
-        resp.json::<Value>().await.map_err(|e| http_err("Neo4j JSON", e))
+        resp.json::<Value>()
+            .await
+            .map_err(|e| http_err("Neo4j JSON", e))
     }
 }
 
@@ -705,11 +751,10 @@ impl VectorStoreBackend for Neo4jVectorStore {
         top_k: usize,
         _filter: Option<FilterExpr>,
     ) -> Result<Vec<SearchResult>, VectorStoreError> {
-        let query = format!(
-            "CALL db.index.vector.queryNodes($index, $k, $embedding) \
+        let query = "CALL db.index.vector.queryNodes($index, $k, $embedding) \
              YIELD node, score \
-             RETURN node.id AS id, node.text AS text, score",
-        );
+             RETURN node.id AS id, node.text AS text, score"
+            .to_string();
         let resp = self
             .cypher(
                 &query,
@@ -721,7 +766,10 @@ impl VectorStoreBackend for Neo4jVectorStore {
             )
             .await?;
 
-        let rows = resp["results"][0]["data"].as_array().cloned().unwrap_or_default();
+        let rows = resp["results"][0]["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         Ok(rows
             .iter()
             .map(|r| {
@@ -752,7 +800,10 @@ impl VectorStoreBackend for Neo4jVectorStore {
             self.node_label
         );
         let resp = self.cypher(&query, json!({ "id": doc_id })).await?;
-        let rows = resp["results"][0]["data"].as_array().cloned().unwrap_or_default();
+        let rows = resp["results"][0]["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         if let Some(r) = rows.first() {
             let row = &r["row"];
             return Ok(Document {
@@ -762,7 +813,9 @@ impl VectorStoreBackend for Neo4jVectorStore {
                 metadata: HashMap::new(),
             });
         }
-        Err(VectorStoreError::Unknown(format!("Neo4j: document {doc_id} not found")))
+        Err(VectorStoreError::Unknown(format!(
+            "Neo4j: document {doc_id} not found"
+        )))
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
@@ -771,16 +824,22 @@ impl VectorStoreBackend for Neo4jVectorStore {
             self.node_label
         );
         let resp = self.cypher(&query, json!({})).await?;
-        let rows = resp["results"][0]["data"].as_array().cloned().unwrap_or_default();
-        Ok(rows.iter().map(|r| {
-            let row = &r["row"];
-            Document {
-                id: row[0].as_str().unwrap_or("").to_string(),
-                text: row[1].as_str().unwrap_or("").to_string(),
-                embedding: None,
-                metadata: HashMap::new(),
-            }
-        }).collect())
+        let rows = resp["results"][0]["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let row = &r["row"];
+                Document {
+                    id: row[0].as_str().unwrap_or("").to_string(),
+                    text: row[1].as_str().unwrap_or("").to_string(),
+                    embedding: None,
+                    metadata: HashMap::new(),
+                }
+            })
+            .collect())
     }
 
     async fn clear(&self) -> Result<(), VectorStoreError> {

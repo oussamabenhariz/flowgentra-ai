@@ -123,10 +123,7 @@ impl CompiledGraph {
 
     /// Get nodes that the given node has a direct edge **to** (direct successors only).
     pub fn successors(&self, node: &str) -> Vec<String> {
-        self.adjacency
-            .get(node)
-            .cloned()
-            .unwrap_or_default()
+        self.adjacency.get(node).cloned().unwrap_or_default()
     }
 
     /// Check if two nodes can execute in parallel
@@ -513,8 +510,7 @@ impl GraphCompiler {
         if let Some(neighbors) = self.adjacency.get(node) {
             for neighbor in neighbors {
                 if !visited.contains(neighbor) {
-                    if let Some(cycle) =
-                        self.dfs_find_cycle(neighbor, visited, rec_stack, rec_set)
+                    if let Some(cycle) = self.dfs_find_cycle(neighbor, visited, rec_stack, rec_set)
                     {
                         return Some(cycle);
                     }
@@ -805,11 +801,7 @@ mod tests {
 
     #[test]
     fn test_predecessors_and_successors() {
-        let nodes = vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ];
+        let nodes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let edges = vec![
             ("START".to_string(), "a".to_string()),
             ("a".to_string(), "b".to_string()),

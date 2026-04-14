@@ -4,9 +4,9 @@
 //! Uses the S3 REST API with AWS Signature V4 (simplified implementation).
 //! For production, integrate with the official `aws-sdk-s3` crate.
 
-use std::collections::HashMap;
-use serde_json::json;
 use crate::core::rag::document_loader::{load_document, LoadedDocument};
+use serde_json::json;
+use std::collections::HashMap;
 
 pub struct S3Loader {
     pub bucket: String,
@@ -46,16 +46,28 @@ impl S3Loader {
     }
 
     /// List objects in the bucket with the configured prefix.
-    async fn list_objects(&self, client: &reqwest::Client) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    async fn list_objects(
+        &self,
+        client: &reqwest::Client,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/?list-type=2&prefix={}",
-            self.bucket, self.region, urlencoding::encode(&self.prefix)
+            self.bucket,
+            self.region,
+            urlencoding::encode(&self.prefix)
         );
         // NOTE: In production, sign the request with AWS Signature V4.
         // Here we use unsigned requests (works with public buckets or pre-configured credentials).
-        let resp = client.get(&url)
-            .header("x-amz-content-sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-            .send().await?.text().await?;
+        let resp = client
+            .get(&url)
+            .header(
+                "x-amz-content-sha256",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+            .send()
+            .await?
+            .text()
+            .await?;
 
         let mut keys = Vec::new();
         for part in resp.split("<Key>").skip(1) {
@@ -84,9 +96,9 @@ impl S3Loader {
         let tmp_path = format!("{}/{}", self.tmp_dir, key.replace('/', "_"));
         std::fs::write(&tmp_path, &bytes)?;
 
-        let loaded = load_document(&tmp_path)
-            .await
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error>)?;
+        let loaded = load_document(&tmp_path).await.map_err(|e| {
+            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
+        })?;
         std::fs::remove_file(&tmp_path).ok();
 
         let s3_url = format!("s3://{}/{}", self.bucket, key);

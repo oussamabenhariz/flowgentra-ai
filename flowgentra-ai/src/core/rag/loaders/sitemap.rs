@@ -133,7 +133,11 @@ impl SitemapLoader {
             .skip(1)
             .filter_map(|part| {
                 let url = part.split("</loc>").next()?.trim().to_string();
-                if url.starts_with("http") { Some(url) } else { None }
+                if url.starts_with("http") {
+                    Some(url)
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -148,10 +152,11 @@ fn strip_html(html: &str) -> String {
     let lower_chars: Vec<char> = lower.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if !in_script && lower_chars[i..].starts_with(&['<','s','c','r','i','p','t']) {
+        if !in_script && lower_chars[i..].starts_with(&['<', 's', 'c', 'r', 'i', 'p', 't']) {
             in_script = true;
         }
-        if in_script && lower_chars[i..].starts_with(&['<','/','s','c','r','i','p','t','>']) {
+        if in_script && lower_chars[i..].starts_with(&['<', '/', 's', 'c', 'r', 'i', 'p', 't', '>'])
+        {
             in_script = false;
             i += 9;
             continue;

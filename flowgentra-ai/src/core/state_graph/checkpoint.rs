@@ -114,6 +114,7 @@ pub struct CheckpointMigrator {
     /// Target (current) schema version.
     target_version: String,
     /// Ordered list of (from_version, migration_fn).
+    #[allow(clippy::type_complexity)]
     migrations: Vec<(String, Box<dyn Fn(Value) -> Value + Send + Sync>)>,
 }
 

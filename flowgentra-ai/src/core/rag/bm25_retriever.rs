@@ -214,7 +214,10 @@ mod tests {
                 ("d", "python"),
                 ("e", "java"),
             ],
-            Bm25Config { top_k: 2, ..Default::default() },
+            Bm25Config {
+                top_k: 2,
+                ..Default::default()
+            },
         );
         let results = retriever.retrieve("rust");
         assert!(results.len() <= 2);

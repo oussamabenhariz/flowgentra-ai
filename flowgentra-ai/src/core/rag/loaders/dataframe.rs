@@ -4,9 +4,9 @@
 //! [`LoadedDocument`]s. One row = one document. Designed to interop with data
 //! passed from Python pandas DataFrames via JSON serialization.
 
-use std::collections::HashMap;
-use serde_json::json;
 use crate::core::rag::document_loader::{FileType, LoadedDocument};
+use serde_json::json;
+use std::collections::HashMap;
 
 /// Converts rows (HashMap-based) into documents.
 ///
@@ -27,13 +27,23 @@ impl DataFrameLoader {
     }
 
     /// Construct from a JSON array of objects (e.g. from `df.to_json(orient="records")`).
-    pub fn from_json(json_str: &str, page_content_column: impl Into<String>) -> Result<Self, serde_json::Error> {
+    pub fn from_json(
+        json_str: &str,
+        page_content_column: impl Into<String>,
+    ) -> Result<Self, serde_json::Error> {
         let rows: Vec<HashMap<String, serde_json::Value>> = serde_json::from_str(json_str)?;
         let string_rows = rows
             .into_iter()
             .map(|row| {
                 row.into_iter()
-                    .map(|(k, v)| (k, v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
+                    .map(|(k, v)| {
+                        (
+                            k,
+                            v.as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| v.to_string()),
+                        )
+                    })
                     .collect()
             })
             .collect();

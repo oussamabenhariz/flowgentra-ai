@@ -352,7 +352,12 @@ mod tests {
     fn test_temperature_never_exceeds_one() {
         for retry in 0..=10 {
             let temp = RetryPolicy::get_temperature_adjustment(retry);
-            assert!(temp <= 1.0, "Temperature {} at retry {} exceeds 1.0", temp, retry);
+            assert!(
+                temp <= 1.0,
+                "Temperature {} at retry {} exceeds 1.0",
+                temp,
+                retry
+            );
         }
     }
 

@@ -48,7 +48,8 @@ impl Neo4jDocumentStore {
             .password(password)
             .build()
             .map_err(|e| DbError::Config(e.to_string()))?;
-        let graph = Graph::connect(config).await
+        let graph = Graph::connect(config)
+            .await
             .map_err(|e| DbError::Connection(e.to_string()))?;
         Ok(Self { graph })
     }
@@ -70,7 +71,8 @@ impl DocumentStore for Neo4jDocumentStore {
             }
         };
 
-        let id = obj.get("id")
+        let id = obj
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -107,13 +109,7 @@ impl DocumentStore for Neo4jDocumentStore {
     async fn find(&self, collection: &str, filter: Value) -> Result<Vec<Value>, DbError> {
         let conditions: Vec<String> = if let Some(obj) = filter.as_object() {
             obj.iter()
-                .map(|(k, v)| {
-                    format!(
-                        "n.`{}` = {}",
-                        k.replace('`', "\\`"),
-                        json_val_to_cypher(v)
-                    )
-                })
+                .map(|(k, v)| format!("n.`{}` = {}", k.replace('`', "\\`"), json_val_to_cypher(v)))
                 .collect()
         } else {
             vec![]
@@ -131,7 +127,8 @@ impl DocumentStore for Neo4jDocumentStore {
             where_clause
         );
 
-        let mut result = self.graph
+        let mut result = self
+            .graph
             .execute(query(&cypher))
             .await
             .map_err(|e| DbError::Query(e.to_string()))?;
@@ -178,11 +175,11 @@ impl DocumentStore for Neo4jDocumentStore {
 /// Convert a `serde_json::Value` to a Cypher literal string.
 fn json_val_to_cypher(v: &Value) -> String {
     match v {
-        Value::Null        => "null".to_string(),
-        Value::Bool(b)     => b.to_string(),
-        Value::Number(n)   => n.to_string(),
-        Value::String(s)   => format!("'{}'", s.replace('\'', "\\'")),
-        Value::Array(_)    => "null".to_string(), // nested arrays not supported inline
-        Value::Object(_)   => "null".to_string(), // nested objects not supported inline
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => format!("'{}'", s.replace('\'', "\\'")),
+        Value::Array(_) => "null".to_string(), // nested arrays not supported inline
+        Value::Object(_) => "null".to_string(), // nested objects not supported inline
     }
 }

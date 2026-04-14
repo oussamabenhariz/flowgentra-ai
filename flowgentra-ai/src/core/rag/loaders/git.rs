@@ -6,10 +6,10 @@
 //! Each file becomes one [`LoadedDocument`] with the file contents as text
 //! and git metadata (branch, last commit hash, author) in the metadata field.
 
+use crate::core::rag::document_loader::{FileType, LoadedDocument};
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use serde_json::json;
-use crate::core::rag::document_loader::{FileType, LoadedDocument};
 
 #[derive(Debug, Clone)]
 pub struct GitLoaderConfig {
@@ -89,7 +89,7 @@ impl GitLoader {
         let files = stdout
             .lines()
             .filter(|f| self.filter_extension(f))
-            .map(|f| PathBuf::from(f))
+            .map(PathBuf::from)
             .collect();
         Ok(files)
     }
@@ -107,7 +107,7 @@ impl GitLoader {
         let files = stdout
             .lines()
             .filter(|f| self.filter_extension(f))
-            .map(|f| PathBuf::from(f))
+            .map(PathBuf::from)
             .collect();
         Ok(files)
     }
@@ -172,17 +172,37 @@ impl GitLoader {
         }))
     }
 
-    fn git_last_commit(&self, root: &Path, file: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    fn git_last_commit(
+        &self,
+        root: &Path,
+        file: &Path,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let out = std::process::Command::new("git")
-            .args(["log", "-1", "--format=%H", "--", file.to_str().unwrap_or("")])
+            .args([
+                "log",
+                "-1",
+                "--format=%H",
+                "--",
+                file.to_str().unwrap_or(""),
+            ])
             .current_dir(root)
             .output()?;
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
-    fn git_last_author(&self, root: &Path, file: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    fn git_last_author(
+        &self,
+        root: &Path,
+        file: &Path,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let out = std::process::Command::new("git")
-            .args(["log", "-1", "--format=%an", "--", file.to_str().unwrap_or("")])
+            .args([
+                "log",
+                "-1",
+                "--format=%an",
+                "--",
+                file.to_str().unwrap_or(""),
+            ])
             .current_dir(root)
             .output()?;
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())

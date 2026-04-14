@@ -41,7 +41,10 @@ fn validate_fetch_url(raw: &str) -> Result<reqwest::Url> {
             // tool calls are not on a latency-critical path).
             std::net::ToSocketAddrs::to_socket_addrs(&(host, 80))
                 .map_err(|e| {
-                    FlowgentraError::ToolError(format!("DNS resolution failed for '{}': {}", host, e))
+                    FlowgentraError::ToolError(format!(
+                        "DNS resolution failed for '{}': {}",
+                        host, e
+                    ))
                 })?
                 .map(|sa| sa.ip())
                 .collect()
@@ -71,7 +74,7 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
                 || v4.is_link_local() // 169.254.0.0/16
                 || v4.is_broadcast()  // 255.255.255.255
                 || v4.is_multicast()  // 224.0.0.0/4
-                || v4.is_unspecified()// 0.0.0.0
+                || v4.is_unspecified() // 0.0.0.0
         }
         std::net::IpAddr::V6(v6) => {
             v6.is_loopback()           // ::1
@@ -136,26 +139,23 @@ impl Tool for FetchTool {
         let status = response.status().as_u16();
 
         // Enforce a body size cap to prevent memory exhaustion
-        let bytes = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            async {
-                let mut buf = Vec::new();
-                let mut byte_stream = response.bytes_stream();
-                while let Some(chunk) = byte_stream.next().await {
-                    let chunk = chunk.map_err(|e| {
-                        FlowgentraError::ToolError(format!("Failed to read response chunk: {}", e))
-                    })?;
-                    if buf.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                        return Err(FlowgentraError::ToolError(format!(
-                            "Response body exceeds {} byte limit",
-                            MAX_RESPONSE_BYTES
-                        )));
-                    }
-                    buf.extend_from_slice(&chunk);
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(timeout), async {
+            let mut buf = Vec::new();
+            let mut byte_stream = response.bytes_stream();
+            while let Some(chunk) = byte_stream.next().await {
+                let chunk = chunk.map_err(|e| {
+                    FlowgentraError::ToolError(format!("Failed to read response chunk: {}", e))
+                })?;
+                if buf.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                    return Err(FlowgentraError::ToolError(format!(
+                        "Response body exceeds {} byte limit",
+                        MAX_RESPONSE_BYTES
+                    )));
                 }
-                Ok::<Vec<u8>, FlowgentraError>(buf)
-            },
-        )
+                buf.extend_from_slice(&chunk);
+            }
+            Ok::<Vec<u8>, FlowgentraError>(buf)
+        })
         .await
         .map_err(|_| FlowgentraError::ToolError("Response read timeout".to_string()))??;
 

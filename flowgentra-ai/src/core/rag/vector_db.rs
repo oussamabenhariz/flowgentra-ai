@@ -372,10 +372,12 @@ impl InMemoryVectorStore {
         match filter {
             FilterExpr::Eq(k, v) => metadata.get(k) == Some(v),
             FilterExpr::Ne(k, v) => metadata.get(k) != Some(v),
-            FilterExpr::Gt(k, v) => Self::cmp_values(metadata.get(k), v)
-                == Some(std::cmp::Ordering::Greater),
-            FilterExpr::Lt(k, v) => Self::cmp_values(metadata.get(k), v)
-                == Some(std::cmp::Ordering::Less),
+            FilterExpr::Gt(k, v) => {
+                Self::cmp_values(metadata.get(k), v) == Some(std::cmp::Ordering::Greater)
+            }
+            FilterExpr::Lt(k, v) => {
+                Self::cmp_values(metadata.get(k), v) == Some(std::cmp::Ordering::Less)
+            }
             FilterExpr::Gte(k, v) => matches!(
                 Self::cmp_values(metadata.get(k), v),
                 Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
@@ -384,16 +386,9 @@ impl InMemoryVectorStore {
                 Self::cmp_values(metadata.get(k), v),
                 Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
             ),
-            FilterExpr::In(k, vs) => metadata
-                .get(k)
-                .map(|v| vs.contains(v))
-                .unwrap_or(false),
-            FilterExpr::And(exprs) => exprs
-                .iter()
-                .all(|e| Self::matches_filter(metadata, e)),
-            FilterExpr::Or(exprs) => exprs
-                .iter()
-                .any(|e| Self::matches_filter(metadata, e)),
+            FilterExpr::In(k, vs) => metadata.get(k).map(|v| vs.contains(v)).unwrap_or(false),
+            FilterExpr::And(exprs) => exprs.iter().all(|e| Self::matches_filter(metadata, e)),
+            FilterExpr::Or(exprs) => exprs.iter().any(|e| Self::matches_filter(metadata, e)),
         }
     }
 
@@ -401,9 +396,7 @@ impl InMemoryVectorStore {
     fn cmp_values(a: Option<&Value>, b: &Value) -> Option<std::cmp::Ordering> {
         let a = a?;
         match (a, b) {
-            (Value::Number(an), Value::Number(bn)) => {
-                an.as_f64()?.partial_cmp(&bn.as_f64()?)
-            }
+            (Value::Number(an), Value::Number(bn)) => an.as_f64()?.partial_cmp(&bn.as_f64()?),
             (Value::String(as_), Value::String(bs)) => Some(as_.cmp(bs)),
             _ => None,
         }
@@ -542,10 +535,10 @@ impl PineconeStore {
     /// `{"$and": [...]}` / `{"$or": [...]}` for compound expressions.
     fn to_pinecone_filter(f: &FilterExpr) -> Value {
         match f {
-            FilterExpr::Eq(k, v)  => serde_json::json!({ k: { "$eq":  v } }),
-            FilterExpr::Ne(k, v)  => serde_json::json!({ k: { "$ne":  v } }),
-            FilterExpr::Gt(k, v)  => serde_json::json!({ k: { "$gt":  v } }),
-            FilterExpr::Lt(k, v)  => serde_json::json!({ k: { "$lt":  v } }),
+            FilterExpr::Eq(k, v) => serde_json::json!({ k: { "$eq":  v } }),
+            FilterExpr::Ne(k, v) => serde_json::json!({ k: { "$ne":  v } }),
+            FilterExpr::Gt(k, v) => serde_json::json!({ k: { "$gt":  v } }),
+            FilterExpr::Lt(k, v) => serde_json::json!({ k: { "$lt":  v } }),
             FilterExpr::Gte(k, v) => serde_json::json!({ k: { "$gte": v } }),
             FilterExpr::Lte(k, v) => serde_json::json!({ k: { "$lte": v } }),
             FilterExpr::In(k, vs) => serde_json::json!({ k: { "$in":  vs } }),
@@ -861,10 +854,10 @@ impl QdrantStore {
     /// Build a single Qdrant condition object (leaf or nested).
     fn qdrant_condition(f: &FilterExpr) -> Value {
         match f {
-            FilterExpr::Eq(k, v)  => serde_json::json!({ "key": k, "match":  { "value": v } }),
-            FilterExpr::Ne(k, v)  => serde_json::json!({ "key": k, "match":  { "except": [v] } }),
-            FilterExpr::Gt(k, v)  => serde_json::json!({ "key": k, "range":  { "gt":  v } }),
-            FilterExpr::Lt(k, v)  => serde_json::json!({ "key": k, "range":  { "lt":  v } }),
+            FilterExpr::Eq(k, v) => serde_json::json!({ "key": k, "match":  { "value": v } }),
+            FilterExpr::Ne(k, v) => serde_json::json!({ "key": k, "match":  { "except": [v] } }),
+            FilterExpr::Gt(k, v) => serde_json::json!({ "key": k, "range":  { "gt":  v } }),
+            FilterExpr::Lt(k, v) => serde_json::json!({ "key": k, "range":  { "lt":  v } }),
             FilterExpr::Gte(k, v) => serde_json::json!({ "key": k, "range":  { "gte": v } }),
             FilterExpr::Lte(k, v) => serde_json::json!({ "key": k, "range":  { "lte": v } }),
             FilterExpr::In(k, vs) => serde_json::json!({ "key": k, "match":  { "any":  vs } }),

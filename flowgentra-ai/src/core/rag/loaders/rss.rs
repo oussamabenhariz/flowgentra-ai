@@ -3,9 +3,9 @@
 //! Parses RSS 2.0 and Atom feed XML. Each `<item>` / `<entry>` becomes one
 //! [`LoadedDocument`] with title + description as its text.
 
-use std::collections::HashMap;
-use serde_json::json;
 use crate::core::rag::document_loader::{FileType, LoadedDocument};
+use serde_json::json;
+use std::collections::HashMap;
 
 pub struct RssFeedLoader {
     feed_url: String,
@@ -14,7 +14,10 @@ pub struct RssFeedLoader {
 
 impl RssFeedLoader {
     pub fn new(feed_url: impl Into<String>) -> Self {
-        Self { feed_url: feed_url.into(), max_items: None }
+        Self {
+            feed_url: feed_url.into(),
+            max_items: None,
+        }
     }
 
     pub fn with_max_items(mut self, n: usize) -> Self {
@@ -24,9 +27,13 @@ impl RssFeedLoader {
 
     pub async fn load(&self) -> Result<Vec<LoadedDocument>, Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
-        let xml = client.get(&self.feed_url)
+        let xml = client
+            .get(&self.feed_url)
             .header("User-Agent", "flowgentra-ai/1.0")
-            .send().await?.text().await?;
+            .send()
+            .await?
+            .text()
+            .await?;
 
         // Support both RSS (<item>) and Atom (<entry>)
         let separator = if xml.contains("<item>") || xml.contains("<item ") {
@@ -47,10 +54,10 @@ impl RssFeedLoader {
                 .or_else(|| extract_cdata_or_tag(part, "published"))
                 .unwrap_or_default();
 
-            let text = strip_html(
-                &format!("{}: {}", title.trim(), description.trim())
-            );
-            if text.trim().is_empty() { continue; }
+            let text = strip_html(&format!("{}: {}", title.trim(), description.trim()));
+            if text.trim().is_empty() {
+                continue;
+            }
 
             let mut metadata = HashMap::new();
             metadata.insert("source".to_string(), json!("rss"));
@@ -68,7 +75,9 @@ impl RssFeedLoader {
             });
 
             if let Some(max) = self.max_items {
-                if docs.len() >= max { break; }
+                if docs.len() >= max {
+                    break;
+                }
             }
         }
         Ok(docs)
@@ -104,6 +113,11 @@ fn strip_html(html: &str) -> String {
             _ => {}
         }
     }
-    out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ")
-        .split_whitespace().collect::<Vec<_>>().join(" ")
+    out.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }

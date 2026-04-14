@@ -412,20 +412,14 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         // until GraphCompleted or GraphFailed is received.
         let mut bcast_rx = broadcaster.subscribe();
         tokio::spawn(async move {
-            loop {
-                match bcast_rx.recv().await {
-                    Ok(event) => {
-                        let is_terminal = matches!(
-                            &event,
-                            ExecutionEvent::GraphCompleted { .. }
-                                | ExecutionEvent::GraphFailed { .. }
-                        );
-                        let _ = tx.send(event);
-                        if is_terminal {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            while let Ok(event) = bcast_rx.recv().await {
+                let is_terminal = matches!(
+                    &event,
+                    ExecutionEvent::GraphCompleted { .. } | ExecutionEvent::GraphFailed { .. }
+                );
+                let _ = tx.send(event);
+                if is_terminal {
+                    break;
                 }
             }
         });

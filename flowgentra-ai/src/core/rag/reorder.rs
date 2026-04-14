@@ -19,10 +19,11 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use flowgentra_ai::core::rag::reorder::{reorder_for_long_context, ReorderStrategy};
 //!
 //! // results already sorted by score descending
+//! # let results = vec![];
 //! let reordered = reorder_for_long_context(results, ReorderStrategy::LostInTheMiddle);
 //! ```
 
@@ -76,9 +77,9 @@ fn lost_in_the_middle(results: Vec<SearchResult>) -> Vec<SearchResult> {
     let n = results.len();
     let mut reordered = vec![None::<SearchResult>; n];
 
-    let mut left = 0;      // fills from start
+    let mut left = 0; // fills from start
     let mut right = n - 1; // fills from end
-    let mut i = 0;         // index into original sorted list
+    let mut i = 0; // index into original sorted list
 
     // Alternate: even indices go to start, odd indices go to end
     while i < n {
@@ -87,9 +88,7 @@ fn lost_in_the_middle(results: Vec<SearchResult>) -> Vec<SearchResult> {
             left += 1;
         } else {
             reordered[right] = Some(results[i].clone());
-            if right > 0 {
-                right -= 1;
-            }
+            right = right.saturating_sub(1);
         }
         i += 1;
     }

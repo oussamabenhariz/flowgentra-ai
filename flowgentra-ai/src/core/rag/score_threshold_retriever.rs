@@ -41,8 +41,9 @@ impl AsyncRetriever for ScoreThresholdRetriever {
 mod tests {
     use super::*;
     use crate::core::rag::{
-        embeddings::Embeddings, ensemble_retriever::VectorRetriever,
-        vector_db::{Document, InMemoryVectorStore},
+        embeddings::Embeddings,
+        ensemble_retriever::VectorRetriever,
+        vector_db::{Document, InMemoryVectorStore, VectorStoreBackend},
     };
     use std::{collections::HashMap, sync::Arc};
 

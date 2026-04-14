@@ -60,14 +60,21 @@ pub struct EmbeddingsFilter {
 
 impl EmbeddingsFilter {
     pub fn new(embeddings: Arc<Embeddings>, threshold: f32) -> Self {
-        Self { embeddings, threshold }
+        Self {
+            embeddings,
+            threshold,
+        }
     }
 
     fn cosine(a: &[f32], b: &[f32]) -> f32 {
         let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm_a == 0.0 || norm_b == 0.0 { 0.0 } else { dot / (norm_a * norm_b) }
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            dot / (norm_a * norm_b)
+        }
     }
 }
 
@@ -253,9 +260,9 @@ impl AsyncRetriever for ContextualCompressionRetriever {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::rag::{embeddings::Embeddings, vector_db::InMemoryVectorStore};
     use crate::core::rag::ensemble_retriever::VectorRetriever;
-    use crate::core::rag::vector_db::Document;
+    use crate::core::rag::vector_db::{Document, VectorStoreBackend};
+    use crate::core::rag::{embeddings::Embeddings, vector_db::InMemoryVectorStore};
     use std::collections::HashMap;
 
     #[tokio::test]

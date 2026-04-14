@@ -67,7 +67,8 @@ pub trait SqlBackend: Send + Sync {
 
     /// Return a few sample rows for a table as JSON.
     async fn sample_rows(&self, table: &str, n: usize) -> SqlResult<Vec<HashMap<String, Value>>> {
-        self.query(&format!("SELECT * FROM {table} LIMIT {n}")).await
+        self.query(&format!("SELECT * FROM {table} LIMIT {n}"))
+            .await
     }
 }
 
@@ -132,7 +133,10 @@ impl SqlDatabaseWrapper {
         let mut parts = Vec::new();
         for &table in tables {
             let ddl = self.backend.table_ddl(table).await?;
-            let samples = self.backend.sample_rows(table, self.sample_rows_in_table_info).await?;
+            let samples = self
+                .backend
+                .sample_rows(table, self.sample_rows_in_table_info)
+                .await?;
             let sample_str = if samples.is_empty() {
                 "(no rows)".to_string()
             } else {
@@ -141,11 +145,7 @@ impl SqlDatabaseWrapper {
                 for row in &samples {
                     let vals: Vec<_> = headers
                         .iter()
-                        .map(|h| {
-                            row.get(h)
-                                .map(|v| v.to_string())
-                                .unwrap_or_default()
-                        })
+                        .map(|h| row.get(h).map(|v| v.to_string()).unwrap_or_default())
                         .collect();
                     lines.push(vals.join(" | "));
                 }
@@ -268,6 +268,7 @@ impl QuerySQLDatabaseTool {
 /// - No semicolons mid-query (SQL injection guard)
 /// - No comments that could hide injections
 pub struct QuerySQLCheckerTool {
+    #[allow(dead_code)]
     db: SqlDatabaseWrapper,
 }
 
@@ -369,10 +370,8 @@ impl SqlDatabaseLoader {
                     .join(" | ")
             };
 
-            let mut metadata: HashMap<String, Value> = row
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            let mut metadata: HashMap<String, Value> =
+                row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             metadata.insert("row_index".to_string(), json!(i));
             metadata.insert("source_query".to_string(), json!(self.query));
 
@@ -419,7 +418,7 @@ pub mod sqlite_backend {
         }
 
         async fn query(&self, sql: &str) -> SqlResult<Vec<HashMap<String, Value>>> {
-            use sqlx::Row;
+            use sqlx::{Column, Row};
             let rows = sqlx::query(sql)
                 .fetch_all(&self.pool)
                 .await
@@ -428,7 +427,8 @@ pub mod sqlite_backend {
             for row in rows {
                 let mut map = HashMap::new();
                 for col in row.columns() {
-                    let val: Value = row.try_get_raw(col.ordinal())
+                    let val: Value = row
+                        .try_get_raw(col.ordinal())
                         .map(|raw| {
                             if let Ok(s) = row.try_get::<String, _>(col.ordinal()) {
                                 json!(s)
@@ -462,13 +462,12 @@ pub mod sqlite_backend {
         }
 
         async fn table_ddl(&self, table: &str) -> SqlResult<String> {
-            let row: Option<(String,)> = sqlx::query_as(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?",
-            )
-            .bind(table)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| SqlDbError::Schema(e.to_string()))?;
+            let row: Option<(String,)> =
+                sqlx::query_as("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?")
+                    .bind(table)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(|e| SqlDbError::Schema(e.to_string()))?;
             Ok(row.map(|(s,)| s).unwrap_or_default())
         }
     }
@@ -511,7 +510,7 @@ pub mod postgres_backend {
         }
 
         async fn query(&self, sql: &str) -> SqlResult<Vec<HashMap<String, Value>>> {
-            use sqlx::Row;
+            use sqlx::{Column, Row};
             let rows = sqlx::query(sql)
                 .fetch_all(&self.pool)
                 .await
@@ -568,7 +567,10 @@ pub mod postgres_backend {
                     format!("  {name} {dtype}{null_str}")
                 })
                 .collect();
-            Ok(format!("CREATE TABLE {table} (\n{}\n)", col_defs.join(",\n")))
+            Ok(format!(
+                "CREATE TABLE {table} (\n{}\n)",
+                col_defs.join(",\n")
+            ))
         }
     }
 
@@ -586,12 +588,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_wrapper_and_tools() {
-        let wrapper =
-            sqlite_backend::sqlite_wrapper("sqlite::memory:").await.unwrap();
+        let wrapper = sqlite_backend::sqlite_wrapper("sqlite::memory:")
+            .await
+            .unwrap();
 
-        wrapper.execute("CREATE TABLE users (id INTEGER, name TEXT)").await.unwrap();
-        wrapper.execute("INSERT INTO users VALUES (1, 'Alice')").await.unwrap();
-        wrapper.execute("INSERT INTO users VALUES (2, 'Bob')").await.unwrap();
+        wrapper
+            .execute("CREATE TABLE users (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        wrapper
+            .execute("INSERT INTO users VALUES (1, 'Alice')")
+            .await
+            .unwrap();
+        wrapper
+            .execute("INSERT INTO users VALUES (2, 'Bob')")
+            .await
+            .unwrap();
 
         let tables = wrapper.get_usable_table_names().await.unwrap();
         assert!(tables.contains(&"users".to_string()));
@@ -605,8 +617,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sql_checker_rejects_dml() {
-        let wrapper =
-            sqlite_backend::sqlite_wrapper("sqlite::memory:").await.unwrap();
+        let wrapper = sqlite_backend::sqlite_wrapper("sqlite::memory:")
+            .await
+            .unwrap();
         let checker = QuerySQLCheckerTool::new(wrapper);
         let out = checker.run("DROP TABLE users").await.unwrap();
         assert!(out.starts_with("ERROR"));
@@ -614,10 +627,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_loader() {
-        let wrapper =
-            sqlite_backend::sqlite_wrapper("sqlite::memory:").await.unwrap();
-        wrapper.execute("CREATE TABLE items (id INTEGER, label TEXT)").await.unwrap();
-        wrapper.execute("INSERT INTO items VALUES (1, 'foo')").await.unwrap();
+        let wrapper = sqlite_backend::sqlite_wrapper("sqlite::memory:")
+            .await
+            .unwrap();
+        wrapper
+            .execute("CREATE TABLE items (id INTEGER, label TEXT)")
+            .await
+            .unwrap();
+        wrapper
+            .execute("INSERT INTO items VALUES (1, 'foo')")
+            .await
+            .unwrap();
         let loader = SqlDatabaseLoader::from_table(wrapper, "items");
         let docs = loader.load().await.unwrap();
         assert_eq!(docs.len(), 1);

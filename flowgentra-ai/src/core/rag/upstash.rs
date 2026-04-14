@@ -21,7 +21,10 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use super::vector_db::{Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError};
+use super::filter::FilterExpr;
+use super::vector_db::{
+    Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError,
+};
 
 /// Configuration for [`UpstashVectorStore`].
 #[derive(Debug, Clone)]
@@ -40,7 +43,10 @@ pub struct UpstashVectorStore {
 
 impl UpstashVectorStore {
     pub fn new(config: UpstashVectorConfig) -> Self {
-        Self { client: reqwest::Client::new(), config }
+        Self {
+            client: reqwest::Client::new(),
+            config,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -58,7 +64,7 @@ impl UpstashVectorStore {
         ctx: &str,
     ) -> Result<Value, VectorStoreError> {
         let resp = self
-            .auth(self.client.post(&self.url(path)))
+            .auth(self.client.post(self.url(path)))
             .json(body)
             .send()
             .await
@@ -116,25 +122,30 @@ impl VectorStoreBackend for UpstashVectorStore {
             .unwrap_or(&empty)
             .iter()
             .filter_map(|item| {
-                let id    = item["id"].as_str()?.to_string();
+                let id = item["id"].as_str()?.to_string();
                 let score = item["score"].as_f64()? as f32;
-                let meta  = item["metadata"].as_object().cloned().unwrap_or_default();
-                let text  = meta.get("__text__")
+                let meta = item["metadata"].as_object().cloned().unwrap_or_default();
+                let text = meta
+                    .get("__text__")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let metadata: HashMap<String, Value> = meta
-                    .into_iter()
-                    .filter(|(k, _)| k != "__text__")
-                    .collect();
-                Some(SearchResult { id, text, score, metadata })
+                let metadata: HashMap<String, Value> =
+                    meta.into_iter().filter(|(k, _)| k != "__text__").collect();
+                Some(SearchResult {
+                    id,
+                    text,
+                    score,
+                    metadata,
+                })
             })
             .collect();
         Ok(results)
     }
 
     async fn delete(&self, doc_id: &str) -> Result<(), VectorStoreError> {
-        self.post("/delete", &json!({ "ids": [doc_id] }), "Upstash delete").await?;
+        self.post("/delete", &json!({ "ids": [doc_id] }), "Upstash delete")
+            .await?;
         Ok(())
     }
 
@@ -144,7 +155,11 @@ impl VectorStoreBackend for UpstashVectorStore {
 
     async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
         let data = self
-            .post("/fetch", &json!({ "ids": [doc_id], "includeMetadata": true }), "Upstash fetch")
+            .post(
+                "/fetch",
+                &json!({ "ids": [doc_id], "includeMetadata": true }),
+                "Upstash fetch",
+            )
             .await?;
         let empty = vec![];
         let item = data["result"]
@@ -155,12 +170,24 @@ impl VectorStoreBackend for UpstashVectorStore {
             .ok_or_else(|| VectorStoreError::NotFound(doc_id.to_string()))?;
 
         let meta = item["metadata"].as_object().cloned().unwrap_or_default();
-        let text = meta.get("__text__").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let metadata: HashMap<String, Value> = meta.into_iter().filter(|(k, _)| k != "__text__").collect();
-        Ok(Document { id: doc_id.to_string(), text, embedding: None, metadata })
+        let text = meta
+            .get("__text__")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let metadata: HashMap<String, Value> =
+            meta.into_iter().filter(|(k, _)| k != "__text__").collect();
+        Ok(Document {
+            id: doc_id.to_string(),
+            text,
+            embedding: None,
+            metadata,
+        })
     }
 
-    fn supports_list(&self) -> bool { false }
+    fn supports_list(&self) -> bool {
+        false
+    }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
         Err(VectorStoreError::NotImplemented(
@@ -177,21 +204,27 @@ impl VectorStoreBackend for UpstashVectorStore {
 /// Convert a `FilterExpr` to an Upstash filter string.
 /// Upstash uses SQL-like filter syntax: `field = 'value' AND field2 > 5`.
 fn upstash_filter(f: &FilterExpr) -> String {
-    use super::filter::FilterExpr as F;
     match f {
-        F::Eq(k, v)  => format!("{} = {}",  k, upstash_val(v)),
-        F::Ne(k, v)  => format!("{} != {}", k, upstash_val(v)),
-        F::Gt(k, v)  => format!("{} > {}",  k, upstash_val(v)),
-        F::Lt(k, v)  => format!("{} < {}",  k, upstash_val(v)),
-        F::Gte(k, v) => format!("{} >= {}", k, upstash_val(v)),
-        F::Lte(k, v) => format!("{} <= {}", k, upstash_val(v)),
-        F::In(k, vs) => {
+        FilterExpr::Eq(k, v) => format!("{} = {}", k, upstash_val(v)),
+        FilterExpr::Ne(k, v) => format!("{} != {}", k, upstash_val(v)),
+        FilterExpr::Gt(k, v) => format!("{} > {}", k, upstash_val(v)),
+        FilterExpr::Lt(k, v) => format!("{} < {}", k, upstash_val(v)),
+        FilterExpr::Gte(k, v) => format!("{} >= {}", k, upstash_val(v)),
+        FilterExpr::Lte(k, v) => format!("{} <= {}", k, upstash_val(v)),
+        FilterExpr::In(k, vs) => {
             let vals: Vec<String> = vs.iter().map(upstash_val).collect();
             format!("{} IN ({})", k, vals.join(", "))
         }
-        F::And(exprs) => exprs.iter().map(upstash_filter).collect::<Vec<_>>().join(" AND "),
-        F::Or(exprs)  => {
-            let parts: Vec<String> = exprs.iter().map(|e| format!("({})", upstash_filter(e))).collect();
+        FilterExpr::And(exprs) => exprs
+            .iter()
+            .map(upstash_filter)
+            .collect::<Vec<_>>()
+            .join(" AND "),
+        FilterExpr::Or(exprs) => {
+            let parts: Vec<String> = exprs
+                .iter()
+                .map(|e| format!("({})", upstash_filter(e)))
+                .collect();
             parts.join(" OR ")
         }
     }
@@ -201,7 +234,7 @@ fn upstash_val(v: &Value) -> String {
     match v {
         Value::String(s) => format!("'{}'", s.replace('\'', "\\'")),
         Value::Number(n) => n.to_string(),
-        Value::Bool(b)   => b.to_string(),
-        _                => format!("'{}'", v),
+        Value::Bool(b) => b.to_string(),
+        _ => format!("'{}'", v),
     }
 }

@@ -54,7 +54,10 @@ pub struct BigQueryDatabase {
 
 impl BigQueryDatabase {
     pub fn new(config: BigQueryConfig) -> Self {
-        Self { client: reqwest::Client::new(), config }
+        Self {
+            client: reqwest::Client::new(),
+            config,
+        }
     }
 
     fn query_url(&self) -> String {
@@ -80,13 +83,18 @@ impl BigQueryDatabase {
         match raw {
             None | Some("") => Value::Null,
             Some(s) => match type_name {
-                "INTEGER" | "INT64"  => s.parse::<i64>().map(|n| Value::Number(n.into())).unwrap_or(Value::Null),
-                "FLOAT"   | "FLOAT64"=> s.parse::<f64>().ok()
+                "INTEGER" | "INT64" => s
+                    .parse::<i64>()
+                    .map(|n| Value::Number(n.into()))
+                    .unwrap_or(Value::Null),
+                "FLOAT" | "FLOAT64" => s
+                    .parse::<f64>()
+                    .ok()
                     .and_then(|f| serde_json::Number::from_f64(f).map(Value::Number))
                     .unwrap_or(Value::Null),
-                "BOOLEAN" | "BOOL"   => Value::Bool(s == "true"),
-                "JSON"               => serde_json::from_str(s).unwrap_or(Value::String(s.to_string())),
-                _                    => Value::String(s.to_string()),
+                "BOOLEAN" | "BOOL" => Value::Bool(s == "true"),
+                "JSON" => serde_json::from_str(s).unwrap_or(Value::String(s.to_string())),
+                _ => Value::String(s.to_string()),
             },
         }
     }
@@ -114,7 +122,9 @@ impl BigQueryDatabase {
             return Err(DbError::Query(format!("BigQuery error: {text}")));
         }
 
-        let data: Value = resp.json().await
+        let data: Value = resp
+            .json()
+            .await
             .map_err(|e| DbError::Serialization(e.to_string()))?;
 
         // Handle async jobs (jobComplete = false)
@@ -133,10 +143,14 @@ impl BigQueryDatabase {
         );
         for _ in 0..30 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            let resp = self.auth(self.client.get(&results_url))
-                .send().await
+            let resp = self
+                .auth(self.client.get(&results_url))
+                .send()
+                .await
                 .map_err(|e| DbError::Connection(e.to_string()))?;
-            let data: Value = resp.json().await
+            let data: Value = resp
+                .json()
+                .await
                 .map_err(|e| DbError::Serialization(e.to_string()))?;
             if data["jobComplete"].as_bool() == Some(true) {
                 return Ok(parse_query_response(&data));

@@ -72,10 +72,7 @@ impl MultiQueryRetriever {
     }
 
     /// Call the LLM to generate `n` alternative phrasings of `query`.
-    async fn generate_queries(
-        &self,
-        query: &str,
-    ) -> Result<Vec<String>, VectorStoreError> {
+    async fn generate_queries(&self, query: &str) -> Result<Vec<String>, VectorStoreError> {
         let prompt = format!(
             "You are a helpful assistant that generates multiple search queries based on \
              a single input query. Your task is to generate {} different versions of the \

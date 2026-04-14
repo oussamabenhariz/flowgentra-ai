@@ -180,5 +180,5 @@ pub fn resolve_env_vars(s: &str) -> String {
 
 /// Apply `resolve_env_vars` to an `Option<String>`.
 pub fn resolve_opt(opt: Option<&str>) -> Option<String> {
-    opt.map(|s| resolve_env_vars(s))
+    opt.map(resolve_env_vars)
 }

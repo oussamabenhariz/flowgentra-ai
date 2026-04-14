@@ -22,11 +22,7 @@ use super::embeddings::{EmbeddingError, EmbeddingsProvider};
 
 // ── helper ────────────────────────────────────────────────────────────────────
 
-async fn post_json(
-    url: &str,
-    bearer: &str,
-    body: Value,
-) -> Result<Value, EmbeddingError> {
+async fn post_json(url: &str, bearer: &str, body: Value) -> Result<Value, EmbeddingError> {
     let client = reqwest::Client::new();
     let resp = client
         .post(url)
@@ -38,12 +34,19 @@ async fn post_json(
         .map_err(|e| EmbeddingError::Network(e.to_string()))?;
     resp.json::<Value>()
         .await
-        .map_err(|e| EmbeddingError::ApiError { status: 0, message: e.to_string() })
+        .map_err(|e| EmbeddingError::ApiError {
+            status: 0,
+            message: e.to_string(),
+        })
 }
 
 fn extract_float_array(val: &Value) -> Vec<f32> {
     val.as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -102,7 +105,7 @@ impl EmbeddingsProvider for CohereEmbeddings {
         .await?;
         Ok(resp["embeddings"]
             .as_array()
-            .map(|arr| arr.iter().map(|e| extract_float_array(e)).collect())
+            .map(|arr| arr.iter().map(extract_float_array).collect())
             .unwrap_or_default())
     }
 
@@ -148,25 +151,18 @@ impl AzureOpenAIEmbeddings {
 #[async_trait]
 impl EmbeddingsProvider for AzureOpenAIEmbeddings {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
-        let resp = post_json(
-            &self.url(),
-            &self.api_key,
-            json!({ "input": text }),
-        )
-        .await?;
+        let resp = post_json(&self.url(), &self.api_key, json!({ "input": text })).await?;
         Ok(extract_float_array(&resp["data"][0]["embedding"]))
     }
 
     async fn embed_batch(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>, EmbeddingError> {
-        let resp = post_json(
-            &self.url(),
-            &self.api_key,
-            json!({ "input": texts }),
-        )
-        .await?;
+        let resp = post_json(&self.url(), &self.api_key, json!({ "input": texts })).await?;
         let mut items = resp["data"].as_array().cloned().unwrap_or_default();
         items.sort_by_key(|v| v["index"].as_u64().unwrap_or(0));
-        Ok(items.iter().map(|v| extract_float_array(&v["embedding"])).collect())
+        Ok(items
+            .iter()
+            .map(|v| extract_float_array(&v["embedding"]))
+            .collect())
     }
 
     fn get_dimension(&self) -> usize {
@@ -208,10 +204,7 @@ impl EmbeddingsProvider for GoogleVertexEmbeddings {
     }
 
     async fn embed_batch(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>, EmbeddingError> {
-        let instances: Vec<Value> = texts
-            .iter()
-            .map(|t| json!({ "content": t }))
-            .collect();
+        let instances: Vec<Value> = texts.iter().map(|t| json!({ "content": t })).collect();
         let resp = post_json(
             &self.endpoint,
             &self.access_token,
@@ -280,7 +273,10 @@ impl BedrockEmbeddings {
             .map_err(|e| EmbeddingError::Network(e.to_string()))?;
         resp.json::<Value>()
             .await
-            .map_err(|e| EmbeddingError::ApiError { status: 0, message: e.to_string() })
+            .map_err(|e| EmbeddingError::ApiError {
+                status: 0,
+                message: e.to_string(),
+            })
     }
 }
 
@@ -349,7 +345,12 @@ impl EmbeddingsProvider for VoyageEmbeddings {
         if let Some(t) = &self.input_type {
             body["input_type"] = json!(t);
         }
-        let resp = post_json("https://api.voyageai.com/v1/embeddings", &self.api_key, body).await?;
+        let resp = post_json(
+            "https://api.voyageai.com/v1/embeddings",
+            &self.api_key,
+            body,
+        )
+        .await?;
         Ok(extract_float_array(&resp["data"][0]["embedding"]))
     }
 
@@ -361,10 +362,18 @@ impl EmbeddingsProvider for VoyageEmbeddings {
         if let Some(t) = &self.input_type {
             body["input_type"] = json!(t);
         }
-        let resp = post_json("https://api.voyageai.com/v1/embeddings", &self.api_key, body).await?;
+        let resp = post_json(
+            "https://api.voyageai.com/v1/embeddings",
+            &self.api_key,
+            body,
+        )
+        .await?;
         let mut items = resp["data"].as_array().cloned().unwrap_or_default();
         items.sort_by_key(|v| v["index"].as_u64().unwrap_or(0));
-        Ok(items.iter().map(|v| extract_float_array(&v["embedding"])).collect())
+        Ok(items
+            .iter()
+            .map(|v| extract_float_array(&v["embedding"]))
+            .collect())
     }
 
     fn get_dimension(&self) -> usize {
@@ -413,7 +422,10 @@ impl EmbeddingsProvider for JinaEmbeddings {
         .await?;
         let mut items = resp["data"].as_array().cloned().unwrap_or_default();
         items.sort_by_key(|v| v["index"].as_u64().unwrap_or(0));
-        Ok(items.iter().map(|v| extract_float_array(&v["embedding"])).collect())
+        Ok(items
+            .iter()
+            .map(|v| extract_float_array(&v["embedding"]))
+            .collect())
     }
 
     fn get_dimension(&self) -> usize {
@@ -516,7 +528,7 @@ impl EmbeddingsProvider for NomicEmbeddings {
         .await?;
         Ok(resp["embeddings"]
             .as_array()
-            .map(|arr| arr.iter().map(|e| extract_float_array(e)).collect())
+            .map(|arr| arr.iter().map(extract_float_array).collect())
             .unwrap_or_default())
     }
 

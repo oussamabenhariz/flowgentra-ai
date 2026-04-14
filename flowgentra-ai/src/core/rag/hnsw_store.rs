@@ -42,7 +42,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::filter::FilterExpr;
-use super::vector_db::{Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError};
+use super::vector_db::{
+    Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError,
+};
 
 // ── Internal stored entry ────────────────────────────────────────────────────
 
@@ -81,16 +83,12 @@ impl HnswVectorStore {
     /// The directory is created if it does not exist.
     pub async fn save_local(&self, dir: impl AsRef<Path>) -> Result<(), VectorStoreError> {
         let dir = dir.as_ref();
-        tokio::fs::create_dir_all(dir).await.map_err(|e| {
-            VectorStoreError::Unknown(format!("Create dir error: {e}"))
-        })?;
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| VectorStoreError::Unknown(format!("Create dir error: {e}")))?;
 
         let path = dir.join("index.json");
-        let entries: Vec<StoredEntry> = self
-            .entries
-            .iter()
-            .map(|kv| kv.value().clone())
-            .collect();
+        let entries: Vec<StoredEntry> = self.entries.iter().map(|kv| kv.value().clone()).collect();
 
         let payload = serde_json::json!({
             "dim": self.dim,
@@ -100,9 +98,9 @@ impl HnswVectorStore {
         let json = serde_json::to_string_pretty(&payload)
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
-        tokio::fs::write(&path, json).await.map_err(|e| {
-            VectorStoreError::Unknown(format!("Write index error: {e}"))
-        })?;
+        tokio::fs::write(&path, json)
+            .await
+            .map_err(|e| VectorStoreError::Unknown(format!("Write index error: {e}")))?;
 
         Ok(())
     }
@@ -110,20 +108,20 @@ impl HnswVectorStore {
     /// Load a previously saved index from `dir/index.json`.
     pub async fn load_local(dir: impl AsRef<Path>) -> Result<Self, VectorStoreError> {
         let path = dir.as_ref().join("index.json");
-        let json = tokio::fs::read_to_string(&path).await.map_err(|e| {
-            VectorStoreError::Unknown(format!("Read index error: {e}"))
-        })?;
+        let json = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(|e| VectorStoreError::Unknown(format!("Read index error: {e}")))?;
 
         let payload: serde_json::Value = serde_json::from_str(&json)
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
         let dim = payload["dim"]
             .as_u64()
-            .ok_or_else(|| VectorStoreError::SerializationError("Missing dim".into()))? as usize;
+            .ok_or_else(|| VectorStoreError::SerializationError("Missing dim".into()))?
+            as usize;
 
-        let raw_entries: Vec<StoredEntry> =
-            serde_json::from_value(payload["entries"].clone())
-                .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
+        let raw_entries: Vec<StoredEntry> = serde_json::from_value(payload["entries"].clone())
+            .map_err(|e| VectorStoreError::SerializationError(e.to_string()))?;
 
         let map: DashMap<String, StoredEntry> = DashMap::new();
         for entry in raw_entries {
@@ -179,10 +177,7 @@ impl HnswVectorStore {
 
     // ── Metadata filter evaluation ───────────────────────────────────────────
 
-    fn matches_filter(
-        metadata: &HashMap<String, serde_json::Value>,
-        filter: &FilterExpr,
-    ) -> bool {
+    fn matches_filter(metadata: &HashMap<String, serde_json::Value>, filter: &FilterExpr) -> bool {
         match filter {
             FilterExpr::Eq(k, v) => metadata.get(k) == Some(v),
             FilterExpr::Ne(k, v) => metadata.get(k) != Some(v),
@@ -197,12 +192,8 @@ impl HnswVectorStore {
                     false
                 }
             }
-            FilterExpr::And(exprs) => exprs
-                .iter()
-                .all(|e| Self::matches_filter(metadata, e)),
-            FilterExpr::Or(exprs) => exprs
-                .iter()
-                .any(|e| Self::matches_filter(metadata, e)),
+            FilterExpr::And(exprs) => exprs.iter().all(|e| Self::matches_filter(metadata, e)),
+            FilterExpr::Or(exprs) => exprs.iter().any(|e| Self::matches_filter(metadata, e)),
         }
     }
 }

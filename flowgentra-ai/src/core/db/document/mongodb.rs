@@ -69,8 +69,7 @@ impl MongoDocumentStore {
 
     /// Convert a [`serde_json::Value`] to a [`BsonDocument`].
     fn json_to_bson(v: Value) -> Result<BsonDocument, DbError> {
-        mongodb::bson::to_document(&v)
-            .map_err(|e| DbError::Serialization(e.to_string()))
+        mongodb::bson::to_document(&v).map_err(|e| DbError::Serialization(e.to_string()))
     }
 
     /// Convert a [`BsonDocument`] to a [`serde_json::Value`].
@@ -107,8 +106,8 @@ impl DocumentStore for MongoDocumentStore {
             .map_err(|e| DbError::Query(e.to_string()))?;
 
         let mut results = Vec::new();
-        use mongodb::error::Result as MongoResult;
         use futures::TryStreamExt;
+        use mongodb::error::Result as MongoResult;
         while let Some(doc) = cursor
             .try_next()
             .await
@@ -139,19 +138,19 @@ impl DocumentStore for MongoDocumentStore {
 
 fn bson_to_json_value(b: Bson) -> Value {
     match b {
-        Bson::Double(f)        => serde_json::Number::from_f64(f)
+        Bson::Double(f) => serde_json::Number::from_f64(f)
             .map(Value::Number)
             .unwrap_or(Value::Null),
-        Bson::String(s)        => Value::String(s),
-        Bson::Array(arr)       => Value::Array(arr.into_iter().map(bson_to_json_value).collect()),
-        Bson::Document(d)      => bson_doc_to_json(d),
-        Bson::Boolean(b)       => Value::Bool(b),
-        Bson::Null             => Value::Null,
-        Bson::Int32(n)         => Value::Number((n as i64).into()),
-        Bson::Int64(n)         => Value::Number(n.into()),
-        Bson::ObjectId(oid)    => Value::String(oid.to_hex()),
-        Bson::DateTime(dt)     => Value::String(dt.to_string()),
-        other                  => Value::String(other.to_string()),
+        Bson::String(s) => Value::String(s),
+        Bson::Array(arr) => Value::Array(arr.into_iter().map(bson_to_json_value).collect()),
+        Bson::Document(d) => bson_doc_to_json(d),
+        Bson::Boolean(b) => Value::Bool(b),
+        Bson::Null => Value::Null,
+        Bson::Int32(n) => Value::Number((n as i64).into()),
+        Bson::Int64(n) => Value::Number(n.into()),
+        Bson::ObjectId(oid) => Value::String(oid.to_hex()),
+        Bson::DateTime(dt) => Value::String(dt.to_string()),
+        other => Value::String(other.to_string()),
     }
 }
 

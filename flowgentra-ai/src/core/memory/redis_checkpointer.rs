@@ -88,8 +88,8 @@ mod inner {
 
                     match (state_json, metadata_json) {
                         (Some(sj), Some(mj)) => {
-                            let state_value: serde_json::Value =
-                                serde_json::from_str(&sj).map_err(|e| {
+                            let state_value: serde_json::Value = serde_json::from_str(&sj)
+                                .map_err(|e| {
                                     FlowgentraError::StateError(format!(
                                         "Deserialize state error: {e}"
                                     ))
@@ -115,10 +115,8 @@ mod inner {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
                     let mut conn = client.lock().await;
-                    let members: Vec<String> = conn
-                        .smembers(Self::THREADS_SET)
-                        .await
-                        .map_err(|e| {
+                    let members: Vec<String> =
+                        conn.smembers(Self::THREADS_SET).await.map_err(|e| {
                             FlowgentraError::StateError(format!("Redis smembers error: {e}"))
                         })?;
                     Ok(members)
@@ -134,9 +132,8 @@ mod inner {
             state: &DynState,
             metadata: &CheckpointMetadata,
         ) -> Result<()> {
-            let state_json = serde_json::to_string(&state.to_value()).map_err(|e| {
-                FlowgentraError::StateError(format!("Serialize state error: {e}"))
-            })?;
+            let state_json = serde_json::to_string(&state.to_value())
+                .map_err(|e| FlowgentraError::StateError(format!("Serialize state error: {e}")))?;
             let metadata_json = serde_json::to_string(metadata).map_err(|e| {
                 FlowgentraError::StateError(format!("Serialize metadata error: {e}"))
             })?;
@@ -155,17 +152,13 @@ mod inner {
                         &[("state", &state_json), ("metadata", &metadata_json)],
                     )
                     .await
-                    .map_err(|e| {
-                        FlowgentraError::StateError(format!("Redis hset error: {e}"))
-                    })?;
+                    .map_err(|e| FlowgentraError::StateError(format!("Redis hset error: {e}")))?;
 
                     // Optionally set TTL
                     if let Some(secs) = ttl {
-                        conn.expire::<_, ()>(&key, secs as i64)
-                            .await
-                            .map_err(|e| {
-                                FlowgentraError::StateError(format!("Redis expire error: {e}"))
-                            })?;
+                        conn.expire::<_, ()>(&key, secs as i64).await.map_err(|e| {
+                            FlowgentraError::StateError(format!("Redis expire error: {e}"))
+                        })?;
                     }
 
                     // Track thread id in the threads set

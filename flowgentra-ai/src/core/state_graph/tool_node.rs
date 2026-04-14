@@ -187,6 +187,7 @@ pub fn create_tool_node(executor: ToolExecutorFn) -> Arc<dyn Node<ToolState>> {
 ///
 /// Routes to `tool_node_name` if the state contains tool calls,
 /// or to `"__end__"` if there are none.
+#[allow(clippy::type_complexity)]
 pub fn tools_condition(
     tool_node_name: &str,
 ) -> Box<dyn Fn(&ToolState) -> Result<String> + Send + Sync> {

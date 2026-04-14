@@ -61,7 +61,10 @@ pub struct ElasticsearchDocumentStore {
 
 impl ElasticsearchDocumentStore {
     pub fn new(config: ElasticsearchDocConfig) -> Self {
-        Self { client: reqwest::Client::new(), config }
+        Self {
+            client: reqwest::Client::new(),
+            config,
+        }
     }
 
     fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -98,7 +101,8 @@ impl DocumentStore for ElasticsearchDocumentStore {
     /// otherwise a UUID v4 is generated. The document is stored with `PUT` so
     /// it's idempotent — re-indexing the same ID overwrites the existing doc.
     async fn insert(&self, collection: &str, doc: Value) -> Result<String, DbError> {
-        let id = doc.get("id")
+        let id = doc
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -128,24 +132,21 @@ impl DocumentStore for ElasticsearchDocumentStore {
     /// Add `"size": N` to your filter to change this.
     async fn find(&self, collection: &str, filter: Value) -> Result<Vec<Value>, DbError> {
         // Wrap bare filter objects without a "query" key into match_all + filter.
-        let body = if filter.get("query").is_some() || filter.as_object().map_or(true, |o| o.is_empty()) {
-            if filter.as_object().map_or(false, |o| o.is_empty()) {
-                json!({"query": {"match_all": {}}})
+        let body =
+            if filter.get("query").is_some() || filter.as_object().map_or(true, |o| o.is_empty()) {
+                if filter.as_object().map_or(false, |o| o.is_empty()) {
+                    json!({"query": {"match_all": {}}})
+                } else {
+                    filter
+                }
             } else {
-                filter
-            }
-        } else {
-            // Treat top-level keys as term filters for convenience.
-            let terms: Vec<Value> = filter
-                .as_object()
-                .map(|obj| {
-                    obj.iter()
-                        .map(|(k, v)| json!({"term": {k: v}}))
-                        .collect()
-                })
-                .unwrap_or_default();
-            json!({"query": {"bool": {"must": terms}}})
-        };
+                // Treat top-level keys as term filters for convenience.
+                let terms: Vec<Value> = filter
+                    .as_object()
+                    .map(|obj| obj.iter().map(|(k, v)| json!({"term": {k: v}})).collect())
+                    .unwrap_or_default();
+                json!({"query": {"bool": {"must": terms}}})
+            };
 
         let url = self.search_url(collection);
         let resp = self
@@ -158,16 +159,17 @@ impl DocumentStore for ElasticsearchDocumentStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(DbError::Query(format!("Elasticsearch search error: {text}")));
+            return Err(DbError::Query(format!(
+                "Elasticsearch search error: {text}"
+            )));
         }
 
-        let data: Value = resp.json().await
+        let data: Value = resp
+            .json()
+            .await
             .map_err(|e| DbError::Serialization(e.to_string()))?;
 
-        let hits = data["hits"]["hits"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let hits = data["hits"]["hits"].as_array().cloned().unwrap_or_default();
 
         let docs = hits
             .into_iter()
@@ -175,9 +177,14 @@ impl DocumentStore for ElasticsearchDocumentStore {
                 let mut source = h["_source"].clone();
                 // Inject the ES _id back into the document.
                 if let (Some(id), Some(obj)) = (h["_id"].as_str(), source.as_object_mut()) {
-                    obj.entry("id").or_insert_with(|| Value::String(id.to_string()));
+                    obj.entry("id")
+                        .or_insert_with(|| Value::String(id.to_string()));
                 }
-                if source.is_null() { None } else { Some(source) }
+                if source.is_null() {
+                    None
+                } else {
+                    Some(source)
+                }
             })
             .collect();
 
@@ -196,7 +203,9 @@ impl DocumentStore for ElasticsearchDocumentStore {
         // 404 is acceptable — document was already gone.
         if !resp.status().is_success() && resp.status() != reqwest::StatusCode::NOT_FOUND {
             let text = resp.text().await.unwrap_or_default();
-            return Err(DbError::Query(format!("Elasticsearch delete error: {text}")));
+            return Err(DbError::Query(format!(
+                "Elasticsearch delete error: {text}"
+            )));
         }
         Ok(())
     }

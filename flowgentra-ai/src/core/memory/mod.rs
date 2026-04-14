@@ -6,14 +6,14 @@
 //! Configure via config.yaml under `memory:` or set programmatically with
 //! `agent.with_checkpointer(...)` and `agent.with_conversation_memory(...)`.
 
+pub mod async_checkpointer;
 mod checkpointer;
 mod config;
 mod conversation;
-mod summary;
-mod sqlite_checkpointer;
 mod postgres_checkpointer;
 mod redis_checkpointer;
-pub mod async_checkpointer;
+mod sqlite_checkpointer;
+mod summary;
 
 pub use checkpointer::{
     Checkpoint, CheckpointMetadata, Checkpointer, GenericCheckpointer, MemoryCheckpointer,

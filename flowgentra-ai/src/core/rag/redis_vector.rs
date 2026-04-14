@@ -35,7 +35,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use super::filter::FilterExpr;
-use super::vector_db::{Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError};
+use super::vector_db::{
+    Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError,
+};
 
 /// Configuration for [`RedisVectorStore`].
 #[derive(Debug, Clone)]
@@ -90,7 +92,10 @@ impl RedisVectorStore {
     }
 
     /// Create the RediSearch HNSW index (no-op if it already exists).
-    async fn ensure_index(&self, conn: &mut redis::aio::Connection) -> Result<(), VectorStoreError> {
+    async fn ensure_index(
+        &self,
+        conn: &mut redis::aio::Connection,
+    ) -> Result<(), VectorStoreError> {
         let dim = self.config.embedding_dim;
         let idx = &self.config.index_name;
         let prefix = format!("{}:", self.config.key_prefix);
@@ -98,16 +103,28 @@ impl RedisVectorStore {
         // FT.CREATE idx ON HASH PREFIX 1 "doc:" SCHEMA ...
         let result: redis::RedisResult<()> = redis::cmd("FT.CREATE")
             .arg(idx)
-            .arg("ON").arg("HASH")
-            .arg("PREFIX").arg(1).arg(&prefix)
+            .arg("ON")
+            .arg("HASH")
+            .arg("PREFIX")
+            .arg(1)
+            .arg(&prefix)
             .arg("SCHEMA")
-            .arg("doc_id").arg("TAG")
-            .arg("text").arg("TEXT")
-            .arg("metadata").arg("TEXT")
-            .arg("embedding").arg("VECTOR").arg("HNSW").arg(6)
-                .arg("TYPE").arg("FLOAT32")
-                .arg("DIM").arg(dim)
-                .arg("DISTANCE_METRIC").arg("COSINE")
+            .arg("doc_id")
+            .arg("TAG")
+            .arg("text")
+            .arg("TEXT")
+            .arg("metadata")
+            .arg("TEXT")
+            .arg("embedding")
+            .arg("VECTOR")
+            .arg("HNSW")
+            .arg(6)
+            .arg("TYPE")
+            .arg("FLOAT32")
+            .arg("DIM")
+            .arg(dim)
+            .arg("DISTANCE_METRIC")
+            .arg("COSINE")
             .query_async(conn)
             .await;
 
@@ -123,21 +140,24 @@ impl RedisVectorStore {
     /// Build RediSearch filter expression from a `FilterExpr`.
     fn filter_to_redis(f: &FilterExpr) -> String {
         match f {
-            FilterExpr::Eq(k, v)  => format!("@{}:{{{}}}", k, v.as_str().unwrap_or("")),
-            FilterExpr::Ne(k, v)  => format!("-@{}:{{{}}}", k, v.as_str().unwrap_or("")),
-            FilterExpr::Gt(k, v)  => format!("@{}:[({}+inf]", k, v),
-            FilterExpr::Lt(k, v)  => format!("@{}:[-inf ({}]", k, v),
+            FilterExpr::Eq(k, v) => format!("@{}:{{{}}}", k, v.as_str().unwrap_or("")),
+            FilterExpr::Ne(k, v) => format!("-@{}:{{{}}}", k, v.as_str().unwrap_or("")),
+            FilterExpr::Gt(k, v) => format!("@{}:[({}+inf]", k, v),
+            FilterExpr::Lt(k, v) => format!("@{}:[-inf ({}]", k, v),
             FilterExpr::Gte(k, v) => format!("@{}:[{} +inf]", k, v),
             FilterExpr::Lte(k, v) => format!("@{}:[-inf {}]", k, v),
             FilterExpr::In(k, vs) => {
-                let vals: Vec<String> = vs.iter()
+                let vals: Vec<String> = vs
+                    .iter()
                     .map(|v| v.as_str().unwrap_or("").to_string())
                     .collect();
                 format!("@{}:{{{}}}", k, vals.join("|"))
             }
-            FilterExpr::And(exprs) => {
-                exprs.iter().map(Self::filter_to_redis).collect::<Vec<_>>().join(" ")
-            }
+            FilterExpr::And(exprs) => exprs
+                .iter()
+                .map(Self::filter_to_redis)
+                .collect::<Vec<_>>()
+                .join(" "),
             FilterExpr::Or(exprs) => {
                 let parts: Vec<String> = exprs.iter().map(Self::filter_to_redis).collect();
                 format!("({})", parts.join("|"))
@@ -160,10 +180,14 @@ impl VectorStoreBackend for RedisVectorStore {
 
         redis::cmd("HSET")
             .arg(&key)
-            .arg("doc_id").arg(&doc.id)
-            .arg("text").arg(&doc.text)
-            .arg("metadata").arg(&metadata_json)
-            .arg("embedding").arg(&embedding_bytes)
+            .arg("doc_id")
+            .arg(&doc.id)
+            .arg("text")
+            .arg(&doc.text)
+            .arg("metadata")
+            .arg(&metadata_json)
+            .arg("embedding")
+            .arg(&embedding_bytes)
             .query_async::<_, ()>(&mut conn)
             .await
             .map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
@@ -189,41 +213,67 @@ impl VectorStoreBackend for RedisVectorStore {
             base_filter, top_k
         );
 
-        let raw: Vec<Value> = redis::cmd("FT.SEARCH")
+        let raw: Vec<redis::Value> = redis::cmd("FT.SEARCH")
             .arg(&self.config.index_name)
             .arg(&knn_query)
-            .arg("PARAMS").arg(2).arg("vec").arg(&query_bytes)
-            .arg("SORTBY").arg("__score").arg("ASC")
-            .arg("RETURN").arg(4).arg("doc_id").arg("text").arg("metadata").arg("__score")
-            .arg("DIALECT").arg(2)
+            .arg("PARAMS")
+            .arg(2)
+            .arg("vec")
+            .arg(&query_bytes)
+            .arg("SORTBY")
+            .arg("__score")
+            .arg("ASC")
+            .arg("RETURN")
+            .arg(4)
+            .arg("doc_id")
+            .arg("text")
+            .arg("metadata")
+            .arg("__score")
+            .arg("DIALECT")
+            .arg(2)
             .query_async(&mut conn)
             .await
             .map_err(|e| VectorStoreError::QueryError(e.to_string()))?;
+
+        fn redis_str(v: &redis::Value) -> &str {
+            match v {
+                redis::Value::Data(b) => std::str::from_utf8(b).unwrap_or(""),
+                redis::Value::Status(s) => s.as_str(),
+                _ => "",
+            }
+        }
 
         // FT.SEARCH returns: [total_count, key1, [field, val, ...], key2, ...]
         let mut results = Vec::new();
         let mut i = 1usize; // skip total count
         while i + 1 < raw.len() {
             i += 1; // skip key
-            if let Some(Value::Array(fields)) = raw.get(i) {
+            if let Some(redis::Value::Bulk(fields)) = raw.get(i) {
                 let mut map: HashMap<String, String> = HashMap::new();
                 let mut j = 0;
                 while j + 1 < fields.len() {
-                    let k = fields[j].as_str().unwrap_or("").to_string();
-                    let v = fields[j + 1].as_str().unwrap_or("").to_string();
+                    let k = redis_str(&fields[j]).to_string();
+                    let v = redis_str(&fields[j + 1]).to_string();
                     map.insert(k, v);
                     j += 2;
                 }
                 let id = map.get("doc_id").cloned().unwrap_or_default();
                 let text = map.get("text").cloned().unwrap_or_default();
-                let score: f32 = map.get("__score")
+                let score: f32 = map
+                    .get("__score")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(1.0);
                 let similarity = 1.0 - score; // cosine distance → similarity
-                let metadata: HashMap<String, Value> = map.get("metadata")
+                let metadata: HashMap<String, Value> = map
+                    .get("metadata")
                     .and_then(|s| serde_json::from_str(s).ok())
                     .unwrap_or_default();
-                results.push(SearchResult { id, text, score: similarity, metadata });
+                results.push(SearchResult {
+                    id,
+                    text,
+                    score: similarity,
+                    metadata,
+                });
             }
             i += 1;
         }
@@ -259,7 +309,12 @@ impl VectorStoreBackend for RedisVectorStore {
             .get("metadata")
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
-        Ok(Document { id: doc_id.to_string(), text, embedding: None, metadata })
+        Ok(Document {
+            id: doc_id.to_string(),
+            text,
+            embedding: None,
+            metadata,
+        })
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
@@ -273,18 +328,22 @@ impl VectorStoreBackend for RedisVectorStore {
 
         let mut docs = Vec::new();
         for key in keys {
-            let fields: HashMap<String, String> = conn
-                .hgetall(&key)
-                .await
-                .unwrap_or_default();
-            if fields.is_empty() { continue; }
+            let fields: HashMap<String, String> = conn.hgetall(&key).await.unwrap_or_default();
+            if fields.is_empty() {
+                continue;
+            }
             let id = fields.get("doc_id").cloned().unwrap_or_default();
             let text = fields.get("text").cloned().unwrap_or_default();
             let metadata: HashMap<String, Value> = fields
                 .get("metadata")
                 .and_then(|s| serde_json::from_str(s).ok())
                 .unwrap_or_default();
-            docs.push(Document { id, text, embedding: None, metadata });
+            docs.push(Document {
+                id,
+                text,
+                embedding: None,
+                metadata,
+            });
         }
         Ok(docs)
     }

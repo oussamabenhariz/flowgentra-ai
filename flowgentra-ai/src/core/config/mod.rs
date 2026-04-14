@@ -556,8 +556,12 @@ fn default_collection_name() -> String {
 fn resolve_config_env_vars(s: &str) -> String {
     let mut result = s.to_string();
     loop {
-        let Some(start) = result.find("${") else { break };
-        let Some(rel_end) = result[start..].find('}') else { break };
+        let Some(start) = result.find("${") else {
+            break;
+        };
+        let Some(rel_end) = result[start..].find('}') else {
+            break;
+        };
         let end = start + rel_end;
         let var_name = &result[start + 2..end];
         if let Ok(val) = std::env::var(var_name) {

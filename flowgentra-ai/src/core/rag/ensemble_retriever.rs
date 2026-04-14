@@ -156,14 +156,8 @@ impl EnsembleRetriever {
     ///
     /// `retrievers` is a list of `(retriever, weight)`. Weights are used as
     /// multipliers on each retriever's RRF scores; they do not need to sum to 1.
-    pub fn new(
-        retrievers: Vec<(Box<dyn AsyncRetriever>, f32)>,
-        config: EnsembleConfig,
-    ) -> Self {
-        Self {
-            retrievers,
-            config,
-        }
+    pub fn new(retrievers: Vec<(Box<dyn AsyncRetriever>, f32)>, config: EnsembleConfig) -> Self {
+        Self { retrievers, config }
     }
 
     /// Retrieve and fuse results from all retrievers.
@@ -195,9 +189,9 @@ impl EnsembleRetriever {
 
             for (rank, result) in results.into_iter().enumerate() {
                 let rrf_score = weight / (rrf_k + rank as f32 + 1.0);
-                let entry = scores.entry(result.id.clone()).or_insert_with(|| {
-                    (0.0, result.text.clone(), result.metadata.clone())
-                });
+                let entry = scores
+                    .entry(result.id.clone())
+                    .or_insert_with(|| (0.0, result.text.clone(), result.metadata.clone()));
                 entry.0 += rrf_score;
             }
         }
@@ -229,7 +223,7 @@ impl EnsembleRetriever {
 mod tests {
     use super::*;
     use crate::core::rag::{
-        bm25_retriever::{Bm25Config, Bm25Document},
+        bm25_retriever::Bm25Config,
         embeddings::Embeddings,
         vector_db::{Document, InMemoryVectorStore},
     };
@@ -271,7 +265,10 @@ mod tests {
 
         let ensemble = EnsembleRetriever::new(
             vec![(Box::new(dense), 0.7), (Box::new(sparse), 0.3)],
-            EnsembleConfig { top_k: 4, ..Default::default() },
+            EnsembleConfig {
+                top_k: 4,
+                ..Default::default()
+            },
         );
 
         let results = ensemble.retrieve("rust memory").await.unwrap();

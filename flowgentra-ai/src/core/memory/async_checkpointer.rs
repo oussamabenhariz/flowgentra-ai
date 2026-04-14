@@ -150,10 +150,7 @@ impl AsyncCheckpointer for AsyncMemoryCheckpointer {
 
     async fn list_history(&self, thread_id: &str) -> Result<Vec<CheckpointHistoryEntry>> {
         let guard = self.store.read().await;
-        let mut entries = guard
-            .get(thread_id)
-            .cloned()
-            .unwrap_or_default();
+        let mut entries = guard.get(thread_id).cloned().unwrap_or_default();
         entries.reverse(); // newest first
         Ok(entries)
     }
@@ -203,7 +200,9 @@ impl<C: AsyncCheckpointer + 'static> AsyncCheckpointer for NamespacedCheckpointe
         state: &DynState,
         metadata: &CheckpointMetadata,
     ) -> Result<()> {
-        self.inner.save(&self.scoped_key(thread_id), state, metadata).await
+        self.inner
+            .save(&self.scoped_key(thread_id), state, metadata)
+            .await
     }
 
     async fn load(&self, thread_id: &str) -> Result<Option<Checkpoint>> {
@@ -220,10 +219,7 @@ impl<C: AsyncCheckpointer + 'static> AsyncCheckpointer for NamespacedCheckpointe
     }
 
     async fn list_history(&self, thread_id: &str) -> Result<Vec<CheckpointHistoryEntry>> {
-        let mut entries = self
-            .inner
-            .list_history(&self.scoped_key(thread_id))
-            .await?;
+        let mut entries = self.inner.list_history(&self.scoped_key(thread_id)).await?;
         let prefix = format!("{}:", self.namespace);
         for e in &mut entries {
             e.thread_id = e
@@ -256,9 +252,9 @@ pub mod sqlite_async {
 
     impl AsyncSqliteCheckpointer {
         pub async fn new(url: &str) -> Result<Self> {
-            let pool = SqlitePool::connect(url).await.map_err(|e| {
-                FlowgentraError::StateError(format!("SQLite connect: {e}"))
-            })?;
+            let pool = SqlitePool::connect(url)
+                .await
+                .map_err(|e| FlowgentraError::StateError(format!("SQLite connect: {e}")))?;
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS checkpoints (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -326,19 +322,15 @@ pub mod sqlite_async {
         }
 
         async fn list_threads(&self) -> Result<Vec<String>> {
-            let rows: Vec<(String,)> = sqlx::query_as(
-                "SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| FlowgentraError::StateError(format!("SQLite list: {e}")))?;
+            let rows: Vec<(String,)> =
+                sqlx::query_as("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| FlowgentraError::StateError(format!("SQLite list: {e}")))?;
             Ok(rows.into_iter().map(|(t,)| t).collect())
         }
 
-        async fn list_history(
-            &self,
-            thread_id: &str,
-        ) -> Result<Vec<CheckpointHistoryEntry>> {
+        async fn list_history(&self, thread_id: &str) -> Result<Vec<CheckpointHistoryEntry>> {
             let rows: Vec<(String, String, i64)> = sqlx::query_as(
                 "SELECT state_json, metadata_json, saved_at FROM checkpoints
                  WHERE thread_id = ? ORDER BY id DESC",
@@ -518,11 +510,7 @@ pub mod mongo_async {
     }
 
     impl AsyncMongoCheckpointer {
-        pub async fn new(
-            url: &str,
-            db_name: &str,
-            collection_name: &str,
-        ) -> Result<Self> {
+        pub async fn new(url: &str, db_name: &str, collection_name: &str) -> Result<Self> {
             let client = Client::with_uri_str(url)
                 .await
                 .map_err(|e| FlowgentraError::StateError(format!("Mongo connect: {e}")))?;
@@ -577,12 +565,16 @@ pub mod mongo_async {
                 .await
                 .map_err(|e| FlowgentraError::StateError(format!("Mongo find: {e}")))?;
             use futures::TryStreamExt;
-            if let Some(document) = cursor.try_next().await
+            if let Some(document) = cursor
+                .try_next()
+                .await
                 .map_err(|e| FlowgentraError::StateError(format!("Mongo cursor: {e}")))?
             {
-                let sj = document.get_str("state_json")
+                let sj = document
+                    .get_str("state_json")
                     .map_err(|e| FlowgentraError::StateError(e.to_string()))?;
-                let mj = document.get_str("metadata_json")
+                let mj = document
+                    .get_str("metadata_json")
                     .map_err(|e| FlowgentraError::StateError(e.to_string()))?;
                 let sv: serde_json::Value = serde_json::from_str(sj)
                     .map_err(|e| FlowgentraError::StateError(e.to_string()))?;
@@ -606,13 +598,8 @@ pub mod mongo_async {
                 .collect())
         }
 
-        async fn list_history(
-            &self,
-            thread_id: &str,
-        ) -> Result<Vec<CheckpointHistoryEntry>> {
-            let opts = FindOptions::builder()
-                .sort(doc! { "saved_at": -1 })
-                .build();
+        async fn list_history(&self, thread_id: &str) -> Result<Vec<CheckpointHistoryEntry>> {
+            let opts = FindOptions::builder().sort(doc! { "saved_at": -1 }).build();
             let mut cursor = self
                 .collection
                 .find(doc! { "thread_id": thread_id }, opts)
@@ -620,12 +607,16 @@ pub mod mongo_async {
                 .map_err(|e| FlowgentraError::StateError(format!("Mongo find: {e}")))?;
             use futures::TryStreamExt;
             let mut entries = Vec::new();
-            while let Some(document) = cursor.try_next().await
+            while let Some(document) = cursor
+                .try_next()
+                .await
                 .map_err(|e| FlowgentraError::StateError(format!("Mongo cursor: {e}")))?
             {
-                let sj = document.get_str("state_json")
+                let sj = document
+                    .get_str("state_json")
                     .map_err(|e| FlowgentraError::StateError(e.to_string()))?;
-                let mj = document.get_str("metadata_json")
+                let mj = document
+                    .get_str("metadata_json")
                     .map_err(|e| FlowgentraError::StateError(e.to_string()))?;
                 let ts = document.get_i64("saved_at").unwrap_or(0);
                 let sv: serde_json::Value = serde_json::from_str(sj)
@@ -670,9 +661,9 @@ pub mod mysql_async {
 
     impl AsyncMysqlCheckpointer {
         pub async fn new(url: &str) -> Result<Self> {
-            let pool = MySqlPool::connect(url).await.map_err(|e| {
-                FlowgentraError::StateError(format!("MySQL connect: {e}"))
-            })?;
+            let pool = MySqlPool::connect(url)
+                .await
+                .map_err(|e| FlowgentraError::StateError(format!("MySQL connect: {e}")))?;
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS checkpoints (
                     id            BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -741,19 +732,15 @@ pub mod mysql_async {
         }
 
         async fn list_threads(&self) -> Result<Vec<String>> {
-            let rows: Vec<(String,)> = sqlx::query_as(
-                "SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| FlowgentraError::StateError(format!("MySQL list: {e}")))?;
+            let rows: Vec<(String,)> =
+                sqlx::query_as("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| FlowgentraError::StateError(format!("MySQL list: {e}")))?;
             Ok(rows.into_iter().map(|(t,)| t).collect())
         }
 
-        async fn list_history(
-            &self,
-            thread_id: &str,
-        ) -> Result<Vec<CheckpointHistoryEntry>> {
+        async fn list_history(&self, thread_id: &str) -> Result<Vec<CheckpointHistoryEntry>> {
             let rows: Vec<(String, String, i64)> = sqlx::query_as(
                 "SELECT state_json, metadata_json, saved_at FROM checkpoints
                  WHERE thread_id = ? ORDER BY id DESC",
@@ -807,9 +794,9 @@ pub mod postgres_async {
 
     impl AsyncPostgresCheckpointer {
         pub async fn new(url: &str) -> Result<Self> {
-            let pool = PgPool::connect(url).await.map_err(|e| {
-                FlowgentraError::StateError(format!("Postgres connect: {e}"))
-            })?;
+            let pool = PgPool::connect(url)
+                .await
+                .map_err(|e| FlowgentraError::StateError(format!("Postgres connect: {e}")))?;
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS checkpoints (
                     id            BIGSERIAL PRIMARY KEY,
@@ -822,12 +809,10 @@ pub mod postgres_async {
             .execute(&pool)
             .await
             .map_err(|e| FlowgentraError::StateError(format!("Postgres schema: {e}")))?;
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS cp_thread_idx ON checkpoints(thread_id)",
-            )
-            .execute(&pool)
-            .await
-            .map_err(|e| FlowgentraError::StateError(format!("Postgres index: {e}")))?;
+            sqlx::query("CREATE INDEX IF NOT EXISTS cp_thread_idx ON checkpoints(thread_id)")
+                .execute(&pool)
+                .await
+                .map_err(|e| FlowgentraError::StateError(format!("Postgres index: {e}")))?;
             Ok(Self { pool })
         }
     }
@@ -883,19 +868,15 @@ pub mod postgres_async {
         }
 
         async fn list_threads(&self) -> Result<Vec<String>> {
-            let rows: Vec<(String,)> = sqlx::query_as(
-                "SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| FlowgentraError::StateError(format!("Postgres list: {e}")))?;
+            let rows: Vec<(String,)> =
+                sqlx::query_as("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| FlowgentraError::StateError(format!("Postgres list: {e}")))?;
             Ok(rows.into_iter().map(|(t,)| t).collect())
         }
 
-        async fn list_history(
-            &self,
-            thread_id: &str,
-        ) -> Result<Vec<CheckpointHistoryEntry>> {
+        async fn list_history(&self, thread_id: &str) -> Result<Vec<CheckpointHistoryEntry>> {
             let rows: Vec<(String, String, i64)> = sqlx::query_as(
                 "SELECT state_json, metadata_json, saved_at FROM checkpoints
                  WHERE thread_id = $1 ORDER BY id DESC",

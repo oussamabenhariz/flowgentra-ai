@@ -19,9 +19,9 @@
 //!     .await?;
 //! ```
 
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
-use serde_json::json;
 
 use crate::core::rag::{document_loader::LoadedDocument, vector_db::VectorStoreError};
 
@@ -75,7 +75,10 @@ impl CsvLoader {
     }
 
     /// Load a CSV file and return one document per data row.
-    pub async fn load(&self, path: impl AsRef<Path>) -> Result<Vec<LoadedDocument>, VectorStoreError> {
+    pub async fn load(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Vec<LoadedDocument>, VectorStoreError> {
         let path = path.as_ref();
         let source = path
             .file_name()
@@ -105,9 +108,7 @@ impl CsvLoader {
         };
 
         let mut docs = Vec::new();
-        let mut row_idx: usize = 0;
-
-        for result in reader.records() {
+        for (row_idx, result) in reader.records().enumerate() {
             let record = result.map_err(|e| {
                 VectorStoreError::Unknown(format!("CSV parse error at row {row_idx}: {e}"))
             })?;
@@ -120,7 +121,10 @@ impl CsvLoader {
             metadata.insert("row".to_string(), json!(row_idx));
 
             for (i, val) in cols.iter().enumerate() {
-                let key = headers.get(i).cloned().unwrap_or_else(|| format!("col{}", i));
+                let key = headers
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col{}", i));
                 metadata.insert(key, json!(val));
             }
 
@@ -141,7 +145,10 @@ impl CsvLoader {
                 cols.iter()
                     .enumerate()
                     .map(|(i, v)| {
-                        let h = headers.get(i).cloned().unwrap_or_else(|| format!("col{}", i));
+                        let h = headers
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| format!("col{}", i));
                         format!("{h}: {v}")
                     })
                     .collect::<Vec<_>>()
@@ -152,7 +159,10 @@ impl CsvLoader {
             let id = if let Some(ic) = &self.id_column {
                 let col_idx = headers.iter().position(|h| h == ic);
                 match col_idx {
-                    Some(i) => cols.get(i).cloned().unwrap_or_else(|| format!("{source}_row_{row_idx}")),
+                    Some(i) => cols
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| format!("{source}_row_{row_idx}")),
                     None => format!("{source}_row_{row_idx}"),
                 }
             } else {
@@ -166,8 +176,6 @@ impl CsvLoader {
                 file_type: crate::core::rag::document_loader::FileType::Unknown,
                 metadata,
             });
-
-            row_idx += 1;
         }
 
         Ok(docs)

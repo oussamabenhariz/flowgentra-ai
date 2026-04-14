@@ -34,7 +34,9 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use super::filter::FilterExpr;
-use super::vector_db::{Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError};
+use super::vector_db::{
+    Document, MetadataFilter, SearchResult, VectorStoreBackend, VectorStoreError,
+};
 
 /// Configuration for [`ElasticsearchStore`].
 #[derive(Debug, Clone)]
@@ -98,7 +100,7 @@ impl ElasticsearchStore {
         });
 
         let resp = self
-            .add_auth(self.client.put(&self.url("")))
+            .add_auth(self.client.put(self.url("")))
             .json(&mapping)
             .send()
             .await
@@ -120,24 +122,25 @@ impl ElasticsearchStore {
     /// Convert `FilterExpr` to an Elasticsearch query DSL fragment.
     fn filter_to_es(f: &FilterExpr) -> Value {
         match f {
-            FilterExpr::Eq(k, v) =>
-                json!({ "term": { format!("metadata.{}", k): v } }),
-            FilterExpr::Ne(k, v) =>
-                json!({ "bool": { "must_not": [{ "term": { format!("metadata.{}", k): v } }] } }),
-            FilterExpr::Gt(k, v) =>
-                json!({ "range": { format!("metadata.{}", k): { "gt": v } } }),
-            FilterExpr::Lt(k, v) =>
-                json!({ "range": { format!("metadata.{}", k): { "lt": v } } }),
-            FilterExpr::Gte(k, v) =>
-                json!({ "range": { format!("metadata.{}", k): { "gte": v } } }),
-            FilterExpr::Lte(k, v) =>
-                json!({ "range": { format!("metadata.{}", k): { "lte": v } } }),
-            FilterExpr::In(k, vs) =>
-                json!({ "terms": { format!("metadata.{}", k): vs } }),
-            FilterExpr::And(exprs) =>
-                json!({ "bool": { "must": exprs.iter().map(Self::filter_to_es).collect::<Vec<_>>() } }),
-            FilterExpr::Or(exprs) =>
-                json!({ "bool": { "should": exprs.iter().map(Self::filter_to_es).collect::<Vec<_>>() } }),
+            FilterExpr::Eq(k, v) => json!({ "term": { format!("metadata.{}", k): v } }),
+            FilterExpr::Ne(k, v) => {
+                json!({ "bool": { "must_not": [{ "term": { format!("metadata.{}", k): v } }] } })
+            }
+            FilterExpr::Gt(k, v) => json!({ "range": { format!("metadata.{}", k): { "gt": v } } }),
+            FilterExpr::Lt(k, v) => json!({ "range": { format!("metadata.{}", k): { "lt": v } } }),
+            FilterExpr::Gte(k, v) => {
+                json!({ "range": { format!("metadata.{}", k): { "gte": v } } })
+            }
+            FilterExpr::Lte(k, v) => {
+                json!({ "range": { format!("metadata.{}", k): { "lte": v } } })
+            }
+            FilterExpr::In(k, vs) => json!({ "terms": { format!("metadata.{}", k): vs } }),
+            FilterExpr::And(exprs) => {
+                json!({ "bool": { "must": exprs.iter().map(Self::filter_to_es).collect::<Vec<_>>() } })
+            }
+            FilterExpr::Or(exprs) => {
+                json!({ "bool": { "should": exprs.iter().map(Self::filter_to_es).collect::<Vec<_>>() } })
+            }
         }
     }
 }
@@ -156,7 +159,7 @@ impl VectorStoreBackend for ElasticsearchStore {
         });
 
         let resp = self
-            .add_auth(self.client.put(&self.url(&format!("/_doc/{}", doc.id))))
+            .add_auth(self.client.put(self.url(&format!("/_doc/{}", doc.id))))
             .json(&body)
             .send()
             .await
@@ -164,7 +167,9 @@ impl VectorStoreBackend for ElasticsearchStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("ES index failed: {text}")));
+            return Err(VectorStoreError::ApiError(format!(
+                "ES index failed: {text}"
+            )));
         }
         Ok(())
     }
@@ -191,7 +196,7 @@ impl VectorStoreBackend for ElasticsearchStore {
         }
 
         let resp = self
-            .add_auth(self.client.post(&self.url("/_search")))
+            .add_auth(self.client.post(self.url("/_search")))
             .json(&body)
             .send()
             .await
@@ -199,7 +204,9 @@ impl VectorStoreBackend for ElasticsearchStore {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::QueryError(format!("ES search failed: {text}")));
+            return Err(VectorStoreError::QueryError(format!(
+                "ES search failed: {text}"
+            )));
         }
 
         let data: Value = resp
@@ -218,7 +225,12 @@ impl VectorStoreBackend for ElasticsearchStore {
                 let text = src["text"].as_str().unwrap_or("").to_string();
                 let metadata: HashMap<String, Value> =
                     serde_json::from_value(src["metadata"].clone()).unwrap_or_default();
-                Some(SearchResult { id, text, score, metadata })
+                Some(SearchResult {
+                    id,
+                    text,
+                    score,
+                    metadata,
+                })
             })
             .collect();
         Ok(results)
@@ -226,13 +238,15 @@ impl VectorStoreBackend for ElasticsearchStore {
 
     async fn delete(&self, doc_id: &str) -> Result<(), VectorStoreError> {
         let resp = self
-            .add_auth(self.client.delete(&self.url(&format!("/_doc/{}", doc_id))))
+            .add_auth(self.client.delete(self.url(&format!("/_doc/{}", doc_id))))
             .send()
             .await
             .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
         if !resp.status().is_success() && resp.status().as_u16() != 404 {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("ES delete failed: {text}")));
+            return Err(VectorStoreError::ApiError(format!(
+                "ES delete failed: {text}"
+            )));
         }
         Ok(())
     }
@@ -243,7 +257,7 @@ impl VectorStoreBackend for ElasticsearchStore {
 
     async fn get(&self, doc_id: &str) -> Result<Document, VectorStoreError> {
         let resp = self
-            .add_auth(self.client.get(&self.url(&format!("/_doc/{}", doc_id))))
+            .add_auth(self.client.get(self.url(&format!("/_doc/{}", doc_id))))
             .send()
             .await
             .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
@@ -259,13 +273,19 @@ impl VectorStoreBackend for ElasticsearchStore {
         let text = src["text"].as_str().unwrap_or("").to_string();
         let metadata: HashMap<String, Value> =
             serde_json::from_value(src["metadata"].clone()).unwrap_or_default();
-        Ok(Document { id: doc_id.to_string(), text, embedding: None, metadata })
+        Ok(Document {
+            id: doc_id.to_string(),
+            text,
+            embedding: None,
+            metadata,
+        })
     }
 
     async fn list(&self) -> Result<Vec<Document>, VectorStoreError> {
-        let body = json!({ "query": { "match_all": {} }, "size": 10000, "_source": ["text", "metadata"] });
+        let body =
+            json!({ "query": { "match_all": {} }, "size": 10000, "_source": ["text", "metadata"] });
         let resp = self
-            .add_auth(self.client.post(&self.url("/_search")))
+            .add_auth(self.client.post(self.url("/_search")))
             .json(&body)
             .send()
             .await
@@ -284,7 +304,12 @@ impl VectorStoreBackend for ElasticsearchStore {
                 let text = src["text"].as_str().unwrap_or("").to_string();
                 let metadata: HashMap<String, Value> =
                     serde_json::from_value(src["metadata"].clone()).unwrap_or_default();
-                Some(Document { id, text, embedding: None, metadata })
+                Some(Document {
+                    id,
+                    text,
+                    embedding: None,
+                    metadata,
+                })
             })
             .collect();
         Ok(docs)
@@ -292,14 +317,16 @@ impl VectorStoreBackend for ElasticsearchStore {
 
     async fn clear(&self) -> Result<(), VectorStoreError> {
         let resp = self
-            .add_auth(self.client.post(&self.url("/_delete_by_query")))
+            .add_auth(self.client.post(self.url("/_delete_by_query")))
             .json(&json!({ "query": { "match_all": {} } }))
             .send()
             .await
             .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(VectorStoreError::ApiError(format!("ES clear failed: {text}")));
+            return Err(VectorStoreError::ApiError(format!(
+                "ES clear failed: {text}"
+            )));
         }
         Ok(())
     }

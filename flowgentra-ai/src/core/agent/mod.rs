@@ -962,20 +962,26 @@ fn from_config_path_impl(
                 let arc = handlers_map
                     .get("__builtin_planner__")
                     .cloned()
-                    .ok_or_else(|| FlowgentraError::ConfigError(
-                        "planner node declared but no LLM is configured — \
-                         add an `llm:` section to your agent config".into(),
-                    ))?;
+                    .ok_or_else(|| {
+                        FlowgentraError::ConfigError(
+                            "planner node declared but no LLM is configured — \
+                         add an `llm:` section to your agent config"
+                                .into(),
+                        )
+                    })?;
                 Box::new(move |state| arc(state))
             }
             None if node_config.handler == "builtin::planner" => {
                 let arc = handlers_map
                     .get("__builtin_planner__")
                     .cloned()
-                    .ok_or_else(|| FlowgentraError::ConfigError(
-                        "handler 'builtin::planner' used but no LLM is configured — \
-                         add an `llm:` section to your agent config".into(),
-                    ))?;
+                    .ok_or_else(|| {
+                        FlowgentraError::ConfigError(
+                            "handler 'builtin::planner' used but no LLM is configured — \
+                         add an `llm:` section to your agent config"
+                                .into(),
+                        )
+                    })?;
                 Box::new(move |state| arc(state))
             }
 
@@ -1824,7 +1830,7 @@ fn create_supervisor_handler_with_llm(
             let rhs = parts[1].trim();
             let val = state.get(key);
             if rhs == "null" {
-                return val.map_or(false, |v| !v.is_null());
+                return val.is_some_and(|v| !v.is_null());
             }
             return val
                 .map(|v| v.to_string().trim_matches('"') != rhs)
@@ -1836,7 +1842,7 @@ fn create_supervisor_handler_with_llm(
             let rhs = parts[1].trim();
             let val = state.get(key);
             if rhs == "null" {
-                return val.map_or(true, |v| v.is_null());
+                return val.is_none_or(|v| v.is_null());
             }
             return val
                 .map(|v| v.to_string().trim_matches('"') == rhs)

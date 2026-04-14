@@ -126,11 +126,7 @@ impl TimeWeightedRetriever {
         let mut weighted: Vec<SearchResult> = results
             .iter_mut()
             .map(|r| {
-                let ts = r
-                    .metadata
-                    .get(ts_key)
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
+                let ts = r.metadata.get(ts_key).and_then(|v| v.as_i64()).unwrap_or(0);
                 let decay = self.decay_multiplier(ts);
                 SearchResult {
                     id: r.id.clone(),
@@ -223,7 +219,7 @@ mod tests {
             store,
             embeddings.clone(),
             TimeWeightedConfig {
-                decay_rate: 0.0,          // no decay → scores unchanged
+                decay_rate: 0.0, // no decay → scores unchanged
                 top_k: 2,
                 update_on_access: false,
                 ..Default::default()

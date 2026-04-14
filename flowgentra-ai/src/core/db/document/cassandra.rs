@@ -58,7 +58,10 @@ pub struct CassandraDocumentStore {
 
 impl CassandraDocumentStore {
     pub fn new(config: CassandraConfig) -> Self {
-        Self { client: reqwest::Client::new(), config }
+        Self {
+            client: reqwest::Client::new(),
+            config,
+        }
     }
 
     fn collection_url(&self, collection: &str) -> String {
@@ -86,7 +89,8 @@ impl DocumentStore for CassandraDocumentStore {
     /// If the document has an `"id"` field, that value is used as the
     /// Stargate document ID; otherwise a UUID v4 is generated.
     async fn insert(&self, collection: &str, doc: Value) -> Result<String, DbError> {
-        let id = doc.get("id")
+        let id = doc
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -114,8 +118,8 @@ impl DocumentStore for CassandraDocumentStore {
     /// Returns up to 20 documents per page (Stargate default). For pagination
     /// you'll need to use the Stargate API directly.
     async fn find(&self, collection: &str, filter: Value) -> Result<Vec<Value>, DbError> {
-        let where_str = serde_json::to_string(&filter)
-            .map_err(|e| DbError::Serialization(e.to_string()))?;
+        let where_str =
+            serde_json::to_string(&filter).map_err(|e| DbError::Serialization(e.to_string()))?;
 
         let url = self.collection_url(collection);
         let resp = self
@@ -130,17 +134,15 @@ impl DocumentStore for CassandraDocumentStore {
             return Err(DbError::Query(format!("Cassandra find error: {text}")));
         }
 
-        let data: Value = resp.json().await
+        let data: Value = resp
+            .json()
+            .await
             .map_err(|e| DbError::Serialization(e.to_string()))?;
 
         // Stargate returns {"data": {"<id>": {...}, ...}}
         let docs = data["data"]
             .as_object()
-            .map(|map| {
-                map.values()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>()
-            })
+            .map(|map| map.values().map(|v| v.clone()).collect::<Vec<_>>())
             .unwrap_or_default();
 
         Ok(docs)

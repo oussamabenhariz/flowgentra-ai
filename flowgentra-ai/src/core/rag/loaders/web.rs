@@ -19,8 +19,8 @@
 //! ]).await?;
 //! ```
 
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
 
 use crate::core::rag::{document_loader::LoadedDocument, vector_db::VectorStoreError};
 
@@ -130,10 +130,7 @@ impl WebLoader {
         &self,
         urls: Vec<impl AsRef<str> + Send>,
     ) -> Vec<Result<LoadedDocument, VectorStoreError>> {
-        let futs: Vec<_> = urls
-            .iter()
-            .map(|url| self.load(url.as_ref()))
-            .collect();
+        let futs: Vec<_> = urls.iter().map(|url| self.load(url.as_ref())).collect();
         futures::future::join_all(futs).await
     }
 }

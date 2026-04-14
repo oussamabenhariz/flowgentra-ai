@@ -6,9 +6,9 @@
 //!
 //! Requires `YOUTUBE_API_KEY`.
 
-use std::collections::HashMap;
-use serde_json::json;
 use crate::core::rag::document_loader::{FileType, LoadedDocument};
+use serde_json::json;
+use std::collections::HashMap;
 
 pub struct YouTubeLoader {
     pub api_key: String,
@@ -17,7 +17,10 @@ pub struct YouTubeLoader {
 
 impl YouTubeLoader {
     pub fn new(api_key: impl Into<String>) -> Self {
-        Self { api_key: api_key.into(), max_results: 10 }
+        Self {
+            api_key: api_key.into(),
+            max_results: 10,
+        }
     }
 
     pub fn with_max_results(mut self, n: usize) -> Self {

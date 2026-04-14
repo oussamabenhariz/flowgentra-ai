@@ -172,7 +172,10 @@ pub mod sqlite_record_manager {
     }
 
     impl SqliteRecordManager {
-        pub async fn new(namespace: impl Into<String>, url: &str) -> Result<Self, VectorStoreError> {
+        pub async fn new(
+            namespace: impl Into<String>,
+            url: &str,
+        ) -> Result<Self, VectorStoreError> {
             let pool = SqlitePool::connect(url)
                 .await
                 .map_err(|e| VectorStoreError::Unknown(format!("SQLite connect: {e}")))?;
@@ -189,7 +192,10 @@ pub mod sqlite_record_manager {
             .execute(&pool)
             .await
             .map_err(|e| VectorStoreError::Unknown(format!("SQLite schema: {e}")))?;
-            Ok(Self { namespace: namespace.into(), pool })
+            Ok(Self {
+                namespace: namespace.into(),
+                pool,
+            })
         }
     }
 
@@ -200,14 +206,13 @@ pub mod sqlite_record_manager {
         }
 
         async fn exists(&self, hash: &str) -> Result<bool, VectorStoreError> {
-            let row: Option<(i64,)> = sqlx::query_as(
-                "SELECT id FROM record_manager WHERE namespace = ? AND hash = ?",
-            )
-            .bind(&self.namespace)
-            .bind(hash)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| VectorStoreError::Unknown(e.to_string()))?;
+            let row: Option<(i64,)> =
+                sqlx::query_as("SELECT id FROM record_manager WHERE namespace = ? AND hash = ?")
+                    .bind(&self.namespace)
+                    .bind(hash)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(|e| VectorStoreError::Unknown(e.to_string()))?;
             Ok(row.is_some())
         }
 
@@ -232,14 +237,12 @@ pub mod sqlite_record_manager {
 
         async fn delete_by_ids(&self, ids: &[&str]) -> Result<(), VectorStoreError> {
             for id in ids {
-                sqlx::query(
-                    "DELETE FROM record_manager WHERE namespace = ? AND doc_id = ?",
-                )
-                .bind(&self.namespace)
-                .bind(id)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| VectorStoreError::Unknown(e.to_string()))?;
+                sqlx::query("DELETE FROM record_manager WHERE namespace = ? AND doc_id = ?")
+                    .bind(&self.namespace)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| VectorStoreError::Unknown(e.to_string()))?;
             }
             Ok(())
         }
@@ -278,7 +281,11 @@ pub mod sqlite_record_manager {
 // ── Hash helper ───────────────────────────────────────────────────────────────
 
 /// Compute a stable hash for a document (text + sorted metadata JSON).
-pub fn hash_document(text: &str, metadata: &HashMap<String, serde_json::Value>, source: &str) -> String {
+pub fn hash_document(
+    text: &str,
+    metadata: &HashMap<String, serde_json::Value>,
+    source: &str,
+) -> String {
     let meta_str = serde_json::to_string(metadata).unwrap_or_default();
     let input = format!("{text}|{meta_str}|{source}");
     let hash = blake3::hash(input.as_bytes());
@@ -328,9 +335,11 @@ pub async fn index(
         let existing = record_manager.list_records().await?;
         let to_delete: Vec<RecordEntry> = existing
             .into_iter()
-            .filter(|r| batch_sources.contains(&r.source) == false || {
-                // Only delete if the source is in the batch but the doc is gone
-                batch_sources.contains(&r.source)
+            .filter(|r| {
+                !batch_sources.contains(&r.source) || {
+                    // Only delete if the source is in the batch but the doc is gone
+                    batch_sources.contains(&r.source)
+                }
             })
             .collect();
         let del_ids: Vec<&str> = to_delete.iter().map(|r| r.doc_id.as_str()).collect();
@@ -387,7 +396,7 @@ mod tests {
     async fn test_index_dedup() {
         let store = Arc::new(InMemoryVectorStore::new());
         let rm = InMemoryRecordManager::new("test_ns");
-        let embeddings = Arc::new(Embeddings::mock(8));
+        let _embeddings = Arc::new(Embeddings::mock(8));
 
         let make_doc = |id: &str, text: &str| {
             let mut meta = HashMap::new();
@@ -402,12 +411,16 @@ mod tests {
 
         let docs = vec![make_doc("d1", "hello"), make_doc("d2", "world")];
 
-        let stats1 = index(docs.clone(), &rm, store.as_ref(), CleanupMode::None).await.unwrap();
+        let stats1 = index(docs.clone(), &rm, store.as_ref(), CleanupMode::None)
+            .await
+            .unwrap();
         assert_eq!(stats1.added, 2);
         assert_eq!(stats1.skipped, 0);
 
         // Second call — same docs should be skipped
-        let stats2 = index(docs, &rm, store.as_ref(), CleanupMode::None).await.unwrap();
+        let stats2 = index(docs, &rm, store.as_ref(), CleanupMode::None)
+            .await
+            .unwrap();
         assert_eq!(stats2.added, 0);
         assert_eq!(stats2.skipped, 2);
     }

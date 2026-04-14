@@ -151,10 +151,10 @@ impl ChromaStore {
 /// `{"$and": [...]}` / `{"$or": [...]}` for compound expressions.
 fn chroma_filter(f: &FilterExpr) -> serde_json::Value {
     match f {
-        FilterExpr::Eq(k, v)  => serde_json::json!({ k: { "$eq":  v } }),
-        FilterExpr::Ne(k, v)  => serde_json::json!({ k: { "$ne":  v } }),
-        FilterExpr::Gt(k, v)  => serde_json::json!({ k: { "$gt":  v } }),
-        FilterExpr::Lt(k, v)  => serde_json::json!({ k: { "$lt":  v } }),
+        FilterExpr::Eq(k, v) => serde_json::json!({ k: { "$eq":  v } }),
+        FilterExpr::Ne(k, v) => serde_json::json!({ k: { "$ne":  v } }),
+        FilterExpr::Gt(k, v) => serde_json::json!({ k: { "$gt":  v } }),
+        FilterExpr::Lt(k, v) => serde_json::json!({ k: { "$lt":  v } }),
         FilterExpr::Gte(k, v) => serde_json::json!({ k: { "$gte": v } }),
         FilterExpr::Lte(k, v) => serde_json::json!({ k: { "$lte": v } }),
         FilterExpr::In(k, vs) => serde_json::json!({ k: { "$in":  vs } }),

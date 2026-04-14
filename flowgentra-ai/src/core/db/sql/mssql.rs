@@ -128,9 +128,7 @@ fn parse_url(url: &str) -> Result<Config, DbError> {
         .strip_prefix("mssql://")
         .or_else(|| url.strip_prefix("sqlserver://"))
         .ok_or_else(|| {
-            DbError::Connection(
-                "MSSQL URL must start with mssql:// or sqlserver://".into(),
-            )
+            DbError::Connection("MSSQL URL must start with mssql:// or sqlserver://".into())
         })?;
 
     let mut config = Config::new();

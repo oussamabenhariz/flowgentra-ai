@@ -5,7 +5,7 @@
 //! ## Configuration
 //! - `endpoint`   — Weaviate base URL (e.g. `http://localhost:8080`)
 //! - `index_name` — Weaviate *class* name (must begin with a capital letter; the
-//!                  adapter auto-capitalises if needed)
+//!   adapter auto-capitalises if needed)
 //! - `api_key`    — optional; sent as `Authorization: Bearer <key>`
 //!
 //! ## Storage layout
@@ -74,7 +74,7 @@ impl WeaviateStore {
         }
 
         let class_name = capitalise(&config.index_name);
-        let mut store = Self {
+        let store = Self {
             config,
             class_name,
             client: reqwest::Client::new(),
@@ -227,12 +227,12 @@ impl WeaviateStore {
     /// Convert a `FilterExpr` into a Weaviate GraphQL `where` clause JSON.
     fn build_where_filter(f: &FilterExpr) -> Value {
         match f {
-            FilterExpr::Eq(k, v)  => weaviate_leaf("Equal",            k, v),
-            FilterExpr::Ne(k, v)  => weaviate_leaf("NotEqual",         k, v),
-            FilterExpr::Gt(k, v)  => weaviate_leaf("GreaterThan",      k, v),
-            FilterExpr::Lt(k, v)  => weaviate_leaf("LessThan",         k, v),
+            FilterExpr::Eq(k, v) => weaviate_leaf("Equal", k, v),
+            FilterExpr::Ne(k, v) => weaviate_leaf("NotEqual", k, v),
+            FilterExpr::Gt(k, v) => weaviate_leaf("GreaterThan", k, v),
+            FilterExpr::Lt(k, v) => weaviate_leaf("LessThan", k, v),
             FilterExpr::Gte(k, v) => weaviate_leaf("GreaterThanEqual", k, v),
-            FilterExpr::Lte(k, v) => weaviate_leaf("LessThanEqual",    k, v),
+            FilterExpr::Lte(k, v) => weaviate_leaf("LessThanEqual", k, v),
             // Weaviate has no native IN; expand as OR over equality checks.
             FilterExpr::In(k, vs) => serde_json::json!({
                 "operator": "Or",
@@ -449,7 +449,7 @@ impl VectorStoreBackend for WeaviateStore {
             .objects
             .unwrap_or_default()
             .iter()
-            .map(|o| Self::object_to_doc(o))
+            .map(Self::object_to_doc)
             .collect())
     }
 
@@ -472,10 +472,10 @@ impl VectorStoreBackend for WeaviateStore {
 /// Build a single Weaviate where-clause leaf node.
 fn weaviate_leaf(operator: &str, path: &str, v: &Value) -> Value {
     let (type_field, typed_val) = match v {
-        Value::String(s) => ("valueText",    Value::String(s.clone())),
-        Value::Number(n) => ("valueNumber",  Value::Number(n.clone())),
-        Value::Bool(b)   => ("valueBoolean", Value::Bool(*b)),
-        _                => ("valueText",    Value::String(v.to_string())),
+        Value::String(s) => ("valueText", Value::String(s.clone())),
+        Value::Number(n) => ("valueNumber", Value::Number(n.clone())),
+        Value::Bool(b) => ("valueBoolean", Value::Bool(*b)),
+        _ => ("valueText", Value::String(v.to_string())),
     };
     serde_json::json!({
         "path": [path],

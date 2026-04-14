@@ -53,7 +53,11 @@ impl ExcelLoader {
 
         let source = self.path.clone();
         let mut docs = Vec::new();
-        let start = if self.has_header && !rows.is_empty() { 1 } else { 0 };
+        let start = if self.has_header && !rows.is_empty() {
+            1
+        } else {
+            0
+        };
         let headers: Vec<String> = if self.has_header && !rows.is_empty() {
             rows[0].clone()
         } else {
@@ -117,7 +121,10 @@ impl ExcelLoader {
     ) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
         let sheet_name = format!("xl/worksheets/sheet{}.xml", self.sheet_index + 1);
         let mut file = archive.by_name(&sheet_name).map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, format!("Sheet {sheet_name} not found"))
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Sheet {sheet_name} not found"),
+            )
         })?;
         let mut xml = String::new();
         file.read_to_string(&mut xml)?;

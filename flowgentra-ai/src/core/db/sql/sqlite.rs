@@ -24,8 +24,8 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx::{Column, Row as SqlxRow, TypeInfo};
 use sqlx::sqlite::{SqlitePool, SqliteRow};
+use sqlx::{Column, Row as SqlxRow, TypeInfo};
 use std::collections::HashMap;
 
 use super::{DbError, Row, SqlDatabase};
@@ -117,9 +117,9 @@ fn bind_value<'q>(
     value: &'q Value,
 ) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
     match value {
-        Value::Null        => query.bind(Option::<String>::None),
-        Value::Bool(b)     => query.bind(*b),
-        Value::Number(n)   => {
+        Value::Null => query.bind(Option::<String>::None),
+        Value::Bool(b) => query.bind(*b),
+        Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 query.bind(i)
             } else if let Some(f) = n.as_f64() {
@@ -128,8 +128,8 @@ fn bind_value<'q>(
                 query.bind(n.to_string())
             }
         }
-        Value::String(s)   => query.bind(s.as_str()),
-        other              => query.bind(other.to_string()),
+        Value::String(s) => query.bind(s.as_str()),
+        other => query.bind(other.to_string()),
     }
 }
 

@@ -317,9 +317,7 @@ impl LLMClient for HttpLLMClient {
                         tracing::error!("Stream error from {}: {}", provider_name, e);
                         // Signal the error to the consumer so it can distinguish
                         // a mid-stream failure from a clean end-of-stream.
-                        let _ = tx
-                            .send(format!("[STREAM_ERROR: {}]", e))
-                            .await;
+                        let _ = tx.send(format!("[STREAM_ERROR: {}]", e)).await;
                         break;
                     }
                 }
