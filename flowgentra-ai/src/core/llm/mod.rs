@@ -257,6 +257,21 @@ impl LLMProvider {
             LLMProvider::Custom(_) => "custom",
         }
     }
+
+    /// The conventional environment variable name for this provider's API key.
+    /// Returns `None` for providers that don't require a key (Ollama).
+    pub fn env_var(&self) -> Option<&'static str> {
+        match self {
+            LLMProvider::OpenAI => Some("OPENAI_API_KEY"),
+            LLMProvider::Anthropic => Some("ANTHROPIC_API_KEY"),
+            LLMProvider::Mistral => Some("MISTRAL_API_KEY"),
+            LLMProvider::Groq => Some("GROQ_API_KEY"),
+            LLMProvider::HuggingFace => Some("HUGGINGFACEHUB_API_TOKEN"),
+            LLMProvider::Azure => Some("AZURE_OPENAI_KEY"),
+            LLMProvider::Ollama => None,
+            LLMProvider::Custom(_) => None,
+        }
+    }
 }
 
 // =============================================================================
@@ -310,7 +325,9 @@ pub struct LLMConfig {
     pub top_p: Option<f32>,
 
     /// API key or authentication token for the provider.
-    /// Must be passed explicitly. Leave empty for providers that don't need auth (e.g. Ollama).
+    /// Pass it directly, or leave empty to fall back to the provider's
+    /// conventional environment variable (e.g. `OPENAI_API_KEY`).
+    /// A `.env` file in the working directory is loaded automatically as a fallback.
     pub api_key: String,
 
     /// Response format — set to `Json` or `JsonSchema` for structured output
@@ -323,26 +340,46 @@ pub struct LLMConfig {
 }
 
 impl LLMConfig {
-    /// Create a new LLM configuration with required parameters
+    /// Create a new LLM configuration.
+    ///
+    /// If `api_key` is empty the constructor tries to resolve it automatically:
+    /// 1. Reads the provider's conventional env var (e.g. `OPENAI_API_KEY`).
+    /// 2. If not found in the environment, attempts to load a `.env` file from
+    ///    the current working directory and retries.
     ///
     /// # Example
     /// ```
     /// use flowgentra_ai::core::llm::{LLMConfig, LLMProvider};
     ///
-    /// let config = LLMConfig::new(
-    ///     LLMProvider::OpenAI,
-    ///     "gpt-4".to_string(),
-    ///     "sk-...".to_string()
-    /// );
+    /// // Explicit key
+    /// let config = LLMConfig::new(LLMProvider::OpenAI, "gpt-4".to_string(), "sk-...".to_string());
+    ///
+    /// // Auto-resolve from OPENAI_API_KEY env var or .env file
+    /// let config = LLMConfig::new(LLMProvider::OpenAI, "gpt-4".to_string(), String::new());
     /// ```
     pub fn new(provider: LLMProvider, model: String, api_key: String) -> Self {
+        let resolved_key = if api_key.is_empty() {
+            if let Some(var) = provider.env_var() {
+                // Try the process environment first
+                std::env::var(var).unwrap_or_else(|_| {
+                    // Fall back to .env file in the working directory
+                    let _ = dotenv::dotenv();
+                    std::env::var(var).unwrap_or_default()
+                })
+            } else {
+                String::new()
+            }
+        } else {
+            api_key
+        };
+
         LLMConfig {
             provider,
             model,
             temperature: None,
             max_tokens: None,
             top_p: None,
-            api_key,
+            api_key: resolved_key,
             response_format: ResponseFormat::default(),
             extra_params: HashMap::new(),
         }
