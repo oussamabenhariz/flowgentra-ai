@@ -64,9 +64,9 @@ fn create_client_from_config(
 ) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
     // Use the full LLMConfig when provided via Agent.create(llm=...) / AgentBuilder::with_llm()
     if let Some(llm_config) = &config.llm {
-        return llm_config
-            .create_client()
-            .map_err(|e| FlowgentraError::ConfigError(format!("Failed to create LLM client: {}", e)));
+        return llm_config.create_client().map_err(|e| {
+            FlowgentraError::ConfigError(format!("Failed to create LLM client: {}", e))
+        });
     }
 
     // Fallback: derive provider from model name string
