@@ -8,6 +8,7 @@ use super::{
     ToolSpec,
 };
 use crate::core::error::FlowgentraError;
+use crate::core::llm::LLMConfig;
 use crate::core::mcp::MCPConfig;
 use crate::core::state::context::Context;
 use crate::core::state::{DynState, DynStateUpdate};
@@ -26,8 +27,12 @@ pub struct PrebuiltAgentConfig {
     /// Agent type
     pub agent_type: String,
 
-    /// LLM configuration
+    /// LLM model identifier (used when `llm` is None)
     pub llm_model: String,
+
+    /// Full LLM configuration (takes precedence over `llm_model` / `api_key` / `temperature` / `max_tokens`).
+    #[serde(skip)]
+    pub llm: Option<LLMConfig>,
 
     /// API key for the LLM provider. Required for cloud providers (OpenAI, Anthropic, etc.).
     /// Leave as `None` for local providers that don't need authentication (e.g. Ollama).
@@ -69,6 +74,7 @@ impl Default for PrebuiltAgentConfig {
             name: "agent".to_string(),
             agent_type: "default".to_string(),
             llm_model: "gpt-4".to_string(),
+            llm: None,
             api_key: None,
             system_prompt: String::new(),
             tools: HashMap::new(),
@@ -411,7 +417,14 @@ impl AgentBuilder {
         self
     }
 
-    /// Set LLM configuration
+    /// Set a full LLM configuration object (provider, model, api_key, temperature, etc.).
+    /// Takes precedence over `with_llm_config` when both are set.
+    pub fn with_llm(mut self, llm: LLMConfig) -> Self {
+        self.config.llm = Some(llm);
+        self
+    }
+
+    /// Set LLM model by name (string). Use `with_llm` to pass a full `LLMConfig` object.
     pub fn with_llm_config(mut self, model: impl Into<String>) -> Self {
         self.config.llm_model = model.into();
         self
