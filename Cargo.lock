@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "flowgentra-ai"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "axum",
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "flowgentra-ai-macros"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "convert_case 0.6.0",
  "inventory",

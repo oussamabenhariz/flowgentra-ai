@@ -162,8 +162,15 @@ fn parse_url(url: &str) -> Result<Config, DbError> {
         };
         config.authentication(tiberius::AuthMethod::sql_server(user, pass));
     } else {
-        // No credentials — try Windows Integrated Authentication
+        // No credentials — try Windows Integrated Authentication (Windows only)
+        #[cfg(windows)]
         config.authentication(tiberius::AuthMethod::Integrated);
+        #[cfg(not(windows))]
+        return Err(DbError::Connection(
+            "Windows Integrated Authentication is not supported on Linux/macOS. \
+             Please provide credentials in the URL: mssql://user:password@host/database"
+                .into(),
+        ));
     }
 
     // Split host from port
