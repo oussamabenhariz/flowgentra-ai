@@ -33,10 +33,34 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod builtin;
+pub mod code_exec;
+pub mod communication;
+pub mod data;
+pub mod files_extended;
+pub mod finance;
+pub mod human;
+pub mod knowledge;
+pub mod news;
+pub mod search;
+pub mod weather;
 pub mod web;
+pub mod web_extended;
 
-pub use builtin::{CalculatorTool, FilesTool, SearchTool, WebRequestTool};
-pub use web::{FetchTool, SearchTool as WebSearchTool};
+pub use builtin::{CalculatorTool, FilesTool};
+pub use code_exec::{NodeJsReplTool, PythonReplTool, ShellTool};
+pub use communication::{GmailTool, SlackTool};
+pub use data::{CsvQueryTool, JsonGetValueTool, JsonListKeysTool};
+pub use files_extended::{CopyFileTool, DeleteFileTool, FileSearchTool, MoveFileTool};
+pub use finance::AlphaVantageTool;
+pub use human::HumanInputTool;
+pub use knowledge::{ArxivTool, PubMedTool, WikipediaTool, WolframAlphaTool};
+pub use news::NewsApiTool;
+pub use search::{
+    BraveSearchTool, DuckDuckGoSearchTool, GoogleSerperTool, SerpApiSearchTool, TavilySearchTool,
+};
+pub use weather::OpenWeatherMapTool;
+pub use web::FetchTool;
+pub use web_extended::WebRequestTool;
 
 // =============================================================================
 // Tool Trait
@@ -483,29 +507,84 @@ impl ToolRegistry {
         }
     }
 
-    /// Create a tool registry with all built-in tools pre-registered
+    /// Create a tool registry with all built-in tools pre-registered.
+    ///
+    /// Only registers tools that require no API keys and have no destructive side-effects.
+    /// Tools requiring API keys (Tavily, SerpApi, Serper, Brave, WolframAlpha, OpenWeatherMap,
+    /// NewsApi, AlphaVantage, Gmail, Slack) must be registered manually.
+    /// Code-execution tools (PythonRepl, NodeJsRepl, Shell) must also be registered manually.
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
-        // Register built-in tools
+
+        // Core utilities
         registry
             .register("calculator", Arc::new(builtin::CalculatorTool::new()))
-            .expect("Failed to register calculator tool");
-        registry
-            .register("search", Arc::new(builtin::SearchTool::new()))
-            .expect("Failed to register search tool");
-        registry
-            .register("web_request", Arc::new(builtin::WebRequestTool::new()))
-            .expect("Failed to register web_request tool");
+            .expect("calculator");
         registry
             .register("file", Arc::new(builtin::FilesTool::default()))
-            .expect("Failed to register file tool");
-        // Register web tools
+            .expect("file");
+
+        // Real HTTP tools
         registry
             .register("http_get", Arc::new(web::FetchTool))
-            .expect("Failed to register http_get tool");
+            .expect("http_get");
         registry
-            .register("web_search", Arc::new(web::SearchTool))
-            .expect("Failed to register web_search tool");
+            .register("web_request", Arc::new(web_extended::WebRequestTool::new()))
+            .expect("web_request");
+
+        // Keyless search and knowledge
+        registry
+            .register(
+                "duckduckgo_search",
+                Arc::new(search::DuckDuckGoSearchTool::default()),
+            )
+            .expect("duckduckgo_search");
+        registry
+            .register("wikipedia", Arc::new(knowledge::WikipediaTool::new()))
+            .expect("wikipedia");
+
+        // Extended file operations
+        registry
+            .register(
+                "copy_file",
+                Arc::new(files_extended::CopyFileTool::default()),
+            )
+            .expect("copy_file");
+        registry
+            .register(
+                "delete_file",
+                Arc::new(files_extended::DeleteFileTool::default()),
+            )
+            .expect("delete_file");
+        registry
+            .register(
+                "move_file",
+                Arc::new(files_extended::MoveFileTool::default()),
+            )
+            .expect("move_file");
+        registry
+            .register(
+                "file_search",
+                Arc::new(files_extended::FileSearchTool::default()),
+            )
+            .expect("file_search");
+
+        // Data utilities
+        registry
+            .register("json_get", Arc::new(data::JsonGetValueTool))
+            .expect("json_get");
+        registry
+            .register("json_keys", Arc::new(data::JsonListKeysTool))
+            .expect("json_keys");
+        registry
+            .register("csv_query", Arc::new(data::CsvQueryTool))
+            .expect("csv_query");
+
+        // Human-in-the-loop
+        registry
+            .register("human_input", Arc::new(human::HumanInputTool))
+            .expect("human_input");
+
         registry
     }
 

@@ -39,6 +39,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"]
 # HTTP client (for LLM/MCP calls)
 reqwest = { version = "0.11", features = ["json", "stream"] }
 
+# HTML parsing (DDG Lite fallback scraping + Wikipedia HTML strip)
+scraper = "0.19"
+
+# XML parsing (ArXiv Atom feed)
+quick-xml = "0.31"
+
+# CSV parsing
+csv = "1.3"
+
 # Web framework (for visualization UI and web APIs)
 axum = "0.7"
 
@@ -55,7 +64,7 @@ urlencoding = "2.1"
 inventory = "0.1"
 
 # Procedural macros for handler registration
-flowgentra-ai-macros = { version = "0.1", path = "../flowgentra-ai-macros" }
+flowgentra-ai-macros = { version = "0.1.8" }
 
 # Visualization (SVG generation for graphs)
 svg = { version = "0.13" }

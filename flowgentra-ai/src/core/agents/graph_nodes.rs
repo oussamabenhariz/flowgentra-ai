@@ -9,7 +9,7 @@
 
 use super::builders::PrebuiltAgentConfig;
 use crate::core::error::FlowgentraError;
-use crate::core::llm::{LLMClient, LLMConfig, LLMProvider, Message};
+use crate::core::llm::{LLMClient, LLMConfig, LLMProvider, Message, ToolCall, ToolDefinition};
 use crate::core::state::DynState;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -428,6 +428,614 @@ pub fn reasoning_router(state: &DynState) -> Result<String, FlowgentraError> {
 }
 
 // =============================================================================
+// Shared helpers
+// =============================================================================
+
+/// Convert a `ToolSpec` into an LLM `ToolDefinition` with a JSON Schema body.
+fn tool_spec_to_definition(spec: &super::ToolSpec) -> ToolDefinition {
+    let mut properties = serde_json::Map::new();
+    for (name, param_type) in &spec.parameters {
+        let json_type = match param_type.to_lowercase().as_str() {
+            "integer" | "int" => "integer",
+            "boolean" | "bool" => "boolean",
+            "number" | "float" | "f32" | "f64" => "number",
+            "array" | "list" | "vec" => "array",
+            "object" | "map" | "dict" => "object",
+            _ => "string",
+        };
+        properties.insert(name.clone(), serde_json::json!({ "type": json_type }));
+    }
+    let parameters = serde_json::json!({
+        "type": "object",
+        "properties": properties,
+        "required": spec.required,
+    });
+    ToolDefinition::new(&spec.name, &spec.description, parameters)
+}
+
+// =============================================================================
+// ToolCallingNode
+// =============================================================================
+
+/// Node that uses the provider's native tool/function-calling API.
+///
+/// Unlike `AgentReasoningNode` (which parses `<action>` text tags), this node
+/// passes structured `ToolDefinition`s to `chat_with_tools()` and reads
+/// `response.tool_calls` for the next action.
+///
+/// State keys written:
+/// - `llm_response`       — raw text content of the LLM response
+/// - `needs_tool`         — bool, true when a tool call was requested
+/// - `pending_tool_name`  — name of the tool to call
+/// - `pending_tool_args`  — JSON-string arguments for the tool
+/// - `tc_call_id`         — tool call ID (for the tool-result message)
+/// - `tc_assistant_content` / `tc_tool_calls_json` — stored for replay on next turn
+pub struct ToolCallingNode {
+    config: PrebuiltAgentConfig,
+}
+
+impl ToolCallingNode {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
+        Self { config }
+    }
+
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
+        let client = create_client_from_config(&self.config)?;
+
+        let tool_defs: Vec<ToolDefinition> = self
+            .config
+            .tools
+            .values()
+            .map(tool_spec_to_definition)
+            .collect();
+
+        let input = state
+            .get("input")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        let mut messages = vec![Message::system(&self.config.system_prompt)];
+        messages.push(Message::user(&input));
+
+        // Re-attach prior assistant message (with tool_calls) + tool result
+        if let Some(result_str) = state
+            .get("tool_result")
+            .and_then(|v| v.as_str().map(String::from))
+        {
+            let call_id = state
+                .get("tc_call_id")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            let prev_content = state
+                .get("tc_assistant_content")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            let prev_tool_calls: Option<Vec<ToolCall>> = state
+                .get("tc_tool_calls_json")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            let mut assistant_msg = Message::assistant(&prev_content);
+            assistant_msg.tool_calls = prev_tool_calls;
+            messages.push(assistant_msg);
+            messages.push(Message::tool_result(&call_id, &result_str));
+        }
+
+        info!(
+            model = %self.config.llm_model,
+            input = %input,
+            tools_count = %tool_defs.len(),
+            "Calling LLM (tool-calling)"
+        );
+
+        let response = client
+            .chat_with_tools(messages, &tool_defs)
+            .await
+            .map_err(|e| FlowgentraError::LLMError(format!("LLM tool-calling failed: {}", e)))?;
+
+        let response_text = response.content.clone();
+        debug!(response = %response_text, "Tool-calling LLM response");
+
+        state.set("llm_response", serde_json::json!(response_text));
+
+        if response.has_tool_calls() {
+            let tc = &response.tool_calls.as_ref().unwrap()[0];
+            info!(tool = %tc.name, id = %tc.id, "Native tool call detected");
+
+            state.set("needs_tool", serde_json::json!(true));
+            state.set("pending_tool_name", serde_json::json!(tc.name));
+            state.set(
+                "pending_tool_args",
+                serde_json::json!(tc.arguments.to_string()),
+            );
+            // Persist for replay on the next iteration
+            state.set("tc_call_id", serde_json::json!(tc.id));
+            state.set("tc_assistant_content", serde_json::json!(response_text));
+            state.set("tc_tool_calls_json", serde_json::json!(response.tool_calls));
+        } else {
+            state.set("needs_tool", serde_json::json!(false));
+            state.remove("pending_tool_name");
+            state.remove("pending_tool_args");
+            state.remove("tc_call_id");
+            state.remove("tc_assistant_content");
+            state.remove("tc_tool_calls_json");
+        }
+
+        Ok(state.clone())
+    }
+}
+
+/// Router for the ToolCalling agent — identical logic to `reasoning_router`.
+pub fn tool_calling_router(state: &DynState) -> Result<String, FlowgentraError> {
+    reasoning_router(state)
+}
+
+// =============================================================================
+// StructuredChatNode
+// =============================================================================
+
+/// Parsed structured-chat action from JSON blob.
+#[derive(Debug, Clone)]
+pub struct StructuredAction {
+    pub action: String,
+    pub action_input: serde_json::Value,
+}
+
+/// Parse the JSON blob from a structured-chat response.
+///
+/// Looks for the last ```...``` fenced block and deserialises the JSON inside.
+/// Falls back to scanning the raw text for `{"action": ...}`.
+pub fn parse_structured_action(text: &str) -> Option<StructuredAction> {
+    // Try fenced code block first
+    let json_str = if let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        // Skip optional language tag ("json\n" or just "\n")
+        let body = after
+            .trim_start_matches("json")
+            .trim_start_matches('\n')
+            .trim_start_matches('\r');
+        if let Some(end) = body.find("```") {
+            body[..end].trim().to_string()
+        } else {
+            body.trim().to_string()
+        }
+    } else {
+        // Fallback: find first `{` in the text
+        let start = text.find('{')?;
+        let end = text.rfind('}')? + 1;
+        text[start..end].trim().to_string()
+    };
+
+    let v: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+    let action = v.get("action")?.as_str()?.to_string();
+    let action_input = v.get("action_input")?.clone();
+    Some(StructuredAction {
+        action,
+        action_input,
+    })
+}
+
+/// Node that drives the StructuredChat-ZeroShot-ReAct agent.
+///
+/// Calls the LLM with the structured-chat prompt, parses the JSON blob from
+/// the response, and sets the standard `needs_tool` / `pending_tool_*` keys so
+/// the existing `ToolExecutorNode` and `reasoning_router` can be reused.
+///
+/// The tool `action_input` may be a JSON object or a plain string.  We
+/// serialise it to a string and pass it as `pending_tool_args`.
+pub struct StructuredChatNode {
+    config: PrebuiltAgentConfig,
+}
+
+impl StructuredChatNode {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
+        Self { config }
+    }
+
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
+        let client = create_client_from_config(&self.config)?;
+
+        let input = state
+            .get("input")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        let tools_str = format_tools_for_prompt(&self.config);
+
+        // Inject actual tool list into system prompt placeholder
+        let system_prompt = self
+            .config
+            .system_prompt
+            .replace("{tools}", &tools_str)
+            .replace(
+                "{tool_names}",
+                &self
+                    .config
+                    .tools
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+
+        let mut messages = vec![Message::system(&system_prompt)];
+
+        // Include prior tool result as an Observation in the scratchpad
+        if let Some(tool_result) = state.get("tool_result").and_then(|v| v.as_str().map(String::from)) {
+            if let Some(prev) = state
+                .get("llm_response")
+                .and_then(|v| v.as_str().map(String::from))
+            {
+                messages.push(Message::assistant(&prev));
+            }
+            messages.push(Message::user(format!("Observation: {}", tool_result)));
+        }
+
+        messages.push(Message::user(format!("Question: {}", input)));
+
+        info!(
+            model = %self.config.llm_model,
+            input = %input,
+            "Calling LLM (structured-chat)"
+        );
+
+        let response = client
+            .chat(messages)
+            .await
+            .map_err(|e| FlowgentraError::LLMError(format!("LLM call failed: {}", e)))?;
+
+        let response_text = response.content.clone();
+        debug!(response = %response_text, "Structured-chat LLM response");
+
+        state.set("llm_response", serde_json::json!(response_text));
+
+        if let Some(parsed) = parse_structured_action(&response_text) {
+            if parsed.action == "Final Answer" {
+                // Extract the final answer string
+                let answer = match &parsed.action_input {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                state.set("structured_final_answer", serde_json::json!(answer));
+                state.set("needs_tool", serde_json::json!(false));
+                state.remove("pending_tool_name");
+                state.remove("pending_tool_args");
+            } else {
+                let args_str = match &parsed.action_input {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                info!(tool = %parsed.action, args = %args_str, "Structured-chat tool call");
+                state.set("needs_tool", serde_json::json!(true));
+                state.set("pending_tool_name", serde_json::json!(parsed.action));
+                state.set("pending_tool_args", serde_json::json!(args_str));
+            }
+        } else {
+            // No parseable JSON → treat full response as final answer
+            state.set("needs_tool", serde_json::json!(false));
+            state.remove("pending_tool_name");
+            state.remove("pending_tool_args");
+        }
+
+        Ok(state.clone())
+    }
+}
+
+// =============================================================================
+// SelfAskNode
+// =============================================================================
+
+/// Parsed output from the SelfAsk agent.
+#[derive(Debug, Clone)]
+pub enum SelfAskOutput {
+    FollowUp(String),
+    FinalAnswer(String),
+}
+
+/// Parse the LLM response from a self-ask-with-search agent.
+///
+/// Looks for:
+/// - `Follow up: <question>` → another search is needed
+/// - `So the final answer is: <answer>` → done
+pub fn parse_self_ask_response(text: &str) -> Option<SelfAskOutput> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed
+            .strip_prefix("Follow up:")
+            .or_else(|| trimmed.strip_prefix("Follow Up:"))
+        {
+            return Some(SelfAskOutput::FollowUp(rest.trim().to_string()));
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("So the final answer is:")
+            .or_else(|| trimmed.strip_prefix("So the final answer is "))
+        {
+            return Some(SelfAskOutput::FinalAnswer(rest.trim().to_string()));
+        }
+    }
+    None
+}
+
+/// Node that drives the SelfAskWithSearch agent.
+///
+/// On each iteration:
+/// 1. Builds the prompt from the few-shot examples + current question + scratchpad
+/// 2. Calls the LLM
+/// 3. Parses the response:
+///    - "Follow up: <q>"  → route to search tool, append to scratchpad
+///    - "So the final answer is: <a>" → set final answer, route to END
+///
+/// State keys:
+/// - `scratchpad`         — growing string of Follow-up/Intermediate-answer pairs
+/// - `sa_follow_up`       — current sub-question sent to the search tool
+/// - `needs_tool`         — bool
+/// - `pending_tool_name`  — always "search"
+/// - `pending_tool_args`  — the follow-up question
+pub struct SelfAskNode {
+    config: PrebuiltAgentConfig,
+}
+
+impl SelfAskNode {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
+        Self { config }
+    }
+
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
+        let client = create_client_from_config(&self.config)?;
+
+        let input = state
+            .get("input")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        // Append the latest intermediate answer to scratchpad (if any)
+        let mut scratchpad = state
+            .get("scratchpad")
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_default();
+
+        if let Some(tool_result) = state
+            .get("tool_result")
+            .and_then(|v| v.as_str().map(String::from))
+        {
+            let follow_up = state
+                .get("sa_follow_up")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            scratchpad.push_str(&format!(
+                "Follow up: {}\nIntermediate answer: {}\n",
+                follow_up, tool_result
+            ));
+            state.set("scratchpad", serde_json::json!(scratchpad));
+        }
+
+        // Build prompt: few-shot examples + question + scratchpad so far
+        let prompt = format!(
+            "{}\n\nQuestion: {}\nAre follow up questions needed here: {}",
+            self.config.system_prompt, input, scratchpad
+        );
+
+        let messages = vec![Message::user(&prompt)];
+
+        info!(
+            model = %self.config.llm_model,
+            input = %input,
+            "Calling LLM (self-ask-with-search)"
+        );
+
+        let response = client
+            .chat(messages)
+            .await
+            .map_err(|e| FlowgentraError::LLMError(format!("LLM call failed: {}", e)))?;
+
+        let response_text = response.content.clone();
+        debug!(response = %response_text, "Self-ask LLM response");
+        state.set("llm_response", serde_json::json!(response_text));
+
+        match parse_self_ask_response(&response_text) {
+            Some(SelfAskOutput::FollowUp(question)) => {
+                info!(question = %question, "Self-ask follow-up");
+                state.set("sa_follow_up", serde_json::json!(question));
+                state.set("needs_tool", serde_json::json!(true));
+                state.set("pending_tool_name", serde_json::json!("search"));
+                state.set("pending_tool_args", serde_json::json!(question));
+            }
+            Some(SelfAskOutput::FinalAnswer(answer)) => {
+                info!(answer = %answer, "Self-ask final answer");
+                state.set("sa_final_answer", serde_json::json!(answer));
+                state.set("needs_tool", serde_json::json!(false));
+                state.remove("pending_tool_name");
+                state.remove("pending_tool_args");
+            }
+            None => {
+                // Treat the full response as the final answer
+                state.set("sa_final_answer", serde_json::json!(response_text));
+                state.set("needs_tool", serde_json::json!(false));
+            }
+        }
+
+        Ok(state.clone())
+    }
+}
+
+/// Router for SelfAskWithSearch — same logic as reasoning_router.
+pub fn self_ask_router(state: &DynState) -> Result<String, FlowgentraError> {
+    reasoning_router(state)
+}
+
+// =============================================================================
+// DocstoreNode
+// =============================================================================
+
+/// Possible actions from the ReAct Docstore agent.
+#[derive(Debug, Clone)]
+pub enum DocstoreAction {
+    Search(String),
+    Lookup(String),
+    Finish(String),
+}
+
+/// Parse `Action: Search[query]`, `Action: Lookup[term]`, or `Action: Finish[answer]`.
+pub fn parse_docstore_action(text: &str) -> Option<DocstoreAction> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Action:") {
+            let rest = rest.trim();
+            if let Some(inner) = rest
+                .strip_prefix("Search[")
+                .and_then(|s| s.strip_suffix(']'))
+            {
+                return Some(DocstoreAction::Search(inner.to_string()));
+            }
+            if let Some(inner) = rest
+                .strip_prefix("Lookup[")
+                .and_then(|s| s.strip_suffix(']'))
+            {
+                return Some(DocstoreAction::Lookup(inner.to_string()));
+            }
+            if let Some(inner) = rest
+                .strip_prefix("Finish[")
+                .and_then(|s| s.strip_suffix(']'))
+            {
+                return Some(DocstoreAction::Finish(inner.to_string()));
+            }
+        }
+    }
+    None
+}
+
+/// Node that drives the ReactDocstore agent.
+///
+/// Builds a growing Thought/Action/Observation scratchpad and routes to:
+/// - "search" tool for `Search[...]`
+/// - "lookup" tool for `Lookup[...]`
+/// - END for `Finish[...]`
+///
+/// State keys:
+/// - `scratchpad`           — accumulated Thought/Action/Observation text
+/// - `ds_action_type`       — "search" | "lookup" | "finish"
+/// - `needs_tool`           — bool
+/// - `pending_tool_name`    — "search" or "lookup"
+/// - `pending_tool_args`    — query / term
+/// - `ds_final_answer`      — set when Finish[...] is parsed
+pub struct DocstoreNode {
+    config: PrebuiltAgentConfig,
+}
+
+impl DocstoreNode {
+    pub fn new(config: PrebuiltAgentConfig) -> Self {
+        Self { config }
+    }
+
+    pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
+        let client = create_client_from_config(&self.config)?;
+
+        let input = state
+            .get("input")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        // Append previous observation to scratchpad
+        let mut scratchpad = state
+            .get("scratchpad")
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_default();
+
+        if let Some(observation) = state
+            .get("tool_result")
+            .and_then(|v| v.as_str().map(String::from))
+        {
+            scratchpad.push_str(&format!("Observation: {}\n", observation));
+            state.set("scratchpad", serde_json::json!(scratchpad));
+        }
+
+        let prompt = format!(
+            "{}\n\nQuestion: {}\n{}",
+            self.config.system_prompt, input, scratchpad
+        );
+
+        let messages = vec![Message::user(&prompt)];
+
+        info!(
+            model = %self.config.llm_model,
+            input = %input,
+            "Calling LLM (react-docstore)"
+        );
+
+        let response = client
+            .chat(messages)
+            .await
+            .map_err(|e| FlowgentraError::LLMError(format!("LLM call failed: {}", e)))?;
+
+        let response_text = response.content.clone();
+        debug!(response = %response_text, "Docstore LLM response");
+        state.set("llm_response", serde_json::json!(response_text));
+
+        // Append Thought + Action lines to scratchpad
+        scratchpad.push_str(&response_text);
+        scratchpad.push('\n');
+        state.set("scratchpad", serde_json::json!(scratchpad));
+
+        match parse_docstore_action(&response_text) {
+            Some(DocstoreAction::Search(query)) => {
+                info!(query = %query, "Docstore Search");
+                state.set("ds_action_type", serde_json::json!("search"));
+                state.set("needs_tool", serde_json::json!(true));
+                state.set("pending_tool_name", serde_json::json!("search"));
+                state.set("pending_tool_args", serde_json::json!(query));
+            }
+            Some(DocstoreAction::Lookup(term)) => {
+                info!(term = %term, "Docstore Lookup");
+                state.set("ds_action_type", serde_json::json!("lookup"));
+                state.set("needs_tool", serde_json::json!(true));
+                state.set("pending_tool_name", serde_json::json!("lookup"));
+                state.set("pending_tool_args", serde_json::json!(term));
+            }
+            Some(DocstoreAction::Finish(answer)) => {
+                info!(answer = %answer, "Docstore finish");
+                state.set("ds_final_answer", serde_json::json!(answer));
+                state.set("ds_action_type", serde_json::json!("finish"));
+                state.set("needs_tool", serde_json::json!(false));
+                state.remove("pending_tool_name");
+                state.remove("pending_tool_args");
+            }
+            None => {
+                state.set("needs_tool", serde_json::json!(false));
+            }
+        }
+
+        Ok(state.clone())
+    }
+}
+
+/// Router for the ReactDocstore agent.
+///
+/// Routes to the appropriate tool node ("search", "lookup") or END.
+pub fn docstore_router(state: &DynState) -> Result<String, FlowgentraError> {
+    let needs_tool = state
+        .get("needs_tool")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if needs_tool {
+        let tool_name = state
+            .get("pending_tool_name")
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "search".to_string());
+
+        // Both "search" and "lookup" route to the shared tool_executor node.
+        // The executor dispatches by tool name to the user-provided function.
+        debug!(
+            "Docstore router: directing to tool_executor ({})",
+            tool_name
+        );
+        Ok("tool_executor".to_string())
+    } else {
+        debug!("Docstore router: directing to END");
+        Ok("END".to_string())
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -514,5 +1122,97 @@ mod tests {
             LLMProvider::Anthropic
         ));
         assert!(matches!(resolve_provider("llama-3-70b"), LLMProvider::Groq));
+    }
+
+    // ----- StructuredChat parser -----------------------------------------
+
+    #[test]
+    fn test_parse_structured_action_fenced() {
+        let text = "Thought: I need to search.\nAction:\n```json\n{\n  \"action\": \"web_search\",\n  \"action_input\": \"Rust programming language\"\n}\n```";
+        let parsed = parse_structured_action(text).expect("should parse");
+        assert_eq!(parsed.action, "web_search");
+        assert_eq!(
+            parsed.action_input,
+            serde_json::json!("Rust programming language")
+        );
+    }
+
+    #[test]
+    fn test_parse_structured_action_final_answer() {
+        let text = "Thought: I know the answer.\nAction:\n```\n{\"action\": \"Final Answer\", \"action_input\": \"42\"}\n```";
+        let parsed = parse_structured_action(text).expect("should parse");
+        assert_eq!(parsed.action, "Final Answer");
+    }
+
+    #[test]
+    fn test_parse_structured_action_object_input() {
+        let text = "{\"action\": \"calculator\", \"action_input\": {\"expression\": \"2 + 2\"}}";
+        let parsed = parse_structured_action(text).expect("should parse");
+        assert_eq!(parsed.action, "calculator");
+        assert_eq!(
+            parsed.action_input,
+            serde_json::json!({"expression": "2 + 2"})
+        );
+    }
+
+    // ----- SelfAsk parser -------------------------------------------------
+
+    #[test]
+    fn test_parse_self_ask_follow_up() {
+        let text = "Yes.\nFollow up: Who directed Jaws?";
+        match parse_self_ask_response(text).expect("should parse") {
+            SelfAskOutput::FollowUp(q) => assert_eq!(q, "Who directed Jaws?"),
+            _ => panic!("Expected FollowUp"),
+        }
+    }
+
+    #[test]
+    fn test_parse_self_ask_final_answer() {
+        let text = "So the final answer is: Steven Spielberg";
+        match parse_self_ask_response(text).expect("should parse") {
+            SelfAskOutput::FinalAnswer(a) => assert_eq!(a, "Steven Spielberg"),
+            _ => panic!("Expected FinalAnswer"),
+        }
+    }
+
+    #[test]
+    fn test_parse_self_ask_none() {
+        let text = "I am still thinking...";
+        assert!(parse_self_ask_response(text).is_none());
+    }
+
+    // ----- Docstore parser ------------------------------------------------
+
+    #[test]
+    fn test_parse_docstore_search() {
+        let text = "Thought: I need to search.\nAction: Search[Colorado orogeny]";
+        match parse_docstore_action(text).expect("should parse") {
+            DocstoreAction::Search(q) => assert_eq!(q, "Colorado orogeny"),
+            _ => panic!("Expected Search"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docstore_lookup() {
+        let text = "Thought: Need detail.\nAction: Lookup[eastern sector]";
+        match parse_docstore_action(text).expect("should parse") {
+            DocstoreAction::Lookup(t) => assert_eq!(t, "eastern sector"),
+            _ => panic!("Expected Lookup"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docstore_finish() {
+        let text = "Thought: Done.\nAction: Finish[1,800 to 7,000 ft]";
+        match parse_docstore_action(text).expect("should parse") {
+            DocstoreAction::Finish(a) => assert_eq!(a, "1,800 to 7,000 ft"),
+            _ => panic!("Expected Finish"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docstore_none() {
+        let text = "Thought: I need to think more.";
+        assert!(parse_docstore_action(text).is_none());
     }
 }

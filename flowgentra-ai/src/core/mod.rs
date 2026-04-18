@@ -111,7 +111,9 @@ pub use rag::{RedisVectorConfig, RedisVectorStore};
 pub use routing::{ComparisonOp, Condition, ConditionBuilder, FieldTypeCheck};
 pub use runtime::AgentRuntime;
 pub use tools::{
-    builtin::{CalculatorTool, FilesTool, SearchTool, WebRequestTool},
+    builtin::{CalculatorTool, FilesTool},
+    BraveSearchTool, DuckDuckGoSearchTool, GoogleSerperTool, SerpApiSearchTool, TavilySearchTool,
+    WebRequestTool,
     JsonSchema, Tool, ToolCallRequest, ToolCallResult, ToolDefinition, ToolRegistry,
 };
 pub use visualization::{

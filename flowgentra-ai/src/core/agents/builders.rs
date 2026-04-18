@@ -4,8 +4,9 @@ use super::graph_nodes::ToolExecutorFn;
 /// Provides builder patterns for creating predefined agents with sensible defaults.
 /// Similar to LangChain's `initialize_agent` but tailored for FlowgentraAI.
 use super::{
-    reasoning_router, Agent, AgentReasoningNode, AgentType, ConversationalNode, ToolExecutorNode,
-    ToolSpec,
+    docstore_router, reasoning_router, self_ask_router, tool_calling_router, Agent,
+    AgentReasoningNode, AgentType, ConversationalNode, DocstoreNode, SelfAskNode,
+    StructuredChatNode, ToolCallingNode, ToolExecutorNode, ToolSpec,
 };
 use crate::core::error::FlowgentraError;
 use crate::core::llm::LLMConfig;
@@ -126,6 +127,12 @@ impl GraphBasedAgent {
             AgentType::ZeroShotReAct => Self::build_zero_shot_react_graph(&config, tool_executor)?,
             AgentType::FewShotReAct => Self::build_few_shot_react_graph(&config, tool_executor)?,
             AgentType::Conversational => Self::build_conversational_graph(&config)?,
+            AgentType::ToolCalling => Self::build_tool_calling_graph(&config, tool_executor)?,
+            AgentType::StructuredChatZeroShotReAct => {
+                Self::build_structured_chat_graph(&config, tool_executor)?
+            }
+            AgentType::SelfAskWithSearch => Self::build_self_ask_graph(&config, tool_executor)?,
+            AgentType::ReactDocstore => Self::build_react_docstore_graph(&config, tool_executor)?,
         };
 
         Ok(Self {
@@ -269,6 +276,352 @@ impl GraphBasedAgent {
         Ok(graph)
     }
 
+    /// Build a ToolCalling agent graph
+    ///
+    /// Uses `ToolCallingNode` which calls `chat_with_tools()` and reads
+    /// `response.tool_calls` rather than text `<action>` tags.
+    fn build_tool_calling_graph(
+        config: &PrebuiltAgentConfig,
+        tool_executor: Option<ToolExecutorFn>,
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
+        let agent_config = config.clone();
+        let tool_config = config.clone();
+        let tool_executor = tool_executor.unwrap_or_else(|| {
+            Arc::new(|name: &str, _args: &str| {
+                format!(
+                    "Tool '{}' has no executor registered. Use .with_tool_executor() on AgentBuilder.",
+                    name
+                )
+            })
+        });
+
+        let agent_node = Arc::new(FunctionNode::new(
+            "agent",
+            move |state: &DynState, _ctx: &Context| {
+                let config = agent_config.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let node = ToolCallingNode::new(config);
+                    node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let tool_exec_fn = tool_executor.clone();
+        let tool_executor_node = Arc::new(FunctionNode::new(
+            "tool_executor",
+            move |state: &DynState, _ctx: &Context| {
+                let config = tool_config.clone();
+                let executor = tool_exec_fn.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let tool_node = ToolExecutorNode::new(config).with_executor(executor);
+                    tool_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "tool_executor".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let end_node = Arc::new(FunctionNode::new(
+            "END",
+            |_state: &DynState, _ctx: &Context| Box::pin(async move { Ok(DynStateUpdate::new()) }),
+        ));
+
+        let graph = StateGraph::<DynState>::builder()
+            .add_node("agent", agent_node)
+            .add_node("tool_executor", tool_executor_node)
+            .add_node("END", end_node)
+            .set_entry_point("agent")
+            .add_conditional_edge(
+                "agent",
+                Box::new(|state: &DynState| {
+                    tool_calling_router(state).map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })
+                }),
+            )
+            .add_edge("tool_executor", "agent")
+            .compile()
+            .map_err(|e| {
+                FlowgentraError::GraphError(format!("ToolCalling graph build failed: {}", e))
+            })?;
+
+        debug!("Built ToolCalling graph");
+        Ok(graph)
+    }
+
+    /// Build a StructuredChat-ZeroShot-ReAct agent graph
+    ///
+    /// Uses `StructuredChatNode` which parses JSON blobs instead of text tags.
+    fn build_structured_chat_graph(
+        config: &PrebuiltAgentConfig,
+        tool_executor: Option<ToolExecutorFn>,
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
+        let agent_config = config.clone();
+        let tool_config = config.clone();
+        let tool_executor = tool_executor.unwrap_or_else(|| {
+            Arc::new(|name: &str, _args: &str| {
+                format!(
+                    "Tool '{}' has no executor registered. Use .with_tool_executor() on AgentBuilder.",
+                    name
+                )
+            })
+        });
+
+        let agent_node = Arc::new(FunctionNode::new(
+            "agent",
+            move |state: &DynState, _ctx: &Context| {
+                let config = agent_config.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let node = StructuredChatNode::new(config);
+                    node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let tool_exec_fn = tool_executor.clone();
+        let tool_executor_node = Arc::new(FunctionNode::new(
+            "tool_executor",
+            move |state: &DynState, _ctx: &Context| {
+                let config = tool_config.clone();
+                let executor = tool_exec_fn.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let tool_node = ToolExecutorNode::new(config).with_executor(executor);
+                    tool_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "tool_executor".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let end_node = Arc::new(FunctionNode::new(
+            "END",
+            |_state: &DynState, _ctx: &Context| Box::pin(async move { Ok(DynStateUpdate::new()) }),
+        ));
+
+        let graph = StateGraph::<DynState>::builder()
+            .add_node("agent", agent_node)
+            .add_node("tool_executor", tool_executor_node)
+            .add_node("END", end_node)
+            .set_entry_point("agent")
+            .add_conditional_edge(
+                "agent",
+                Box::new(|state: &DynState| {
+                    reasoning_router(state).map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })
+                }),
+            )
+            .add_edge("tool_executor", "agent")
+            .compile()
+            .map_err(|e| {
+                FlowgentraError::GraphError(format!("StructuredChat graph build failed: {}", e))
+            })?;
+
+        debug!("Built StructuredChat graph");
+        Ok(graph)
+    }
+
+    /// Build a SelfAskWithSearch agent graph
+    ///
+    /// Uses `SelfAskNode` which decomposes questions and routes to a "search" tool.
+    fn build_self_ask_graph(
+        config: &PrebuiltAgentConfig,
+        tool_executor: Option<ToolExecutorFn>,
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
+        let agent_config = config.clone();
+        let tool_config = config.clone();
+        let tool_executor = tool_executor.unwrap_or_else(|| {
+            Arc::new(|_name: &str, query: &str| {
+                format!("No search executor registered. Query was: '{}'", query)
+            })
+        });
+
+        let agent_node = Arc::new(FunctionNode::new(
+            "agent",
+            move |state: &DynState, _ctx: &Context| {
+                let config = agent_config.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let node = SelfAskNode::new(config);
+                    node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let tool_exec_fn = tool_executor.clone();
+        let search_node = Arc::new(FunctionNode::new(
+            "tool_executor",
+            move |state: &DynState, _ctx: &Context| {
+                let config = tool_config.clone();
+                let executor = tool_exec_fn.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let tool_node = ToolExecutorNode::new(config).with_executor(executor);
+                    tool_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "tool_executor".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let end_node = Arc::new(FunctionNode::new(
+            "END",
+            |_state: &DynState, _ctx: &Context| Box::pin(async move { Ok(DynStateUpdate::new()) }),
+        ));
+
+        let graph = StateGraph::<DynState>::builder()
+            .add_node("agent", agent_node)
+            .add_node("tool_executor", search_node)
+            .add_node("END", end_node)
+            .set_entry_point("agent")
+            .add_conditional_edge(
+                "agent",
+                Box::new(|state: &DynState| {
+                    self_ask_router(state).map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })
+                }),
+            )
+            .add_edge("tool_executor", "agent")
+            .compile()
+            .map_err(|e| {
+                FlowgentraError::GraphError(format!("SelfAskWithSearch graph build failed: {}", e))
+            })?;
+
+        debug!("Built SelfAskWithSearch graph");
+        Ok(graph)
+    }
+
+    /// Build a ReactDocstore agent graph
+    ///
+    /// Uses `DocstoreNode` which routes to Search, Lookup, or END based on
+    /// `Action: Search[...]`, `Action: Lookup[...]`, or `Action: Finish[...]`.
+    fn build_react_docstore_graph(
+        config: &PrebuiltAgentConfig,
+        tool_executor: Option<ToolExecutorFn>,
+    ) -> Result<StateGraph<DynState>, FlowgentraError> {
+        let agent_config = config.clone();
+        let tool_config = config.clone();
+        let tool_executor = tool_executor.unwrap_or_else(|| {
+            Arc::new(|name: &str, query: &str| {
+                format!("No executor registered for '{}'. Query: '{}'", name, query)
+            })
+        });
+
+        let agent_node = Arc::new(FunctionNode::new(
+            "agent",
+            move |state: &DynState, _ctx: &Context| {
+                let config = agent_config.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let node = DocstoreNode::new(config);
+                    node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        // A single tool_executor handles both "search" and "lookup" — the user's
+        // executor function receives the tool name and dispatches accordingly.
+        let tool_exec_fn = tool_executor.clone();
+        let tool_executor_node = Arc::new(FunctionNode::new(
+            "tool_executor",
+            move |state: &DynState, _ctx: &Context| {
+                let config = tool_config.clone();
+                let executor = tool_exec_fn.clone();
+                let state = state.clone();
+                Box::pin(async move {
+                    let tool_node = ToolExecutorNode::new(config).with_executor(executor);
+                    tool_node.execute(&state).await.map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "tool_executor".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+
+        let end_node = Arc::new(FunctionNode::new(
+            "END",
+            |_state: &DynState, _ctx: &Context| Box::pin(async move { Ok(DynStateUpdate::new()) }),
+        ));
+
+        let graph = StateGraph::<DynState>::builder()
+            .add_node("agent", agent_node)
+            .add_node("tool_executor", tool_executor_node)
+            .add_node("END", end_node)
+            .set_entry_point("agent")
+            .add_conditional_edge(
+                "agent",
+                Box::new(|state: &DynState| {
+                    docstore_router(state).map_err(|e| {
+                        crate::core::state_graph::StateGraphError::ExecutionError {
+                            node: "agent".to_string(),
+                            reason: e.to_string(),
+                        }
+                    })
+                }),
+            )
+            .add_edge("tool_executor", "agent")
+            .compile()
+            .map_err(|e| {
+                FlowgentraError::GraphError(format!("ReactDocstore graph build failed: {}", e))
+            })?;
+
+        debug!("Built ReactDocstore graph");
+        Ok(graph)
+    }
+
     /// Execute the agent with given input
     pub async fn execute_input(&self, input: &str) -> Result<String, FlowgentraError> {
         // Create initial state
@@ -306,23 +659,63 @@ impl GraphBasedAgent {
                 // Try to extract content from <answer> tags
                 if let Some(start) = full_response.find("<answer>") {
                     if let Some(end) = full_response.find("</answer>") {
-                        let start_idx = start + 8; // Length of "<answer>"
+                        let start_idx = start + 8;
                         if start_idx < end {
                             return Ok(full_response[start_idx..end].trim().to_string());
                         }
                     }
                 }
 
-                // If no tags, return the response as-is (remove thinking blocks)
+                // Remove thinking blocks if present
                 if let Some(thinking_end) = full_response.find("</thinking>") {
                     full_response[thinking_end + 11..].trim().to_string()
                 } else {
                     full_response
                 }
             }
+
             AgentType::Conversational => final_state
                 .get("response")
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "No response generated".to_string()),
+
+            // ToolCalling: return llm_response (no <answer> tags needed)
+            AgentType::ToolCalling => final_state
+                .get("llm_response")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "No response generated".to_string()),
+
+            // StructuredChat: prefer structured_final_answer, fall back to llm_response
+            AgentType::StructuredChatZeroShotReAct => final_state
+                .get("structured_final_answer")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .or_else(|| {
+                    final_state
+                        .get("llm_response")
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                })
+                .unwrap_or_else(|| "No response generated".to_string()),
+
+            // SelfAskWithSearch: prefer sa_final_answer, fall back to llm_response
+            AgentType::SelfAskWithSearch => final_state
+                .get("sa_final_answer")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .or_else(|| {
+                    final_state
+                        .get("llm_response")
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                })
+                .unwrap_or_else(|| "No response generated".to_string()),
+
+            // ReactDocstore: prefer ds_final_answer, fall back to llm_response
+            AgentType::ReactDocstore => final_state
+                .get("ds_final_answer")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .or_else(|| {
+                    final_state
+                        .get("llm_response")
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                })
                 .unwrap_or_else(|| "No response generated".to_string()),
         };
 
@@ -554,13 +947,153 @@ impl Default for AgentBuilder {
     }
 }
 
+// ── Typed agent constructors ──────────────────────────────────────────────────
+//
+// Each struct wraps `AgentBuilder` and provides a named, type-safe API so
+// callers don't need to import `AgentType`:
+//
+//   let agent = ZeroShotReAct::new()
+//       .name("my-agent")
+//       .llm(llm_config)
+//       .system_prompt("You are helpful.")
+//       .tool(search_tool)
+//       .retries(2)
+//       .build()?;
+
+macro_rules! impl_typed_agent {
+    ($name:ident, $agent_type:expr, $doc:literal) => {
+        #[doc = $doc]
+        pub struct $name(AgentBuilder);
+
+        impl $name {
+            /// Create a new agent of this type with all defaults.
+            pub fn new() -> Self {
+                Self(AgentBuilder::new($agent_type))
+            }
+
+            /// Set the agent name.
+            pub fn name(mut self, name: impl Into<String>) -> Self {
+                self.0 = self.0.with_name(name);
+                self
+            }
+
+            /// Provide a fully configured `LLMConfig`. Takes precedence over any
+            /// model-string shorthand.
+            pub fn llm(mut self, llm: LLMConfig) -> Self {
+                self.0 = self.0.with_llm(llm);
+                self
+            }
+
+            /// Override the default system prompt.
+            pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
+                self.0 = self.0.with_system_prompt(prompt);
+                self
+            }
+
+            /// Add a single tool.
+            pub fn tool(mut self, tool: ToolSpec) -> Self {
+                self.0 = self.0.with_tool(tool);
+                self
+            }
+
+            /// Add multiple tools at once.
+            pub fn tools(mut self, tools: Vec<ToolSpec>) -> Self {
+                self.0 = self.0.with_tools(tools);
+                self
+            }
+
+            /// Set maximum LLM retry attempts.
+            pub fn retries(mut self, n: usize) -> Self {
+                self.0 = self.0.with_retries(n);
+                self
+            }
+
+            /// Enable conversation memory and set how many steps to retain.
+            pub fn memory_steps(mut self, steps: usize) -> Self {
+                self.0 = self.0.with_memory_steps(steps);
+                self
+            }
+
+            /// Set the tool executor. Receives `(tool_name, arguments)` and returns
+            /// the result string.
+            pub fn tool_executor<F>(mut self, executor: F) -> Self
+            where
+                F: Fn(&str, &str) -> String + Send + Sync + 'static,
+            {
+                self.0 = self.0.with_tool_executor(executor);
+                self
+            }
+
+            /// Build the agent graph.
+            pub fn build(self) -> Result<GraphBasedAgent, FlowgentraError> {
+                self.0.build_graph()
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
+impl_typed_agent!(
+    ZeroShotReAct,
+    AgentType::ZeroShotReAct,
+    "Zero-shot ReAct agent — general-purpose reasoning + action without examples."
+);
+
+impl_typed_agent!(
+    FewShotReAct,
+    AgentType::FewShotReAct,
+    "Few-shot ReAct agent — same loop as ZeroShotReAct but with example demonstrations injected into the system prompt."
+);
+
+impl_typed_agent!(
+    Conversational,
+    AgentType::Conversational,
+    "Conversational agent — multi-turn dialogue with persistent conversation history."
+);
+
+impl_typed_agent!(
+    ToolCalling,
+    AgentType::ToolCalling,
+    "Tool-calling agent — uses the provider's native function-calling API instead of text `<action>` tags."
+);
+
+impl_typed_agent!(
+    StructuredChat,
+    AgentType::StructuredChatZeroShotReAct,
+    "Structured-chat agent — ReAct with JSON-blob tool actions and a JSON final answer."
+);
+
+impl_typed_agent!(
+    SelfAskWithSearch,
+    AgentType::SelfAskWithSearch,
+    "Self-ask-with-search agent — decomposes questions into sub-questions answered by a `search` tool."
+);
+
+impl_typed_agent!(
+    ReactDocstore,
+    AgentType::ReactDocstore,
+    "ReAct docstore agent — Search + Lookup loop over a document store."
+);
+
 impl AgentType {
     /// Parse string as agent type
     pub fn from_type_str(s: &str) -> Self {
         match s {
-            "zero-shot-react" => AgentType::ZeroShotReAct,
-            "few-shot-react" => AgentType::FewShotReAct,
+            "zero-shot-react" | "zero_shot_react" => AgentType::ZeroShotReAct,
+            "few-shot-react" | "few_shot_react" => AgentType::FewShotReAct,
             "conversational" => AgentType::Conversational,
+            "tool-calling" | "tool_calling" => AgentType::ToolCalling,
+            "structured-chat-zero-shot-react"
+            | "structured_chat_zero_shot_react"
+            | "structured-chat"
+            | "structured_chat" => AgentType::StructuredChatZeroShotReAct,
+            "self-ask-with-search" | "self_ask_with_search" => AgentType::SelfAskWithSearch,
+            "react-docstore" | "react_docstore" => AgentType::ReactDocstore,
             _ => AgentType::ZeroShotReAct,
         }
     }
@@ -605,6 +1138,30 @@ mod tests {
         assert_eq!(
             AgentType::from_type_str("conversational"),
             AgentType::Conversational
+        );
+        assert_eq!(
+            AgentType::from_type_str("tool-calling"),
+            AgentType::ToolCalling
+        );
+        assert_eq!(
+            AgentType::from_type_str("tool_calling"),
+            AgentType::ToolCalling
+        );
+        assert_eq!(
+            AgentType::from_type_str("structured-chat-zero-shot-react"),
+            AgentType::StructuredChatZeroShotReAct
+        );
+        assert_eq!(
+            AgentType::from_type_str("structured_chat"),
+            AgentType::StructuredChatZeroShotReAct
+        );
+        assert_eq!(
+            AgentType::from_type_str("self-ask-with-search"),
+            AgentType::SelfAskWithSearch
+        );
+        assert_eq!(
+            AgentType::from_type_str("react-docstore"),
+            AgentType::ReactDocstore
         );
         assert_eq!(
             AgentType::from_type_str("invalid"),

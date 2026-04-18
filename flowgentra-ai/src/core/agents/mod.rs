@@ -29,15 +29,30 @@ mod conversational;
 mod few_shot_react;
 pub mod graph_nodes;
 mod prompts;
+mod react_docstore;
+mod self_ask_with_search;
+mod structured_chat;
 pub mod supervisor;
+mod tool_calling;
 mod zero_shot_react;
 
-pub use builders::{AgentBuilder, GraphBasedAgent, PrebuiltAgentConfig};
+pub use builders::{
+    AgentBuilder, Conversational, FewShotReAct, GraphBasedAgent, PrebuiltAgentConfig,
+    ReactDocstore, SelfAskWithSearch, StructuredChat, ToolCalling, ZeroShotReAct,
+};
 pub use conversational::ConversationalAgent;
 pub use few_shot_react::FewShotReActAgent;
-pub use graph_nodes::{reasoning_router, AgentReasoningNode, ConversationalNode, ToolExecutorNode};
+pub use graph_nodes::{
+    docstore_router, reasoning_router, self_ask_router, tool_calling_router, AgentReasoningNode,
+    ConversationalNode, DocstoreNode, SelfAskNode, StructuredChatNode, ToolCallingNode,
+    ToolExecutorNode,
+};
 pub use prompts::{PromptTemplates, SystemPrompts};
+pub use react_docstore::ReactDocstoreAgent;
+pub use self_ask_with_search::SelfAskWithSearchAgent;
+pub use structured_chat::StructuredChatZeroShotReActAgent;
 pub use supervisor::Supervisor;
+pub use tool_calling::ToolCallingAgent;
 pub use zero_shot_react::ZeroShotReActAgent;
 
 use crate::core::error::FlowgentraError;
@@ -52,6 +67,14 @@ pub enum AgentType {
     FewShotReAct,
     /// Conversational: Multi-turn dialogue with memory
     Conversational,
+    /// Tool Calling: Provider-agnostic native function/tool calling API
+    ToolCalling,
+    /// Structured Chat Zero-Shot ReAct: ReAct with JSON-structured actions
+    StructuredChatZeroShotReAct,
+    /// Self Ask With Search: Decomposes questions into sub-questions answered by search
+    SelfAskWithSearch,
+    /// ReAct Docstore: ReAct loop specialized for Search + Lookup in a document store
+    ReactDocstore,
 }
 
 impl std::fmt::Display for AgentType {
@@ -60,6 +83,12 @@ impl std::fmt::Display for AgentType {
             AgentType::ZeroShotReAct => write!(f, "zero-shot-react"),
             AgentType::FewShotReAct => write!(f, "few-shot-react"),
             AgentType::Conversational => write!(f, "conversational"),
+            AgentType::ToolCalling => write!(f, "tool-calling"),
+            AgentType::StructuredChatZeroShotReAct => {
+                write!(f, "structured-chat-zero-shot-react")
+            }
+            AgentType::SelfAskWithSearch => write!(f, "self-ask-with-search"),
+            AgentType::ReactDocstore => write!(f, "react-docstore"),
         }
     }
 }
@@ -232,5 +261,19 @@ mod tests {
 
         assert_eq!(call.tool_name, "calculator");
         assert_eq!(call.arguments.len(), 3);
+    }
+
+    #[test]
+    fn test_new_agent_type_display() {
+        assert_eq!(AgentType::ToolCalling.to_string(), "tool-calling");
+        assert_eq!(
+            AgentType::StructuredChatZeroShotReAct.to_string(),
+            "structured-chat-zero-shot-react"
+        );
+        assert_eq!(
+            AgentType::SelfAskWithSearch.to_string(),
+            "self-ask-with-search"
+        );
+        assert_eq!(AgentType::ReactDocstore.to_string(), "react-docstore");
     }
 }

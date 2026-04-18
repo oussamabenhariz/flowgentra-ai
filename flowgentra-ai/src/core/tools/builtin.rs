@@ -1,6 +1,4 @@
-//! Built-in tools for common operations
-//!
-//! Includes: Calculator, Search, Web Requests, File Operations
+//! Built-in tools: Calculator and sandboxed File operations.
 
 use super::{JsonSchema, Tool, ToolDefinition};
 use crate::core::error::{FlowgentraError, Result};
@@ -13,7 +11,6 @@ use std::fs;
 // Calculator Tool
 // =============================================================================
 
-/// Simple calculator tool supporting basic math operations
 pub struct CalculatorTool;
 
 impl CalculatorTool {
@@ -123,211 +120,17 @@ impl Tool for CalculatorTool {
 }
 
 // =============================================================================
-// Search Tool
-// =============================================================================
-
-/// Simulated search tool (in real app, would query search API)
-pub struct SearchTool;
-
-impl SearchTool {
-    pub fn new() -> Self {
-        SearchTool
-    }
-
-    fn mock_search(&self, query: &str) -> Vec<SearchResult> {
-        // Mock search results
-        vec![
-            SearchResult {
-                title: format!("Result for: {}", query),
-                url: format!("https://example.com/search?q={}", query),
-                snippet: format!("This is a mock search result for '{}'", query),
-            },
-            SearchResult {
-                title: format!("{} - Wikipedia", query),
-                url: format!("https://en.wikipedia.org/wiki/{}", query),
-                snippet: format!("Information about {} from Wikipedia", query),
-            },
-        ]
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct SearchResult {
-    title: String,
-    url: String,
-    snippet: String,
-}
-
-impl Default for SearchTool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Tool for SearchTool {
-    async fn call(&self, input: Value) -> Result<Value> {
-        let query = input
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| FlowgentraError::ToolError("Missing 'query' field".to_string()))?;
-
-        let results = self.mock_search(query);
-
-        Ok(json!({
-            "query": query,
-            "results": results,
-            "count": results.len()
-        }))
-    }
-
-    fn definition(&self) -> ToolDefinition {
-        let mut input_props = HashMap::new();
-        input_props.insert(
-            "query".to_string(),
-            JsonSchema::string().with_description("Search query"),
-        );
-        input_props.insert(
-            "limit".to_string(),
-            JsonSchema::integer().with_description("Maximum number of results (default: 10)"),
-        );
-
-        ToolDefinition::new(
-            "search",
-            "Search for information",
-            JsonSchema::object()
-                .with_properties(input_props)
-                .with_required(vec!["query".to_string()]),
-            JsonSchema::object()
-                .with_properties({
-                    let mut props = HashMap::new();
-                    props.insert("query".to_string(), JsonSchema::string());
-                    props.insert("results".to_string(), JsonSchema::array());
-                    props.insert("count".to_string(), JsonSchema::integer());
-                    props
-                }),
-        )
-        .with_category("information")
-        .with_example(
-            json!({"query": "rust programming"}),
-            json!({
-                "query": "rust programming",
-                "results": [
-                    {"title": "Rust Official", "url": "https://rust-lang.org", "snippet": "The Rust programming language"}
-                ],
-                "count": 1
-            }),
-            "Search for Rust programming",
-        )
-    }
-}
-
-// =============================================================================
-// Web Request Tool
-// =============================================================================
-
-/// Tool for making HTTP requests
-pub struct WebRequestTool;
-
-impl WebRequestTool {
-    pub fn new() -> Self {
-        WebRequestTool
-    }
-}
-
-impl Default for WebRequestTool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Tool for WebRequestTool {
-    async fn call(&self, input: Value) -> Result<Value> {
-        let url = input
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| FlowgentraError::ToolError("Missing 'url' field".to_string()))?;
-
-        let method = input
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("GET");
-
-        // Mock HTTP request - in real implementation would use reqwest
-        let status_code = 200;
-        let body = format!("Mock response from {}", url);
-
-        Ok(json!({
-            "url": url,
-            "method": method,
-            "status": status_code,
-            "body": body
-        }))
-    }
-
-    fn definition(&self) -> ToolDefinition {
-        let mut input_props = HashMap::new();
-        input_props.insert(
-            "url".to_string(),
-            JsonSchema::string().with_description("URL to request"),
-        );
-        input_props.insert(
-            "method".to_string(),
-            JsonSchema::string().with_description("HTTP method (GET, POST, etc)"),
-        );
-        input_props.insert(
-            "headers".to_string(),
-            JsonSchema::object().with_description("Optional HTTP headers"),
-        );
-        input_props.insert(
-            "body".to_string(),
-            JsonSchema::string().with_description("Optional request body"),
-        );
-
-        ToolDefinition::new(
-            "web_request",
-            "Make HTTP requests to web endpoints",
-            JsonSchema::object()
-                .with_properties(input_props)
-                .with_required(vec!["url".to_string()]),
-            JsonSchema::object()
-                .with_properties({
-                    let mut props = HashMap::new();
-                    props.insert("url".to_string(), JsonSchema::string());
-                    props.insert("method".to_string(), JsonSchema::string());
-                    props.insert("status".to_string(), JsonSchema::integer());
-                    props.insert("body".to_string(), JsonSchema::string());
-                    props
-                }),
-        )
-        .with_category("network")
-        .with_example(
-            json!({"url": "https://api.example.com/data"}),
-            json!({"url": "https://api.example.com/data", "method": "GET", "status": 200, "body": "{}"}),
-            "Fetch data from API",
-        )
-    }
-}
-
-// =============================================================================
 // File Tool
 // =============================================================================
 
 /// Tool for file operations (read, write, list).
 ///
 /// All paths are resolved relative to `sandbox_root` and must remain inside it.
-/// Attempts to escape via `..`, symlinks, or absolute paths outside the root
-/// are rejected with an error.
 pub struct FilesTool {
-    /// Absolute path of the directory that this tool is sandboxed to.
-    /// All file operations are restricted to this directory tree.
     sandbox_root: std::path::PathBuf,
 }
 
 impl FilesTool {
-    /// Create a `FilesTool` sandboxed to `root`.
-    /// The root must already exist; it is canonicalized at construction time.
     pub fn new_with_root(root: impl AsRef<std::path::Path>) -> Result<Self> {
         let canonical = fs::canonicalize(root.as_ref()).map_err(|e| {
             FlowgentraError::ToolError(format!(
@@ -341,11 +144,7 @@ impl FilesTool {
         })
     }
 
-    /// Resolve `user_path` to an absolute, canonical path and verify it is
-    /// inside `sandbox_root`.  Returns the canonicalized path on success.
     fn safe_path(&self, user_path: &str) -> Result<std::path::PathBuf> {
-        // Reject bare `..` or paths that *start with* a `..` component before
-        // canonicalization (fast-fail; canonicalize below is the real guard).
         let p = std::path::Path::new(user_path);
         for component in p.components() {
             if component == std::path::Component::ParentDir {
@@ -354,34 +153,23 @@ impl FilesTool {
                 ));
             }
         }
-
-        // Join relative paths onto the sandbox root; leave absolute paths as-is
-        // so canonicalize can evaluate them before we check containment.
         let joined = if p.is_absolute() {
             p.to_path_buf()
         } else {
             self.sandbox_root.join(p)
         };
-
-        // Resolve symlinks and normalize (this also verifies the path exists
-        // for read/list; for write the parent must exist).
         let canonical = fs::canonicalize(&joined).map_err(|e| {
             FlowgentraError::ToolError(format!("Path '{}' is invalid: {}", user_path, e))
         })?;
-
-        // The canonical path must start with the canonical sandbox root.
         if !canonical.starts_with(&self.sandbox_root) {
             return Err(FlowgentraError::ToolError(format!(
                 "Path '{}' resolves outside the allowed sandbox directory",
                 user_path
             )));
         }
-
         Ok(canonical)
     }
 
-    /// Like `safe_path` but used for write targets where the file may not exist yet.
-    /// We canonicalize the *parent* directory and verify containment.
     fn safe_write_path(&self, user_path: &str) -> Result<std::path::PathBuf> {
         let p = std::path::Path::new(user_path);
         for component in p.components() {
@@ -391,14 +179,11 @@ impl FilesTool {
                 ));
             }
         }
-
         let joined = if p.is_absolute() {
             p.to_path_buf()
         } else {
             self.sandbox_root.join(p)
         };
-
-        // Canonicalize the parent so the file itself doesn't need to exist.
         let parent = joined.parent().ok_or_else(|| {
             FlowgentraError::ToolError(format!("Path '{}' has no parent directory", user_path))
         })?;
@@ -408,15 +193,12 @@ impl FilesTool {
                 user_path, e
             ))
         })?;
-
         if !canonical_parent.starts_with(&self.sandbox_root) {
             return Err(FlowgentraError::ToolError(format!(
                 "Path '{}' resolves outside the allowed sandbox directory",
                 user_path
             )));
         }
-
-        // Reconstruct the full target path with the canonicalized parent.
         let file_name = joined.file_name().ok_or_else(|| {
             FlowgentraError::ToolError(format!("Path '{}' has no file name", user_path))
         })?;
@@ -439,23 +221,14 @@ impl FilesTool {
         let safe = self.safe_path(path)?;
         let entries = fs::read_dir(&safe)
             .map_err(|e| FlowgentraError::ToolError(format!("Failed to list files: {}", e)))?;
-
         let files: Vec<String> = entries
-            .filter_map(
-                |entry: std::result::Result<std::fs::DirEntry, std::io::Error>| {
-                    entry.ok().map(|e| e.path().to_string_lossy().to_string())
-                },
-            )
+            .filter_map(|entry| entry.ok().map(|e| e.path().to_string_lossy().to_string()))
             .collect();
-
         Ok(files)
     }
 }
 
 impl Default for FilesTool {
-    /// Creates a `FilesTool` sandboxed to the current working directory.
-    /// Panics if the current directory cannot be canonicalized (should not
-    /// happen in normal operation).
     fn default() -> Self {
         Self::new_with_root(std::env::current_dir().expect("Failed to get current directory"))
             .expect("Failed to canonicalize current directory")
@@ -475,43 +248,27 @@ impl Tool for FilesTool {
                 let path = input.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
                     FlowgentraError::ToolError("Missing 'path' field".to_string())
                 })?;
-
                 let content = self.read_file(path).await?;
-                Ok(serde_json::json!({
-                    "operation": "read",
-                    "path": path,
-                    "content": content
-                }))
+                Ok(json!({"operation": "read", "path": path, "content": content}))
             }
             "write" => {
                 let path = input.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
                     FlowgentraError::ToolError("Missing 'path' field".to_string())
                 })?;
-
                 let content = input
                     .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         FlowgentraError::ToolError("Missing 'content' field".to_string())
                     })?;
-
                 self.write_file(path, content).await?;
-                Ok(serde_json::json!({
-                    "operation": "write",
-                    "path": path,
-                    "success": true
-                }))
+                Ok(json!({"operation": "write", "path": path, "success": true}))
             }
             "list" => {
                 let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-
-                let files: Vec<String> = self.list_files(path).await?;
-                Ok(serde_json::json!({
-                    "operation": "list",
-                    "path": path,
-                    "files": files,
-                    "count": files.len()
-                }))
+                let files = self.list_files(path).await?;
+                let count = files.len();
+                Ok(json!({"operation": "list", "path": path, "files": files, "count": count}))
             }
             _ => Err(FlowgentraError::ToolError(format!(
                 "Unknown file operation: {}",
@@ -532,12 +289,12 @@ impl Tool for FilesTool {
         );
         input_props.insert(
             "content".to_string(),
-            JsonSchema::string().with_description("Content (for write operation)"),
+            JsonSchema::string().with_description("Content for write operation"),
         );
 
         ToolDefinition::new(
             "file",
-            "Perform file operations (read, write, list)",
+            "Perform file operations (read, write, list) within a sandboxed directory",
             JsonSchema::object()
                 .with_properties(input_props)
                 .with_required(vec!["operation".to_string(), "path".to_string()]),
@@ -567,32 +324,11 @@ mod tests {
     #[tokio::test]
     async fn test_calculator() {
         let calc = CalculatorTool::new();
-        let result: Value = calc
+        let result = calc
             .call(json!({"operation": "add", "a": 2.0, "b": 3.0}))
             .await
             .unwrap();
-
         assert_eq!(result["result"], 5.0);
-    }
-
-    #[tokio::test]
-    async fn test_search() {
-        let search = SearchTool::new();
-        let result: Value = search.call(json!({"query": "test"})).await.unwrap();
-
-        assert_eq!(result["query"], "test");
-        assert!(result["count"].as_u64().unwrap() > 0);
-    }
-
-    #[tokio::test]
-    async fn test_web_request() {
-        let web = WebRequestTool::new();
-        let result: Value = web
-            .call(json!({"url": "https://example.com"}))
-            .await
-            .unwrap();
-
-        assert_eq!(result["status"], 200);
     }
 
     #[test]
