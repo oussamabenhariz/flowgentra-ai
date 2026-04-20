@@ -64,7 +64,7 @@ impl ToolCallingAgent {
 
 impl Default for ToolCallingAgent {
     fn default() -> Self {
-        Self::new(PrebuiltAgentConfig::new(
+        Self::new(crate::core::agents::builders::new_prebuilt_agent_config(
             "tool_calling",
             AgentType::ToolCalling,
         ))

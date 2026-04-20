@@ -11,7 +11,7 @@
 //!
 //! ```ignore
 //! async fn my_node(state: &MyState, ctx: &Context) -> Result<MyStateUpdate> {
-//!     let llm = ctx.get_llm_client()?;
+//!     let llm = ctx.get_llm()?;
 //!     let response = llm.chat(vec![Message::user(&state.query)]).await?;
 //!     Ok(MyStateUpdate::new().result(Some(response.content)))
 //! }
@@ -219,10 +219,10 @@ impl Context {
 
     // ── LLM ──
 
-    /// Get the configured LLM client.
-    pub fn get_llm_client(
+    /// Get the configured LLM.
+    pub fn get_llm(
         &self,
-    ) -> crate::core::error::Result<Arc<dyn crate::core::llm::LLMClient>> {
+    ) -> crate::core::error::Result<Arc<dyn crate::core::llm::LLM>> {
         let config = self.llm_config.as_ref().ok_or_else(|| {
             crate::core::error::FlowgentraError::ConfigError(
                 "LLM config not found in context. Make sure LLM is configured in config.yaml"
@@ -372,7 +372,7 @@ impl Context {
         messages: Vec<crate::core::llm::Message>,
         max_iterations: usize,
     ) -> crate::core::error::Result<crate::core::llm::Message> {
-        let llm = self.get_llm_client()?;
+        let llm = self.get_llm()?;
         let mcp = self.get_mcp_client(mcp_name)?;
 
         let mcp_tools = mcp.list_tools().await?;

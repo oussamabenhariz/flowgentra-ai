@@ -1,12 +1,12 @@
-//! # Retry LLM Client
+//! # Retry LLM
 //!
-//! Wraps any `LLMClient` with exponential backoff retry, circuit breaker,
+//! Wraps any `LLM` with exponential backoff retry, circuit breaker,
 //! and automatic rate-limit handling.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{LLMClient, Message, TokenUsage, ToolDefinition};
+use super::{LLM, Message, TokenUsage, ToolDefinition};
 use crate::core::error::{FlowgentraError, Result};
 
 /// Circuit breaker state for tracking consecutive failures.
@@ -15,19 +15,19 @@ struct CircuitBreakerState {
     opened_at: Option<std::time::Instant>,
 }
 
-/// LLM client wrapper that adds:
+/// LLM wrapper that adds:
 /// - Retry with exponential backoff (rate-limit and transport errors)
 /// - Circuit breaker (opens after N consecutive failures, resets after cooldown)
 ///
 /// # Example
 /// ```ignore
-/// use flowgentra_ai::core::llm::{RetryLLMClient, create_llm_client};
+/// use flowgentra_ai::core::llm::{RetryLLM, create_llm};
 ///
-/// let base_client = create_llm_client(&config)?;
-/// let client = RetryLLMClient::new(base_client, 3); // 3 retries
+/// let base_client = create_llm(&config)?;
+/// let client = RetryLLM::new(base_client, 3); // 3 retries
 /// ```
-pub struct RetryLLMClient {
-    inner: Arc<dyn LLMClient>,
+pub struct RetryLLM {
+    inner: Arc<dyn LLM>,
     max_retries: u32,
     /// Base delay for exponential backoff (doubles each attempt).
     base_delay: Duration,
@@ -39,9 +39,9 @@ pub struct RetryLLMClient {
     circuit_cooldown: Duration,
 }
 
-impl RetryLLMClient {
-    /// Wrap an existing LLM client with retry logic.
-    pub fn new(inner: Arc<dyn LLMClient>, max_retries: u32) -> Self {
+impl RetryLLM {
+    /// Wrap an existing LLM with retry logic.
+    pub fn new(inner: Arc<dyn LLM>, max_retries: u32) -> Self {
         Self {
             inner,
             max_retries,
@@ -57,7 +57,7 @@ impl RetryLLMClient {
 
     /// Create with custom settings.
     pub fn with_settings(
-        inner: Arc<dyn LLMClient>,
+        inner: Arc<dyn LLM>,
         max_retries: u32,
         base_delay: Duration,
         circuit_threshold: u32,
@@ -201,7 +201,7 @@ fn http_status_present(msg: &str, code: u16) -> bool {
 }
 
 #[async_trait::async_trait]
-impl LLMClient for RetryLLMClient {
+impl LLM for RetryLLM {
     async fn chat(&self, messages: Vec<Message>) -> Result<Message> {
         let inner = self.inner.clone();
         let msgs = messages.clone();

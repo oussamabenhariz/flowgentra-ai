@@ -1,57 +1,57 @@
-//! Fallback LLM Client — try multiple providers in order
+//! Fallback LLM — try multiple providers in order
 //!
 //! When the primary provider fails, automatically falls through to the next
 //! one in the chain. Useful for reliability and cost optimization.
 
 use std::sync::Arc;
 
-use super::{LLMClient, Message, TokenUsage, ToolDefinition};
+use super::{LLM, Message, TokenUsage, ToolDefinition};
 
-/// An LLM client that tries multiple providers in order.
+/// An LLM that tries multiple providers in order.
 ///
 /// If the primary client fails, it tries the next one, and so on.
-/// All clients must implement `LLMClient`.
+/// All clients must implement `LLM`.
 ///
 /// # Example
 /// ```ignore
-/// let primary = create_llm_client(&openai_config)?;
-/// let fallback = create_llm_client(&anthropic_config)?;
-/// let local = create_llm_client(&ollama_config)?;
+/// let primary = create_llm(&openai_config)?;
+/// let fallback = create_llm(&anthropic_config)?;
+/// let local = create_llm(&ollama_config)?;
 ///
-/// let client = FallbackLLMClient::new(primary)
+/// let client = FallbackLLM::new(primary)
 ///     .with_fallback(fallback)
 ///     .with_fallback(local);
 ///
 /// // Tries OpenAI first, then Anthropic, then Ollama
 /// let response = client.chat(messages).await?;
 /// ```
-pub struct FallbackLLMClient {
-    clients: Vec<Arc<dyn LLMClient>>,
+pub struct FallbackLLM {
+    clients: Vec<Arc<dyn LLM>>,
 }
 
-impl FallbackLLMClient {
+impl FallbackLLM {
     /// Create with a primary client.
-    pub fn new(primary: Arc<dyn LLMClient>) -> Self {
+    pub fn new(primary: Arc<dyn LLM>) -> Self {
         Self {
             clients: vec![primary],
         }
     }
 
     /// Add a fallback client. Clients are tried in the order they are added.
-    pub fn with_fallback(mut self, client: Arc<dyn LLMClient>) -> Self {
+    pub fn with_fallback(mut self, client: Arc<dyn LLM>) -> Self {
         self.clients.push(client);
         self
     }
 
     /// Create from a list of clients (first = primary).
-    pub fn from_clients(clients: Vec<Arc<dyn LLMClient>>) -> Self {
+    pub fn from_clients(clients: Vec<Arc<dyn LLM>>) -> Self {
         assert!(!clients.is_empty(), "At least one client is required");
         Self { clients }
     }
 }
 
 #[async_trait::async_trait]
-impl LLMClient for FallbackLLMClient {
+impl LLM for FallbackLLM {
     async fn chat(&self, messages: Vec<Message>) -> crate::core::error::Result<Message> {
         let mut last_error = None;
 
@@ -64,7 +64,7 @@ impl LLMClient for FallbackLLMClient {
                     return Ok(response);
                 }
                 Err(e) => {
-                    tracing::warn!("LLM client #{} failed: {}, trying next...", i, e);
+                    tracing::warn!("LLM #{} failed: {}, trying next...", i, e);
                     last_error = Some(e);
                 }
             }
@@ -90,7 +90,7 @@ impl LLMClient for FallbackLLMClient {
                     return Ok(response);
                 }
                 Err(e) => {
-                    tracing::warn!("LLM client #{} failed: {}, trying next...", i, e);
+                    tracing::warn!("LLM #{} failed: {}, trying next...", i, e);
                     last_error = Some(e);
                 }
             }
@@ -117,7 +117,7 @@ impl LLMClient for FallbackLLMClient {
                     return Ok(response);
                 }
                 Err(e) => {
-                    tracing::warn!("LLM client #{} failed: {}, trying next...", i, e);
+                    tracing::warn!("LLM #{} failed: {}, trying next...", i, e);
                     last_error = Some(e);
                 }
             }
@@ -165,6 +165,6 @@ mod tests {
     fn test_fallback_creation() {
         // Just test that the types compose correctly
         // (Can't test actual LLM calls without a mock)
-        let _ = FallbackLLMClient::from_clients;
+        let _ = FallbackLLM::from_clients;
     }
 }

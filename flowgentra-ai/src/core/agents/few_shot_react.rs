@@ -166,7 +166,7 @@ Output: (your answer here)"#,
 
 impl Default for FewShotReActAgent {
     fn default() -> Self {
-        Self::new(PrebuiltAgentConfig::new(
+        Self::new(crate::core::agents::builders::new_prebuilt_agent_config(
             "few_shot_react",
             AgentType::FewShotReAct,
         ))

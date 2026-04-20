@@ -212,7 +212,7 @@ let tool = ToolDefinition {
     }),
 };
 
-// Create an LLM client
+// Create an LLM
 let llm_config = LLMConfig {
     provider: LLMProvider::OpenAI,
     model: "gpt-4".to_string(),

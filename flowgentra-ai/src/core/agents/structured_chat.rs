@@ -84,7 +84,7 @@ impl StructuredChatZeroShotReActAgent {
 
 impl Default for StructuredChatZeroShotReActAgent {
     fn default() -> Self {
-        Self::new(PrebuiltAgentConfig::new(
+        Self::new(crate::core::agents::builders::new_prebuilt_agent_config(
             "structured_chat",
             AgentType::StructuredChatZeroShotReAct,
         ))

@@ -19,7 +19,7 @@ use crate::core::TimeoutNodeConfig;
 // - ParallelExecutorNode - Concurrent branch execution
 
 use crate::core::error::{FlowgentraError, Result};
-use crate::core::llm::LLMClient;
+use crate::core::llm::LLM;
 use crate::core::mcp::MCPClient;
 // Removed unexpected closing delimiter
 use crate::core::state::DynState;
@@ -44,7 +44,7 @@ pub struct LLMNode {
     #[allow(dead_code)]
     config: LLMNodeConfig,
     #[allow(dead_code)]
-    llm_client: Option<Arc<dyn LLMClient>>,
+    llm: Option<Arc<dyn LLM>>,
 }
 
 impl LLMNode {
@@ -61,7 +61,7 @@ impl LLMNode {
                 output_key: "llm_response".to_string(),
                 config: HashMap::new(),
             },
-            llm_client: None,
+            llm: None,
         }
     }
 }

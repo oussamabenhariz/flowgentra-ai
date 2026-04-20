@@ -32,7 +32,7 @@
 //! use flowgentra_ai::core::llm::Message;
 //!
 //! async fn my_handler(state: DynState) -> Result<DynState, Box<dyn std::error::Error>> {
-//!     // Get LLM client from state (context-dependent)
+//!     // Get LLM from state (context-dependent)
 //!     // Send a message to the LLM
 //!     let messages = vec![
 //!         Message::system("You are helpful assistant"),
@@ -134,18 +134,18 @@ pub mod prompt_template;
 mod retry;
 pub mod token_counter;
 
-pub use adapter::{HttpLLMClient, ProviderAdapter};
+pub use adapter::{HttpLLM, ProviderAdapter};
 pub use anthropic::AnthropicClient;
 pub use azure::AzureOpenAIClient;
-pub use cache::CachedLLMClient;
-pub use factory::create_llm_client;
-pub use fallback::FallbackLLMClient;
+pub use cache::CachedLLM;
+pub use factory::create_llm;
+pub use fallback::FallbackLLM;
 pub use groq::GroqClient;
 pub use huggingface::HuggingFaceClient;
 pub use mistral::MistralClient;
 pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;
-pub use retry::RetryLLMClient;
+pub use retry::RetryLLM;
 
 // =============================================================================
 // LLM Provider
@@ -415,15 +415,15 @@ impl LLMConfig {
         self
     }
 
-    /// Create an LLM client based on this configuration
+    /// Create an LLM based on this configuration
     ///
     /// # Example
     /// ```ignore
     /// let config = LLMConfig::new(LLMProvider::OpenAI, "gpt-4".to_string(), api_key);
     /// let client = config.create_client()?;
     /// ```
-    pub fn create_client(&self) -> crate::core::error::Result<std::sync::Arc<dyn LLMClient>> {
-        factory::create_llm_client(self)
+    pub fn create_client(&self) -> crate::core::error::Result<std::sync::Arc<dyn LLM>> {
+        factory::create_llm(self)
     }
 }
 
@@ -602,7 +602,7 @@ impl ToolDefinition {
 }
 
 // =============================================================================
-// LLM Client Trait
+// LLM Trait
 // =============================================================================
 
 /// Trait for interacting with LLM providers
@@ -610,7 +610,7 @@ impl ToolDefinition {
 /// Implementations handle provider-specific API details,
 /// authentication, and response parsing.
 #[async_trait::async_trait]
-pub trait LLMClient: Send + Sync {
+pub trait LLM: Send + Sync {
     /// Send messages to the LLM and get a response
     ///
     /// # Arguments
@@ -675,4 +675,4 @@ pub trait LLMClient: Send + Sync {
 }
 
 // Provider-specific clients are in separate modules
-// Use factory::create_llm_client() to create the appropriate client
+// Use factory::create_llm() to create the appropriate client

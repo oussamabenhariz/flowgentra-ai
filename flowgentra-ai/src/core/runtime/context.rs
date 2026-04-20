@@ -25,7 +25,7 @@
 //! ```
 
 use crate::core::error::FlowgentraError;
-use crate::core::llm::LLMClient;
+use crate::core::llm::LLM;
 use crate::core::mcp::MCPClient;
 use crate::core::state::DynState;
 use std::collections::HashMap;
@@ -61,8 +61,8 @@ pub struct ExecutionContext {
     branch_id: Option<String>,
 
     // === Service Clients ===
-    /// LLM client for AI operations
-    llm_client: Option<Arc<dyn LLMClient>>,
+    /// LLM for AI operations
+    llm: Option<Arc<dyn LLM>>,
 
     /// MCP clients available to this node
     mcp_clients: HashMap<String, Arc<dyn MCPClient>>,
@@ -123,7 +123,7 @@ impl ExecutionContext {
             depth: 0,
             iteration: 0,
             branch_id: None,
-            llm_client: None,
+            llm: None,
             mcp_clients: HashMap::new(),
             start_time: now,
             node_start_time: None,
@@ -147,7 +147,7 @@ impl ExecutionContext {
         child.execution_path.push(self.node_name.clone());
         child.depth = self.depth + 1;
         child.start_time = self.start_time;
-        child.llm_client = self.llm_client.clone();
+        child.llm = self.llm.clone();
         child.mcp_clients = self.mcp_clients.clone();
         child.labels = self.labels.clone();
         child
@@ -214,15 +214,15 @@ impl ExecutionContext {
 
     // === Service Clients ===
 
-    /// Set the LLM client
-    pub fn with_llm_client(mut self, client: Arc<dyn LLMClient>) -> Self {
-        self.llm_client = Some(client);
+    /// Set the LLM
+    pub fn with_llm(mut self, client: Arc<dyn LLM>) -> Self {
+        self.llm = Some(client);
         self
     }
 
-    /// Get the LLM client
-    pub fn llm_client(&self) -> Option<Arc<dyn LLMClient>> {
-        self.llm_client.clone()
+    /// Get the LLM
+    pub fn llm(&self) -> Option<Arc<dyn LLM>> {
+        self.llm.clone()
     }
 
     /// Add an MCP client
@@ -442,9 +442,9 @@ impl std::fmt::Debug for ExecutionContext {
 // =============================================================================
 
 impl ExecutionContext {
-    /// Builder-style method to set LLM client
-    pub fn with_llm(mut self, client: Arc<dyn LLMClient>) -> Self {
-        self.llm_client = Some(client);
+    /// Builder-style method to set LLM
+    pub fn with_llm(mut self, client: Arc<dyn LLM>) -> Self {
+        self.llm = Some(client);
         self
     }
 

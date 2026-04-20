@@ -42,7 +42,7 @@ use tracing::info;
 /// Handler names must match the function name and be referenced by that name in your config.yaml.
 pub(crate) use crate::core::config::AgentConfig;
 pub(crate) use crate::core::error::{FlowgentraError, Result};
-pub(crate) use crate::core::llm::{create_llm_client, LLMClient};
+pub(crate) use crate::core::llm::{create_llm, LLM};
 pub(crate) use crate::core::memory::{
     ConversationMemory, InMemoryConversationMemory, MemoryCheckpointer,
 };
@@ -154,7 +154,7 @@ pub type ConditionRegistry<T> = HashMap<String, Condition<T>>;
 /// - Optional checkpointer and conversation memory (from config or programmatic)
 pub struct Agent {
     runtime: AgentRuntime,
-    llm_client: Arc<dyn LLMClient>,
+    llm: Arc<dyn LLM>,
     config: AgentConfig,
     /// Current state of the agent (initialized from state_schema)
     pub state: DynState,
@@ -176,7 +176,7 @@ impl Agent {
     /// 1. Loads the YAML config file
     /// 2. Validates the graph structure
     /// 3. Creates the runtime with your handlers and conditions
-    /// 4. Sets up the LLM client
+    /// 4. Sets up the LLM
     ///
     /// # Arguments
     /// - `config_path`: Path to your `config.yaml` file
@@ -218,8 +218,8 @@ impl Agent {
         // Create runtime
         let mut runtime = AgentRuntime::from_config(config.clone())?;
 
-        // Create LLM client
-        let llm_client = create_llm_client(&config.llm)?;
+        // Create LLM
+        let llm = create_llm(&config.llm)?;
 
         // Convert all handlers to Arc (cloneable) so multiple nodes can share a handler
         let arc_handlers: HashMap<String, ArcHandler<DynState>> = handlers
@@ -387,7 +387,7 @@ impl Agent {
         let initial_state = config.create_initial_state();
         Ok(Agent {
             runtime,
-            llm_client,
+            llm,
             config,
             state: initial_state,
             conversation_memory: None,
@@ -503,11 +503,11 @@ impl Agent {
             .await
     }
 
-    /// Get the LLM client for use in handlers
+    /// Get the LLM for use in handlers
     ///
     /// Handlers can use this to access the configured LLM provider.
-    pub fn llm_client(&self) -> Arc<dyn LLMClient> {
-        Arc::clone(&self.llm_client)
+    pub fn llm(&self) -> Arc<dyn LLM> {
+        Arc::clone(&self.llm)
     }
 
     /// Get a reference to the agent's configuration
@@ -850,10 +850,10 @@ fn from_config_path_impl(
         .iter()
         .any(|n| n.node_type.as_deref() == Some("planner"));
     if has_legacy_planner || has_planner_type {
-        let llm_client = config.create_llm_client()?;
+        let llm = config.create_llm()?;
         let prompt_template = config.graph.planner.prompt_template.clone();
         let planner_fn = Arc::new(crate::core::node::planner::create_planner_handler(
-            llm_client,
+            llm,
             prompt_template,
         ));
         let arc_handler: ArcHandler<DynState> = Arc::new(move |state| planner_fn.as_ref()(state));
@@ -1144,9 +1144,9 @@ fn from_config_path_impl(
                     crate::core::node::orchestrator_node::OrchestrationStrategy::Dynamic
                 ) {
                     let llm = config
-                        .create_llm_client()
+                        .create_llm()
                         .ok()
-                        .map(|c| c as Arc<dyn LLMClient>);
+                        .map(|c| c as Arc<dyn LLM>);
                     create_supervisor_handler_with_llm(cfg, child_arcs, llm, child_mcps)
                 } else {
                     create_supervisor_handler(cfg, child_arcs, child_mcps)
@@ -1810,7 +1810,7 @@ fn create_supervisor_handler(
 fn create_supervisor_handler_with_llm(
     config: crate::core::node::orchestrator_node::SupervisorNodeConfig,
     children: Vec<(String, ArcHandler<DynState>)>,
-    llm_client: Option<Arc<dyn LLMClient>>,
+    llm: Option<Arc<dyn LLM>>,
     child_mcps: HashMap<String, Vec<String>>,
 ) -> Handler<DynState> {
     use crate::core::node::orchestrator_node::{OrchestrationStrategy, ParallelMergeStrategy};
@@ -1881,7 +1881,7 @@ fn create_supervisor_handler_with_llm(
     Box::new(move |state| {
         let config = config.clone();
         let children = children.clone();
-        let llm_client = llm_client.clone();
+        let llm = llm.clone();
         let child_mcps = child_mcps.clone();
         Box::pin(async move {
             let start = std::time::Instant::now();
@@ -2362,7 +2362,7 @@ fn create_supervisor_handler_with_llm(
                     };
                     let mut iteration_log = Vec::new();
 
-                    let llm = llm_client.clone();
+                    let llm = llm.clone();
 
                     'dynamic_outer: for iteration in 1..=max_iter {
                         println!("\n  ── Dynamic iteration {iteration}/{max_iter} ──");

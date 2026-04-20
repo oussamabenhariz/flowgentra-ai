@@ -27,7 +27,7 @@ docs/
 |
 |-- llm/                         LLM providers & features
 |   OpenAI, Anthropic, Mistral, Groq, HuggingFace, Ollama,
-|   RetryLLMClient, CachedLLMClient, FallbackLLMClient,
+|   RetryLLM, CachedLLM, FallbackLLM,
 |   token counting, cost tracking, structured output,
 |   PromptTemplate, ChatPromptTemplate, FewShotPromptTemplate,
 |   OutputParser (JSON, List, Structured)
@@ -191,14 +191,14 @@ The graph compiler is the heart of Flowgentra AI. Define nodes, edges, and condi
 | Feature                    | Description                                                            |
 | -------------------------- | ---------------------------------------------------------------------- |
 | Multi-Provider Support     | OpenAI, Anthropic, Mistral, Groq, Azure, HuggingFace, Ollama          |
-| RetryLLMClient             | Automatic retry with exponential backoff for transient failures        |
+| RetryLLM             | Automatic retry with exponential backoff for transient failures        |
 | Token Counting             | Track input/output tokens and manage context window limits             |
 | Cost Tracking              | Estimate USD cost per LLM call based on provider pricing               |
 | Anthropic Tool Calling     | Native `input_schema` format for Anthropic function calling            |
 | HuggingFace SSE Streaming  | Real server-sent-event streaming for HuggingFace models                |
 | ResponseFormat             | Structured output / JSON mode for deterministic parsing                |
-| CachedLLMClient            | Hash-based response caching to avoid redundant API calls               |
-| FallbackLLMClient          | Try multiple providers in sequence until one succeeds                  |
+| CachedLLM            | Hash-based response caching to avoid redundant API calls               |
+| FallbackLLM          | Try multiple providers in sequence until one succeeds                  |
 | PromptTemplate             | String interpolation with `{variable}` syntax and partial formatting   |
 | ChatPromptTemplate         | Multi-message prompt builder with system/user/assistant templates      |
 | OutputParser               | Parse JSON, lists, and structured data from LLM text responses         |

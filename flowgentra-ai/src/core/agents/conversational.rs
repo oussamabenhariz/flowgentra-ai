@@ -160,7 +160,7 @@ impl ConversationalAgent {
 
 impl Default for ConversationalAgent {
     fn default() -> Self {
-        Self::new(PrebuiltAgentConfig::new(
+        Self::new(crate::core::agents::builders::new_prebuilt_agent_config(
             "conversational",
             AgentType::Conversational,
         ))
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_memory_trimming() {
-        let mut config = PrebuiltAgentConfig::new("test", AgentType::Conversational);
+        let mut config = crate::core::agents::builders::new_prebuilt_agent_config("test", AgentType::Conversational);
         config.memory_steps = 3;
         let mut agent = ConversationalAgent::new(config);
 

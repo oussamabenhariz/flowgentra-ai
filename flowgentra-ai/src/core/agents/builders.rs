@@ -9,18 +9,49 @@ use super::{
     StructuredChatNode, ToolCallingNode, ToolExecutorNode, ToolSpec,
 };
 use crate::core::error::FlowgentraError;
-use crate::core::llm::LLMConfig;
+use crate::core::llm::{LLM, Message};
 use crate::core::mcp::MCPConfig;
 use crate::core::state::context::Context;
 use crate::core::state::{DynState, DynStateUpdate};
 use crate::core::state_graph::{FunctionNode, StateGraph};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::debug;
 
+// Stub LLM for backward compatibility with old agent implementations
+struct StubLLM;
+
+#[async_trait::async_trait]
+impl LLM for StubLLM {
+    async fn chat(&self, _messages: Vec<Message>) -> crate::core::error::Result<Message> {
+        Ok(Message::assistant(
+            "This is a stub client. Please provide an actual LLM when creating agents."
+                .to_string(),
+        ))
+    }
+
+    async fn chat_stream(
+        &self,
+        _messages: Vec<Message>,
+    ) -> crate::core::error::Result<tokio::sync::mpsc::Receiver<String>> {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        Ok(rx)
+    }
+}
+
+/// Create a PrebuiltAgentConfig with a stub LLM for backward compatibility
+/// (used by old agent implementations in conversational.rs, etc.)
+#[doc(hidden)]
+pub fn new_prebuilt_agent_config(
+    name: impl Into<String>,
+    agent_type: AgentType,
+) -> PrebuiltAgentConfig {
+    PrebuiltAgentConfig::new(name, agent_type, Arc::new(StubLLM))
+}
+
 /// Agent configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 pub struct PrebuiltAgentConfig {
     /// Agent name
     pub name: String,
@@ -28,16 +59,9 @@ pub struct PrebuiltAgentConfig {
     /// Agent type
     pub agent_type: String,
 
-    /// LLM model identifier (used when `llm` is None)
-    pub llm_model: String,
-
-    /// Full LLM configuration (takes precedence over `llm_model` / `api_key` / `temperature` / `max_tokens`).
+    /// LLM for making API calls
     #[serde(skip)]
-    pub llm: Option<LLMConfig>,
-
-    /// API key for the LLM provider. Required for cloud providers (OpenAI, Anthropic, etc.).
-    /// Leave as `None` for local providers that don't need authentication (e.g. Ollama).
-    pub api_key: Option<String>,
+    pub llm: Arc<dyn LLM>,
 
     /// System prompt/instructions
     pub system_prompt: String,
@@ -69,15 +93,14 @@ pub struct PrebuiltAgentConfig {
     pub custom_params: HashMap<String, String>,
 }
 
-impl Default for PrebuiltAgentConfig {
-    fn default() -> Self {
+impl PrebuiltAgentConfig {
+    /// Create new agent configuration with an LLM
+    pub fn new(name: impl Into<String>, agent_type: AgentType, llm: Arc<dyn LLM>) -> Self {
         Self {
-            name: "agent".to_string(),
-            agent_type: "default".to_string(),
-            llm_model: "gpt-4".to_string(),
-            llm: None,
-            api_key: None,
-            system_prompt: String::new(),
+            name: name.into(),
+            agent_type: agent_type.to_string(),
+            llm,
+            system_prompt: super::SystemPrompts::get_default(agent_type),
             tools: HashMap::new(),
             mcps: Vec::new(),
             temperature: 0.7,
@@ -88,18 +111,6 @@ impl Default for PrebuiltAgentConfig {
             max_retries: 3,
             retry_on_failure: true,
             custom_params: HashMap::new(),
-        }
-    }
-}
-
-impl PrebuiltAgentConfig {
-    /// Create new agent configuration
-    pub fn new(name: impl Into<String>, agent_type: AgentType) -> Self {
-        Self {
-            name: name.into(),
-            agent_type: agent_type.to_string(),
-            system_prompt: super::SystemPrompts::get_default(agent_type),
-            ..Default::default()
         }
     }
 }
@@ -151,7 +162,7 @@ impl GraphBasedAgent {
         let agent_config = config.clone();
         let tool_config = config.clone();
         let tool_executor = tool_executor.unwrap_or_else(|| Arc::new(|name: &str, _args: &str| {
-            format!("Tool '{}' has no executor registered. Use .with_tool_executor() on the AgentBuilder.", name)
+            format!("Tool '{}' has no executor registered. Set tool_executor in AgentConfig.", name)
         }));
 
         // Create agent reasoning node (wraps the actual node logic)
@@ -289,7 +300,7 @@ impl GraphBasedAgent {
         let tool_executor = tool_executor.unwrap_or_else(|| {
             Arc::new(|name: &str, _args: &str| {
                 format!(
-                    "Tool '{}' has no executor registered. Use .with_tool_executor() on AgentBuilder.",
+                    "Tool '{}' has no executor registered. Set tool_executor in AgentConfig.",
                     name
                 )
             })
@@ -376,7 +387,7 @@ impl GraphBasedAgent {
         let tool_executor = tool_executor.unwrap_or_else(|| {
             Arc::new(|name: &str, _args: &str| {
                 format!(
-                    "Tool '{}' has no executor registered. Use .with_tool_executor() on AgentBuilder.",
+                    "Tool '{}' has no executor registered. Set tool_executor in AgentConfig.",
                     name
                 )
             })
@@ -789,250 +800,133 @@ impl Agent for GraphBasedAgent {
     }
 }
 
-/// Agent builder for fluent configuration
-pub struct AgentBuilder {
-    config: PrebuiltAgentConfig,
-    tool_executor: Option<ToolExecutorFn>,
+/// Configuration for predefined agents.
+///
+/// Pass as the single argument to typed agent constructors:
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// use flowgentra_ai::core::agents::{FewShotReAct, AgentConfig, ToolSpec};
+///
+/// let agent = FewShotReAct::new(AgentConfig {
+///     name: "classifier".into(),
+///     llm: llm,
+///     system_prompt: Some("Example 1: urgent bug → Priority: HIGH".into()),
+///     tools: vec![ToolSpec::new("search", "Search the web")],
+///     retries: 2,
+///     memory_steps: Some(10),
+///     ..Default::default()
+/// })?;
+///
+/// let result = agent.execute_input("App crashes on login").await?;
+/// ```
+pub struct AgentConfig {
+    /// Agent name (default: `"agent"`)
+    pub name: String,
+    /// LLM for API calls
+    pub llm: Arc<dyn LLM>,
+    /// System prompt override; uses agent-type default when `None`
+    pub system_prompt: Option<String>,
+    /// Tools available to the agent
+    pub tools: Vec<ToolSpec>,
+    /// MCP server configurations
+    pub mcps: Vec<MCPConfig>,
+    /// Sampling temperature 0.0–1.0 (default: `0.7`)
+    pub temperature: f32,
+    /// Maximum response tokens (default: `2000`)
+    pub max_tokens: usize,
+    /// Maximum LLM retry attempts (default: `3`)
+    pub retries: usize,
+    /// Enable memory; value sets how many steps to retain. `None` = disabled
+    pub memory_steps: Option<usize>,
+    /// Enable evaluation mode (default: `false`)
+    pub evaluation: bool,
+    /// Tool executor: receives `(tool_name, args)` and returns the result string
+    pub tool_executor: Option<ToolExecutorFn>,
 }
 
-impl AgentBuilder {
-    /// Create new agent builder
-    pub fn new(agent_type: AgentType) -> Self {
+impl Default for AgentConfig {
+    fn default() -> Self {
         Self {
-            config: PrebuiltAgentConfig::new("agent", agent_type),
+            name: "agent".into(),
+            llm: Arc::new(StubLLM),
+            system_prompt: None,
+            tools: Vec::new(),
+            mcps: Vec::new(),
+            temperature: 0.7,
+            max_tokens: 2000,
+            retries: 3,
+            memory_steps: None,
+            evaluation: false,
             tool_executor: None,
         }
     }
-
-    /// Set agent name
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.config.name = name.into();
-        self
-    }
-
-    /// Set a full LLM configuration object (provider, model, api_key, temperature, etc.).
-    /// Takes precedence over `with_llm_config` when both are set.
-    pub fn with_llm(mut self, llm: LLMConfig) -> Self {
-        self.config.llm = Some(llm);
-        self
-    }
-
-    /// Set LLM model by name (string). Use `with_llm` to pass a full `LLMConfig` object.
-    pub fn with_llm_config(mut self, model: impl Into<String>) -> Self {
-        self.config.llm_model = model.into();
-        self
-    }
-
-    /// Set temperature
-    pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.config.temperature = temperature.clamp(0.0, 1.0);
-        self
-    }
-
-    /// Set max tokens
-    pub fn with_max_tokens(mut self, tokens: usize) -> Self {
-        self.config.max_tokens = tokens;
-        self
-    }
-
-    /// Add tool to agent
-    pub fn with_tool(mut self, tool: ToolSpec) -> Self {
-        self.config.tools.insert(tool.name.clone(), tool);
-        self
-    }
-
-    /// Add multiple tools
-    pub fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
-        for tool in tools {
-            self.config.tools.insert(tool.name.clone(), tool);
-        }
-        self
-    }
-
-    /// Add MCP configuration
-    pub fn with_mcp(mut self, mcp_config: MCPConfig) -> Self {
-        self.config.mcps.push(mcp_config);
-        self
-    }
-
-    /// Add multiple MCPs
-    pub fn with_mcps(mut self, mcp_configs: Vec<MCPConfig>) -> Self {
-        self.config.mcps.extend(mcp_configs);
-        self
-    }
-
-    /// Set system prompt
-    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.config.system_prompt = prompt.into();
-        self
-    }
-
-    /// Enable memory
-    pub fn with_memory_steps(mut self, steps: usize) -> Self {
-        self.config.memory_enabled = true;
-        self.config.memory_steps = steps;
-        self
-    }
-
-    /// Disable memory
-    pub fn without_memory(mut self) -> Self {
-        self.config.memory_enabled = false;
-        self
-    }
-
-    /// Enable evaluation
-    pub fn with_evaluation(mut self) -> Self {
-        self.config.evaluation_enabled = true;
-        self
-    }
-
-    /// Set retry policy
-    pub fn with_retries(mut self, max_retries: usize) -> Self {
-        self.config.max_retries = max_retries;
-        self.config.retry_on_failure = true;
-        self
-    }
-
-    /// Add custom parameter
-    pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.config.custom_params.insert(key.into(), value.into());
-        self
-    }
-
-    /// Get configuration
-    pub fn config(&self) -> &PrebuiltAgentConfig {
-        &self.config
-    }
-
-    /// Set the tool executor function.
-    ///
-    /// The tool executor receives `(tool_name, arguments)` and returns the result string.
-    /// This is how user-defined Rust functions get called when the LLM decides to use a tool.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-    ///     .with_tool_executor(|name, args| match name {
-    ///         "calculator" => format!("Result: {}", eval(args)),
-    ///         _ => format!("Unknown tool: {}", name),
-    ///     })
-    ///     .build_graph()?;
-    /// ```
-    pub fn with_tool_executor<F>(mut self, executor: F) -> Self
-    where
-        F: Fn(&str, &str) -> String + Send + Sync + 'static,
-    {
-        self.tool_executor = Some(Arc::new(executor));
-        self
-    }
-
-    /// Build agent - returns a boxed Agent trait object
-    /// This now creates a GraphBasedAgent which wraps StateGraph internally
-    pub fn build(self) -> Result<Box<dyn Agent>, FlowgentraError> {
-        // Create the graph-based agent (which builds StateGraph internally)
-        let agent = GraphBasedAgent::new(self.config, self.tool_executor)?;
-        Ok(Box::new(agent))
-    }
-
-    /// Build agent - returns the concrete GraphBasedAgent for async execution
-    /// Use this when you need to call execute_input() for async LLM calls
-    pub fn build_graph(self) -> Result<GraphBasedAgent, FlowgentraError> {
-        GraphBasedAgent::new(self.config, self.tool_executor)
-    }
 }
 
-impl Default for AgentBuilder {
-    fn default() -> Self {
-        Self::new(AgentType::ZeroShotReAct)
+impl AgentConfig {
+    /// Convert into [`PrebuiltAgentConfig`] for a specific agent type.
+    pub fn into_prebuilt(self, agent_type: AgentType) -> PrebuiltAgentConfig {
+        let mut config = PrebuiltAgentConfig::new(self.name, agent_type, self.llm);
+        if let Some(prompt) = self.system_prompt {
+            config.system_prompt = prompt;
+        }
+        for tool in self.tools {
+            config.tools.insert(tool.name.clone(), tool);
+        }
+        config.mcps = self.mcps;
+        config.temperature = self.temperature.clamp(0.0, 1.0);
+        config.max_tokens = self.max_tokens;
+        config.max_retries = self.retries;
+        config.retry_on_failure = self.retries > 0;
+        if let Some(steps) = self.memory_steps {
+            config.memory_enabled = true;
+            config.memory_steps = steps;
+        }
+        config.evaluation_enabled = self.evaluation;
+        config
     }
 }
 
 // ── Typed agent constructors ──────────────────────────────────────────────────
-//
-// Each struct wraps `AgentBuilder` and provides a named, type-safe API so
-// callers don't need to import `AgentType`:
-//
-//   let agent = ZeroShotReAct::new()
-//       .name("my-agent")
-//       .llm(llm_config)
-//       .system_prompt("You are helpful.")
-//       .tool(search_tool)
-//       .retries(2)
-//       .build()?;
 
 macro_rules! impl_typed_agent {
     ($name:ident, $agent_type:expr, $doc:literal) => {
         #[doc = $doc]
-        pub struct $name(AgentBuilder);
-
-        impl $name {
-            /// Create a new agent of this type with all defaults.
-            pub fn new() -> Self {
-                Self(AgentBuilder::new($agent_type))
-            }
-
-            /// Set the agent name.
-            pub fn name(mut self, name: impl Into<String>) -> Self {
-                self.0 = self.0.with_name(name);
-                self
-            }
-
-            /// Provide a fully configured `LLMConfig`. Takes precedence over any
-            /// model-string shorthand.
-            pub fn llm(mut self, llm: LLMConfig) -> Self {
-                self.0 = self.0.with_llm(llm);
-                self
-            }
-
-            /// Override the default system prompt.
-            pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-                self.0 = self.0.with_system_prompt(prompt);
-                self
-            }
-
-            /// Add a single tool.
-            pub fn tool(mut self, tool: ToolSpec) -> Self {
-                self.0 = self.0.with_tool(tool);
-                self
-            }
-
-            /// Add multiple tools at once.
-            pub fn tools(mut self, tools: Vec<ToolSpec>) -> Self {
-                self.0 = self.0.with_tools(tools);
-                self
-            }
-
-            /// Set maximum LLM retry attempts.
-            pub fn retries(mut self, n: usize) -> Self {
-                self.0 = self.0.with_retries(n);
-                self
-            }
-
-            /// Enable conversation memory and set how many steps to retain.
-            pub fn memory_steps(mut self, steps: usize) -> Self {
-                self.0 = self.0.with_memory_steps(steps);
-                self
-            }
-
-            /// Set the tool executor. Receives `(tool_name, arguments)` and returns
-            /// the result string.
-            pub fn tool_executor<F>(mut self, executor: F) -> Self
-            where
-                F: Fn(&str, &str) -> String + Send + Sync + 'static,
-            {
-                self.0 = self.0.with_tool_executor(executor);
-                self
-            }
-
-            /// Build the agent graph.
-            pub fn build(self) -> Result<GraphBasedAgent, FlowgentraError> {
-                self.0.build_graph()
-            }
+        pub struct $name {
+            inner: GraphBasedAgent,
         }
 
-        impl Default for $name {
-            fn default() -> Self {
-                Self::new()
+        impl $name {
+            /// Create a new agent with the given [`AgentConfig`].
+            pub fn new(config: AgentConfig) -> Result<Self, FlowgentraError> {
+                let executor = config.tool_executor.clone();
+                let prebuilt = config.into_prebuilt($agent_type);
+                Ok(Self { inner: GraphBasedAgent::new(prebuilt, executor)? })
+            }
+
+            /// Execute the agent with a text input and return a text response.
+            pub async fn execute_input(&self, input: &str) -> Result<String, FlowgentraError> {
+                self.inner.execute_input(input).await
+            }
+
+            /// Agent name.
+            pub fn name(&self) -> &str {
+                &self.inner.config().name
+            }
+
+            /// Agent configuration.
+            pub fn config(&self) -> &PrebuiltAgentConfig {
+                self.inner.config()
+            }
+
+            /// Tools registered with this agent.
+            pub fn tools(&self) -> Vec<&ToolSpec> {
+                self.inner.tools()
+            }
+
+            /// Underlying [`StateGraph`] for advanced introspection.
+            pub fn graph(&self) -> &StateGraph<DynState> {
+                self.inner.graph()
             }
         }
     };
@@ -1104,29 +998,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_agent_builder_fluent_api() {
-        let builder = AgentBuilder::new(AgentType::ZeroShotReAct)
-            .with_name("my_agent")
-            .with_llm_config("gpt-4-turbo")
-            .with_temperature(0.5)
-            .with_max_tokens(4000)
-            .with_memory_steps(10)
-            .with_evaluation();
-
-        let config = builder.config();
+    fn test_agent_config_defaults() {
+        let config = AgentConfig {
+            name: "my_agent".into(),
+            ..Default::default()
+        };
         assert_eq!(config.name, "my_agent");
-        assert_eq!(config.llm_model, "gpt-4-turbo");
-        assert_eq!(config.temperature, 0.5);
-        assert_eq!(config.max_tokens, 4000);
-        assert!(config.memory_enabled);
-        assert!(config.evaluation_enabled);
+        assert_eq!(config.temperature, 0.7);
+        assert_eq!(config.max_tokens, 2000);
+        assert_eq!(config.retries, 3);
+        assert!(config.memory_steps.is_none());
+        assert!(!config.evaluation);
     }
 
     #[test]
-    fn test_temperature_clamping() {
-        let builder = AgentBuilder::new(AgentType::Conversational).with_temperature(2.0); // Out of range
-
-        assert_eq!(builder.config().temperature, 1.0);
+    fn test_agent_config_temperature_clamping() {
+        let config = AgentConfig {
+            temperature: 2.0,
+            ..Default::default()
+        };
+        let prebuilt = config.into_prebuilt(AgentType::Conversational);
+        assert_eq!(prebuilt.temperature, 1.0);
     }
 
     #[test]
@@ -1170,16 +1062,18 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_builder_builds_graph_based_agent() {
-        let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-            .with_name("test_agent")
-            .with_tool(ToolSpec::new("calculator", "Perform math"))
-            .with_tool_executor(|name, args| format!("Executed {} with {}", name, args))
-            .build()
-            .expect("Failed to build agent");
+    fn test_zero_shot_react_build() {
+        let agent = ZeroShotReAct::new(AgentConfig {
+            name: "test_agent".into(),
+            tools: vec![ToolSpec::new("calculator", "Perform math")],
+            tool_executor: Some(Arc::new(|name: &str, args: &str| {
+                format!("Executed {} with {}", name, args)
+            })),
+            ..Default::default()
+        })
+        .expect("Failed to build agent");
 
         assert_eq!(agent.name(), "test_agent");
-        assert_eq!(agent.agent_type(), AgentType::ZeroShotReAct);
         assert_eq!(agent.tools().len(), 1);
     }
 }

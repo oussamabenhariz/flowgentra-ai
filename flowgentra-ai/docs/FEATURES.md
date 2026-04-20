@@ -249,14 +249,14 @@ The router function inspects the state and returns the name of the agent that sh
 | HuggingFace | Bearer token | Real SSE (TGI) | -- |
 | Ollama | None (local) | NDJSON | -- |
 
-### RetryLLMClient
+### RetryLLM
 
 Automatic retry with exponential backoff:
 
 ```rust
-use flowgentra_ai::core::llm::RetryLLMClient;
+use flowgentra_ai::core::llm::RetryLLM;
 
-let client = RetryLLMClient::new(inner_client)
+let client = RetryLLM::new(inner_client)
     .with_max_retries(3)
     .with_initial_delay(Duration::from_millis(500));
 
@@ -322,7 +322,7 @@ Native support for Anthropic's `input_schema` format:
 let response = client.chat_with_tools(messages, &tools).await?;
 ```
 
-### CachedLLMClient
+### CachedLLM
 
 Cache LLM responses to avoid redundant API calls:
 
@@ -330,7 +330,7 @@ Cache LLM responses to avoid redundant API calls:
 use flowgentra_ai::prelude::*;
 use std::sync::Arc;
 
-let cached = CachedLLMClient::new(inner_client)
+let cached = CachedLLM::new(inner_client)
     .with_max_entries(1000);
 
 // Second call with identical messages returns cached response
@@ -341,14 +341,14 @@ println!("Cache size: {}", cached.cache_size());
 cached.clear_cache();
 ```
 
-### FallbackLLMClient
+### FallbackLLM
 
 Try multiple LLM providers in order until one succeeds:
 
 ```rust
 use flowgentra_ai::prelude::*;
 
-let client = FallbackLLMClient::new(primary_client)
+let client = FallbackLLM::new(primary_client)
     .with_fallback(secondary_client)
     .with_fallback(tertiary_client);
 
@@ -865,9 +865,9 @@ The compiler validates your graph at build time:
 
 ### LLM
 - [x] 7 providers (OpenAI, Anthropic, Mistral, Groq, Azure, HuggingFace, Ollama)
-- [x] RetryLLMClient with exponential backoff
-- [x] CachedLLMClient (hash-based response caching)
-- [x] FallbackLLMClient (try multiple providers in order)
+- [x] RetryLLM with exponential backoff
+- [x] CachedLLM (hash-based response caching)
+- [x] FallbackLLM (try multiple providers in order)
 - [x] Token counting and context window management
 - [x] Cost tracking with model pricing table
 - [x] Anthropic native tool calling (input_schema)

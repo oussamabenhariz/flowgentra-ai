@@ -3,15 +3,15 @@
 //! Supports Azure OpenAI deployment with Azure authentication.
 //! Requires additional configuration for Azure-specific settings.
 //!
-//! Internally delegates to [`HttpLLMClient`] with [`AzureAdapter`].
+//! Internally delegates to [`HttpLLM`] with [`AzureAdapter`].
 
-use super::adapter::{AzureAdapter, HttpLLMClient};
+use super::adapter::{AzureAdapter, HttpLLM};
 use super::LLMConfig;
 
-/// Azure OpenAI LLM client
+/// Azure OpenAI LLM
 ///
-/// Thin wrapper around [`HttpLLMClient`] using the Azure adapter.
-pub type AzureOpenAIClient = HttpLLMClient;
+/// Thin wrapper around [`HttpLLM`] using the Azure adapter.
+pub type AzureOpenAIClient = HttpLLM;
 
 /// Create a new Azure OpenAI client
 ///
@@ -23,5 +23,5 @@ pub type AzureOpenAIClient = HttpLLMClient;
 #[allow(dead_code)]
 pub fn new_azure_client(config: LLMConfig) -> crate::core::error::Result<AzureOpenAIClient> {
     let adapter = AzureAdapter::from_config(&config)?;
-    Ok(HttpLLMClient::new(config, adapter))
+    Ok(HttpLLM::new(config, adapter))
 }

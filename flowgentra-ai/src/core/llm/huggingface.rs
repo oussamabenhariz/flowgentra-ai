@@ -39,11 +39,11 @@
 //!     endpoint: "http://localhost:80"
 //! ```
 
-use super::{LLMClient, LLMConfig, Message};
+use super::{LLM, LLMConfig, Message};
 use crate::core::error::FlowgentraError;
 use serde_json::json;
 
-/// HuggingFace LLM client for cloud and local models
+/// HuggingFace LLM for cloud and local models
 #[derive(Clone)]
 pub struct HuggingFaceClient {
     config: LLMConfig,
@@ -219,7 +219,7 @@ impl HuggingFaceClient {
 }
 
 #[async_trait::async_trait]
-impl LLMClient for HuggingFaceClient {
+impl LLM for HuggingFaceClient {
     async fn chat(&self, messages: Vec<Message>) -> crate::core::error::Result<Message> {
         let payload = self.build_payload(messages);
 

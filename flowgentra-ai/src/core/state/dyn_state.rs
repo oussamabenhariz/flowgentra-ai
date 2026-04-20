@@ -508,8 +508,8 @@ impl DynState {
         }
     }
 
-    /// Get the configured LLM client stored in the `_llm_config` field.
-    pub fn get_llm_client(&self) -> Result<Arc<dyn crate::core::llm::LLMClient>> {
+    /// Get the configured LLM stored in the `_llm_config` field.
+    pub fn get_llm(&self) -> Result<Arc<dyn crate::core::llm::LLM>> {
         let config: crate::core::llm::LLMConfig = self.get_typed("_llm_config").map_err(|_| {
             FlowgentraError::ConfigError(
                 "LLM config not found in state. Make sure LLM is configured in config.yaml"
@@ -553,7 +553,7 @@ impl DynState {
         messages: Vec<crate::core::llm::Message>,
         max_iterations: usize,
     ) -> Result<crate::core::llm::Message> {
-        let llm = self.get_llm_client()?;
+        let llm = self.get_llm()?;
         let mcp = self.get_mcp_client(mcp_name)?;
 
         let mcp_tools = mcp.list_tools().await?;

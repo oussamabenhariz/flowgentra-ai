@@ -58,7 +58,7 @@ impl Reranker for NoopReranker {
 /// LLM-based reranker — uses an LLM to score query-document relevance.
 ///
 /// Sends each (query, document) pair to the LLM and asks it to rate relevance 0-10.
-/// Requires a scoring function that wraps your LLM client.
+/// Requires a scoring function that wraps your LLM.
 pub struct LLMReranker<F>
 where
     F: Fn(

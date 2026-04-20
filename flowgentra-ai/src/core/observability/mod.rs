@@ -31,7 +31,7 @@
 //! Handlers using LLM should call `chat_with_usage()` and record usage:
 //!
 //! ```ignore
-//! let (message, usage) = llm_client.chat_with_usage(messages).await?;
+//! let (message, usage) = llm.chat_with_usage(messages).await?;
 //! if let Some(u) = usage {
 //!     record_token_usage(&mut state, &u);
 //! }

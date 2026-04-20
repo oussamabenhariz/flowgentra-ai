@@ -89,15 +89,15 @@ llm:
 
 ---
 
-## RetryLLMClient
+## RetryLLM
 
-Wrap any LLM client with automatic retry on transient failures:
+Wrap any LLM with automatic retry on transient failures:
 
 ```rust
-use flowgentra_ai::core::llm::RetryLLMClient;
+use flowgentra_ai::core::llm::RetryLLM;
 use std::time::Duration;
 
-let retry_client = RetryLLMClient::new(inner_client)
+let retry_client = RetryLLM::new(inner_client)
     .with_max_retries(3)
     .with_initial_delay(Duration::from_millis(500));
 
@@ -240,7 +240,7 @@ if let Some(tool_calls) = response.tool_calls {
 
 ---
 
-## CachedLLMClient
+## CachedLLM
 
 Cache LLM responses to avoid redundant API calls. Uses hash-based caching on message role and content:
 
@@ -248,7 +248,7 @@ Cache LLM responses to avoid redundant API calls. Uses hash-based caching on mes
 use flowgentra_ai::prelude::*;
 use std::sync::Arc;
 
-let cached = CachedLLMClient::new(inner_client)
+let cached = CachedLLM::new(inner_client)
     .with_max_entries(1000);
 
 let response = cached.chat(messages.clone()).await?;
@@ -262,14 +262,14 @@ Note: Tool calls and streaming are **not** cached (they have side effects).
 
 ---
 
-## FallbackLLMClient
+## FallbackLLM
 
 Try multiple LLM providers in sequence until one succeeds:
 
 ```rust
 use flowgentra_ai::prelude::*;
 
-let client = FallbackLLMClient::new(primary_client)
+let client = FallbackLLM::new(primary_client)
     .with_fallback(secondary_client)
     .with_fallback(tertiary_client);
 
@@ -277,7 +277,7 @@ let client = FallbackLLMClient::new(primary_client)
 let response = client.chat(messages).await?;
 ```
 
-Implements the full `LLMClient` trait (chat, chat_with_usage, chat_with_tools, chat_stream). Failed providers are logged via `tracing::warn!`.
+Implements the full `LLM` trait (chat, chat_with_usage, chat_with_tools, chat_stream). Failed providers are logged via `tracing::warn!`.
 
 ### Config-Based Fallback
 

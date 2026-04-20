@@ -1,13 +1,13 @@
 //! # LLM Provider Adapter System
 //!
-//! Provides a unified HTTP-based LLM client that delegates provider-specific
+//! Provides a unified HTTP-based LLM that delegates provider-specific
 //! behavior (payload format, auth headers, response parsing) to a `ProviderAdapter`.
 //!
 //! This eliminates code duplication across provider files — each provider only
 //! needs to implement the adapter trait with its specific differences.
 
 use super::{
-    LLMClient, LLMConfig, Message, MessageRole, ResponseFormat, TokenUsage, ToolCall,
+    LLM, LLMConfig, Message, MessageRole, ResponseFormat, TokenUsage, ToolCall,
     ToolDefinition,
 };
 use crate::core::error::FlowgentraError;
@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 ///
 /// Implementations define how to build payloads, set auth headers,
 /// construct endpoints, and parse responses. The generic HTTP flow
-/// (send request, check status, parse JSON) is handled by `HttpLLMClient`.
+/// (send request, check status, parse JSON) is handled by `HttpLLM`.
 pub trait ProviderAdapter: Send + Sync {
     /// Human-readable provider name (for error messages)
     fn provider_name(&self) -> &str;
@@ -69,22 +69,22 @@ pub trait ProviderAdapter: Send + Sync {
 }
 
 // =============================================================================
-// HTTP LLM Client
+// HTTP LLM
 // =============================================================================
 
-/// A generic HTTP-based LLM client that delegates to a `ProviderAdapter`.
+/// A generic HTTP-based LLM that delegates to a `ProviderAdapter`.
 ///
 /// This struct handles the common HTTP request/response/error flow,
 /// eliminating code duplication across providers.
 #[derive(Clone)]
-pub struct HttpLLMClient {
+pub struct HttpLLM {
     config: LLMConfig,
     client: reqwest::Client,
     adapter: std::sync::Arc<dyn ProviderAdapter>,
 }
 
-impl HttpLLMClient {
-    /// Create a new HTTP LLM client with sensible default timeouts:
+impl HttpLLM {
+    /// Create a new HTTP LLM with sensible default timeouts:
     /// - Connect timeout: 10 s
     /// - Total request timeout: 120 s
     pub fn new(config: LLMConfig, adapter: impl ProviderAdapter + 'static) -> Self {
@@ -121,7 +121,7 @@ impl HttpLLMClient {
 }
 
 #[async_trait::async_trait]
-impl LLMClient for HttpLLMClient {
+impl LLM for HttpLLM {
     async fn chat(&self, messages: Vec<Message>) -> crate::core::error::Result<Message> {
         let (msg, _) = self.chat_with_usage(messages).await?;
         Ok(msg)

@@ -836,16 +836,16 @@ impl AgentConfig {
         Ok(())
     }
 
-    /// Create an LLM client based on the agent's LLM configuration
+    /// Create an LLM based on the agent's LLM configuration
     ///
     /// # Example
     /// ```ignore
     /// let config = AgentConfig::from_file("agent.yaml")?;
-    /// let llm_client = config.create_llm_client()?;
+    /// let llm = config.create_llm()?;
     /// ```
-    pub fn create_llm_client(
+    pub fn create_llm(
         &self,
-    ) -> crate::core::error::Result<std::sync::Arc<dyn crate::core::llm::LLMClient>> {
+    ) -> crate::core::error::Result<std::sync::Arc<dyn crate::core::llm::LLM>> {
         self.llm.create_client()
     }
 }

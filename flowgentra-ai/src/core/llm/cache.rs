@@ -7,25 +7,25 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
-use super::{LLMClient, Message, TokenUsage, ToolDefinition};
+use super::{LLM, Message, TokenUsage, ToolDefinition};
 
 /// In-memory LLM response cache.
 ///
-/// Wraps any `LLMClient` and caches responses by message content hash.
+/// Wraps any `LLM` and caches responses by message content hash.
 /// Cache hits avoid API calls entirely.  Uses an LRU eviction policy so that
 /// only the *least recently used* entry is dropped when the cache is full —
 /// not all entries at once (which would cause a thundering herd of API calls).
 ///
 /// # Example
 /// ```ignore
-/// let client = CachedLLMClient::new(llm_client);
+/// let client = CachedLLM::new(llm);
 /// // First call hits the API
 /// let r1 = client.chat(messages.clone()).await?;
 /// // Second call with same messages returns cached response
 /// let r2 = client.chat(messages).await?;
 /// ```
-pub struct CachedLLMClient {
-    inner: std::sync::Arc<dyn LLMClient>,
+pub struct CachedLLM {
+    inner: std::sync::Arc<dyn LLM>,
     /// LruCache is wrapped in Mutex (not RwLock) because `get` promotes an
     /// entry to most-recently-used and therefore requires exclusive access.
     cache: Mutex<LruCache<u64, CachedResponse>>,
@@ -37,8 +37,8 @@ struct CachedResponse {
     usage: Option<TokenUsage>,
 }
 
-impl CachedLLMClient {
-    pub fn new(inner: std::sync::Arc<dyn LLMClient>) -> Self {
+impl CachedLLM {
+    pub fn new(inner: std::sync::Arc<dyn LLM>) -> Self {
         Self {
             inner,
             cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
@@ -106,7 +106,7 @@ impl CachedLLMClient {
 }
 
 #[async_trait::async_trait]
-impl LLMClient for CachedLLMClient {
+impl LLM for CachedLLM {
     async fn chat(&self, messages: Vec<Message>) -> crate::core::error::Result<Message> {
         let key = Self::hash_messages(&messages);
 
@@ -175,8 +175,8 @@ mod tests {
     #[test]
     fn test_hash_consistency() {
         let msgs = vec![Message::user("hello"), Message::assistant("hi")];
-        let h1 = CachedLLMClient::hash_messages(&msgs);
-        let h2 = CachedLLMClient::hash_messages(&msgs);
+        let h1 = CachedLLM::hash_messages(&msgs);
+        let h2 = CachedLLM::hash_messages(&msgs);
         assert_eq!(h1, h2);
     }
 
@@ -184,8 +184,8 @@ mod tests {
     fn test_hash_different_messages() {
         let msgs1 = vec![Message::user("hello")];
         let msgs2 = vec![Message::user("world")];
-        let h1 = CachedLLMClient::hash_messages(&msgs1);
-        let h2 = CachedLLMClient::hash_messages(&msgs2);
+        let h1 = CachedLLM::hash_messages(&msgs1);
+        let h2 = CachedLLM::hash_messages(&msgs2);
         assert_ne!(h1, h2);
     }
 }

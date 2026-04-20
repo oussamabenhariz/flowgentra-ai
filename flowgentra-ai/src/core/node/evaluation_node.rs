@@ -784,23 +784,23 @@ pub fn scorer_from_confidence(
 /// ```ignore
 /// use std::sync::Arc;
 ///
-/// // llm_client comes from agent.llm() or create_llm_client(...)
+/// // llm comes from agent.llm() or create_llm(...)
 /// let scorer = scorer_from_llm_grader(
 ///     "Summarise the article in 3 bullet points".into(),
 ///     "The user wants a concise summary".into(),
-///     llm_client.clone(),
+///     llm.clone(),
 /// );
 /// cfg.into_wrapping_node_fn_with_scorer(inner_handler, scorer)
 /// ```
 pub fn scorer_from_llm_grader(
     task_description: String,
     context: String,
-    llm_client: Arc<dyn crate::core::llm::LLMClient>,
+    llm: Arc<dyn crate::core::llm::LLM>,
 ) -> ScorerFn {
     Arc::new(move |output: Value, _attempt: u32| {
         let task = task_description.clone();
         let ctx = context.clone();
-        let llm = llm_client.clone();
+        let llm = llm.clone();
         Box::pin(async move {
             use crate::core::evaluation::LLMGrader;
             match LLMGrader::grade(&output, &task, &ctx, llm).await {

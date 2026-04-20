@@ -91,7 +91,7 @@ Provide your reasoning and solution."#,
 
 impl Default for ZeroShotReActAgent {
     fn default() -> Self {
-        Self::new(PrebuiltAgentConfig::new(
+        Self::new(crate::core::agents::builders::new_prebuilt_agent_config(
             "zero_shot_react",
             AgentType::ZeroShotReAct,
         ))

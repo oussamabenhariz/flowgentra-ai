@@ -95,7 +95,7 @@ pub mod prelude {
             Graph,
         },
         llm::{
-            create_llm_client, CachedLLMClient, FallbackLLMClient, LLMConfig, LLMProvider, Message,
+            create_llm, CachedLLM, FallbackLLM, LLMConfig, LLMProvider, Message,
             MessageRole, ResponseFormat, ToolCall, ToolDefinition,
         },
         mcp::MCPConfig,

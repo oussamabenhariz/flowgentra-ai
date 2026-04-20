@@ -9,7 +9,7 @@
 
 use super::builders::PrebuiltAgentConfig;
 use crate::core::error::FlowgentraError;
-use crate::core::llm::{LLMClient, LLMConfig, LLMProvider, Message, ToolCall, ToolDefinition};
+use crate::core::llm::{Message, ToolCall, ToolDefinition};
 use crate::core::state::DynState;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -18,79 +18,6 @@ use tracing::{debug, info};
 ///
 /// The function receives `(tool_name, arguments)` and returns the tool result as a string.
 pub type ToolExecutorFn = Arc<dyn Fn(&str, &str) -> String + Send + Sync>;
-
-// =============================================================================
-// Helper: Resolve LLM provider from model name
-// =============================================================================
-
-/// Resolve a model name string to an LLM provider.
-///
-/// Uses naming conventions:
-/// - `mistral-*` → Mistral
-/// - `gpt-*` → OpenAI
-/// - `claude-*` → Anthropic
-/// - `llama-*`, `mixtral-*` → Groq
-/// - `gemma-*` → Ollama (local)
-/// - Otherwise → OpenAI (default)
-fn resolve_provider(model: &str) -> LLMProvider {
-    let lower = model.to_lowercase();
-    if lower.starts_with("mistral")
-        || lower.starts_with("pixtral")
-        || lower.starts_with("codestral")
-    {
-        LLMProvider::Mistral
-    } else if lower.starts_with("gpt") || lower.starts_with("o1") || lower.starts_with("o3") {
-        LLMProvider::OpenAI
-    } else if lower.starts_with("claude") {
-        LLMProvider::Anthropic
-    } else if lower.starts_with("llama")
-        || lower.starts_with("mixtral")
-        || lower.starts_with("gemma")
-    {
-        LLMProvider::Groq
-    } else {
-        LLMProvider::OpenAI
-    }
-}
-
-/// Returns true for providers that require an API key.
-fn provider_requires_api_key(provider: &LLMProvider) -> bool {
-    !matches!(provider, LLMProvider::Ollama)
-}
-
-/// Create an LLM client from a PrebuiltAgentConfig.
-fn create_client_from_config(
-    config: &PrebuiltAgentConfig,
-) -> Result<Arc<dyn LLMClient>, FlowgentraError> {
-    // Use the full LLMConfig when provided via Agent.create(llm=...) / AgentBuilder::with_llm()
-    if let Some(llm_config) = &config.llm {
-        return llm_config.create_client().map_err(|e| {
-            FlowgentraError::ConfigError(format!("Failed to create LLM client: {}", e))
-        });
-    }
-
-    // Fallback: derive provider from model name string
-    let provider = resolve_provider(&config.llm_model);
-
-    let api_key = match &config.api_key {
-        Some(key) => key.clone(),
-        None if provider_requires_api_key(&provider) => {
-            return Err(FlowgentraError::ConfigError(format!(
-                "api_key is required for provider '{}'. Pass it via PrebuiltAgentConfig::api_key.",
-                config.llm_model
-            )));
-        }
-        None => String::new(),
-    };
-
-    let mut llm_config = LLMConfig::new(provider, config.llm_model.clone(), api_key);
-    llm_config = llm_config.with_temperature(config.temperature);
-    llm_config = llm_config.with_max_tokens(config.max_tokens);
-
-    llm_config
-        .create_client()
-        .map_err(|e| FlowgentraError::ConfigError(format!("Failed to create LLM client: {}", e)))
-}
 
 // =============================================================================
 // Action tag parsing
@@ -202,7 +129,7 @@ impl AgentReasoningNode {
     }
 
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
-        let client = create_client_from_config(&self.config)?;
+        let client = self.config.llm.clone();
 
         // Build the user prompt with tools and input
         let input = state
@@ -242,7 +169,6 @@ impl AgentReasoningNode {
         messages.push(Message::user(&user_message));
 
         info!(
-            model = %self.config.llm_model,
             input = %input,
             tools_count = %self.config.tools.len(),
             "Calling LLM"
@@ -326,7 +252,7 @@ impl ToolExecutorNode {
             if self.config.tools.contains_key(&tool_name) {
                 format!(
                     "Tool '{}' is registered but no executor function was provided. \
-                     Use .with_tool_executor() on the AgentBuilder.",
+                     Set tool_executor in AgentConfig.",
                     tool_name
                 )
             } else {
@@ -361,7 +287,7 @@ impl ConversationalNode {
     }
 
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
-        let client = create_client_from_config(&self.config)?;
+        let client = self.config.llm.clone();
 
         let input = state
             .get("input")
@@ -388,7 +314,6 @@ impl ConversationalNode {
         messages.push(Message::user(&input));
 
         info!(
-            model = %self.config.llm_model,
             history_messages = %(messages.len() - 2), // exclude system + current user
             "Calling LLM (conversational)"
         );
@@ -480,7 +405,7 @@ impl ToolCallingNode {
     }
 
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
-        let client = create_client_from_config(&self.config)?;
+        let client = self.config.llm.clone();
 
         let tool_defs: Vec<ToolDefinition> = self
             .config
@@ -521,7 +446,6 @@ impl ToolCallingNode {
         }
 
         info!(
-            model = %self.config.llm_model,
             input = %input,
             tools_count = %tool_defs.len(),
             "Calling LLM (tool-calling)"
@@ -632,7 +556,7 @@ impl StructuredChatNode {
     }
 
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
-        let client = create_client_from_config(&self.config)?;
+        let client = self.config.llm.clone();
 
         let input = state
             .get("input")
@@ -673,7 +597,6 @@ impl StructuredChatNode {
         messages.push(Message::user(format!("Question: {}", input)));
 
         info!(
-            model = %self.config.llm_model,
             input = %input,
             "Calling LLM (structured-chat)"
         );
@@ -780,7 +703,7 @@ impl SelfAskNode {
     }
 
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
-        let client = create_client_from_config(&self.config)?;
+        let client = self.config.llm.clone();
 
         let input = state
             .get("input")
@@ -817,7 +740,6 @@ impl SelfAskNode {
         let messages = vec![Message::user(&prompt)];
 
         info!(
-            model = %self.config.llm_model,
             input = %input,
             "Calling LLM (self-ask-with-search)"
         );
@@ -927,7 +849,7 @@ impl DocstoreNode {
     }
 
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
-        let client = create_client_from_config(&self.config)?;
+        let client = self.config.llm.clone();
 
         let input = state
             .get("input")
@@ -956,7 +878,6 @@ impl DocstoreNode {
         let messages = vec![Message::user(&prompt)];
 
         info!(
-            model = %self.config.llm_model,
             input = %input,
             "Calling LLM (react-docstore)"
         );

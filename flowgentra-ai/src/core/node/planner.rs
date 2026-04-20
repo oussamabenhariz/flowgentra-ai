@@ -17,7 +17,7 @@
 //! The planner runs again with updated state, enabling dynamic multi-step planning.
 
 use crate::core::error::FlowgentraError;
-use crate::core::llm::{LLMClient, Message};
+use crate::core::llm::{LLM, Message};
 use crate::core::state::DynState;
 use serde_json::json;
 use std::sync::Arc;
@@ -36,11 +36,11 @@ Rules:
 /// The planner expects `_current_node` and `_reachable_nodes` (JSON array of strings) in state.
 /// It sets `_next_node` with the chosen node name after calling the LLM.
 pub fn create_planner_handler(
-    llm_client: Arc<dyn LLMClient>,
+    llm: Arc<dyn LLM>,
     prompt_template: Option<String>,
 ) -> super::NodeFunction<DynState> {
     Box::new(move |state: DynState| {
-        let client = Arc::clone(&llm_client);
+        let client = Arc::clone(&llm);
         let template = prompt_template.clone();
         Box::pin(async move {
             let _current = state

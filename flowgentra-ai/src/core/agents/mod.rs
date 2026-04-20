@@ -1,28 +1,22 @@
 /// Predefined Agent Types
 ///
-/// Similar to LangChain, FlowgentraAI provides factory builders for common agent patterns.
-/// Users can initialize and use agents directly without building complex graph configurations.
-///
-/// # Examples
+/// FlowgentraAI provides typed agent constructors for common agent patterns.
+/// Instantiate directly with [`AgentConfig`]:
 ///
 /// ```ignore
-/// use flowgentra_ai::core::agents::{AgentBuilder, AgentType, ToolSpec};
+/// use flowgentra_ai::core::agents::{FewShotReAct, AgentConfig, ToolSpec};
 ///
-/// // Create a zero-shot ReAct agent
-/// let calculator = ToolSpec::new("calculator", "Perform calculations");
-/// let search = ToolSpec::new("search", "Search the web");
+/// let agent = FewShotReAct::new(AgentConfig {
+///     name: "classifier".into(),
+///     llm: llm,
+///     system_prompt: Some("Example 1: urgent bug → Priority: HIGH".into()),
+///     tools: vec![ToolSpec::new("search", "Search the web")],
+///     retries: 2,
+///     memory_steps: Some(10),
+///     ..Default::default()
+/// })?;
 ///
-/// let agent = AgentBuilder::new(AgentType::ZeroShotReAct)
-///     .with_llm_config("gpt-4")
-///     .with_tool(calculator)
-///     .with_tool(search)
-///     .build()?;
-///
-/// // Create a conversational agent with memory
-/// let agent = AgentBuilder::new(AgentType::Conversational)
-///     .with_memory_steps(10)
-///     .with_system_prompt("You are a helpful assistant")
-///     .build()?;
+/// let result = agent.execute_input("App crashes on login").await?;
 /// ```
 mod builders;
 mod conversational;
@@ -37,7 +31,7 @@ mod tool_calling;
 mod zero_shot_react;
 
 pub use builders::{
-    AgentBuilder, Conversational, FewShotReAct, GraphBasedAgent, PrebuiltAgentConfig,
+    AgentConfig, Conversational, FewShotReAct, GraphBasedAgent, PrebuiltAgentConfig,
     ReactDocstore, SelfAskWithSearch, StructuredChat, ToolCalling, ZeroShotReAct,
 };
 pub use conversational::ConversationalAgent;

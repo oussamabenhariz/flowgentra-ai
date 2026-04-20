@@ -33,7 +33,7 @@ use crate::core::state::DynState;
 use crate::core::config::AgentConfig;
 use crate::core::error::{FlowgentraError, Result};
 use crate::core::graph::Graph;
-use crate::core::llm::{create_llm_client, LLMClient};
+use crate::core::llm::{create_llm, LLM};
 use crate::core::mcp::{DefaultMCPClient, MCPClient};
 use crate::core::memory::{
     CheckpointMetadata, Checkpointer, GenericCheckpointer, MemoryCheckpointer,
@@ -59,8 +59,8 @@ pub struct ExecutionContext {
     /// Current state being processed
     pub state: DynState,
 
-    /// LLM client for AI operations
-    pub llm_client: Arc<dyn LLMClient>,
+    /// LLM for AI operations
+    pub llm: Arc<dyn LLM>,
 
     /// Available MCP clients for tool access
     pub mcp_clients: HashMap<String, Arc<dyn MCPClient>>,
@@ -85,8 +85,8 @@ pub struct AgentRuntime {
     /// The execution graph
     graph: Graph<DynState>,
 
-    /// LLM client shared across all nodes
-    llm_client: Arc<dyn LLMClient>,
+    /// LLM shared across all nodes
+    llm: Arc<dyn LLM>,
 
     /// MCP clients for tool access
     mcp_clients: HashMap<String, Arc<dyn MCPClient>>,
@@ -107,15 +107,15 @@ impl AgentRuntime {
     ///
     /// This performs:
     /// - Configuration validation
-    /// - LLM client initialization
+    /// - LLM initialization
     /// - MCP client setup
     /// - Graph construction
     pub fn from_config(config: AgentConfig) -> Result<Self> {
         // Validate config
         config.validate()?;
 
-        // Create LLM client
-        let llm_client = create_llm_client(&config.llm)?;
+        // Create LLM
+        let llm = create_llm(&config.llm)?;
 
         // Create MCP clients
         let mcp_clients: HashMap<String, Arc<dyn MCPClient>> = config
@@ -230,7 +230,7 @@ impl AgentRuntime {
         Ok(AgentRuntime {
             config,
             graph,
-            llm_client,
+            llm,
             mcp_clients,
             middleware_pipeline: MiddlewarePipeline::new(),
             checkpointer: None,
@@ -898,9 +898,9 @@ impl AgentRuntime {
         &self.config
     }
 
-    /// Get the LLM client
-    pub fn llm_client(&self) -> Arc<dyn LLMClient> {
-        Arc::clone(&self.llm_client)
+    /// Get the LLM
+    pub fn llm(&self) -> Arc<dyn LLM> {
+        Arc::clone(&self.llm)
     }
 
     /// Get an MCP client by name

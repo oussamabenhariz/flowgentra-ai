@@ -9,7 +9,7 @@
 //! - Suggestions for improvement
 
 use crate::core::error::Result;
-use crate::core::llm::{LLMClient, Message};
+use crate::core::llm::{LLM, Message};
 use crate::core::state::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,13 +72,13 @@ impl LLMGrader {
         output: &Value,
         task_description: &str,
         context: &str,
-        llm_client: Arc<dyn LLMClient>,
+        llm: Arc<dyn LLM>,
     ) -> Result<GradeResult> {
         let prompt = Self::build_grading_prompt(output, task_description, context);
 
         let messages = vec![Message::user(prompt)];
 
-        let response_msg = llm_client.chat(messages).await?;
+        let response_msg = llm.chat(messages).await?;
 
         Self::parse_grade_response(&response_msg.content)
     }
@@ -88,14 +88,14 @@ impl LLMGrader {
         original_output: &Value,
         corrected_output: &Value,
         feedback: &str,
-        llm_client: Arc<dyn LLMClient>,
+        llm: Arc<dyn LLM>,
     ) -> Result<GradeResult> {
         let prompt =
             Self::build_correction_grading_prompt(original_output, corrected_output, feedback);
 
         let messages = vec![Message::user(prompt)];
 
-        let response_msg = llm_client.chat(messages).await?;
+        let response_msg = llm.chat(messages).await?;
 
         Self::parse_grade_response(&response_msg.content)
     }

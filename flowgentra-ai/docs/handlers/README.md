@@ -73,7 +73,7 @@ See [macros/README.md](../macros/README.md) for full details.
 
 ```rust
 pub async fn generate_response(mut state: State) -> Result<State> {
-    let llm = state.get_llm_client()?;
+    let llm = state.get_llm()?;
     let input = state.get_str("input")?;
 
     let response = llm.chat(vec![

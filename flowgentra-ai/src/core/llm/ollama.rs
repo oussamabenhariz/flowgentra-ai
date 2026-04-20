@@ -9,18 +9,18 @@
 //! 3. Run: `ollama serve`
 //! 4. Set provider to "ollama" in config
 //!
-//! Internally delegates to [`HttpLLMClient`] with [`OllamaAdapter`].
+//! Internally delegates to [`HttpLLM`] with [`OllamaAdapter`].
 
-use super::adapter::{HttpLLMClient, OllamaAdapter};
+use super::adapter::{HttpLLM, OllamaAdapter};
 use super::LLMConfig;
 
-/// Ollama LLM client for local LLM execution
+/// Ollama LLM for local LLM execution
 ///
-/// Thin wrapper around [`HttpLLMClient`] using the Ollama adapter.
-pub type OllamaClient = HttpLLMClient;
+/// Thin wrapper around [`HttpLLM`] using the Ollama adapter.
+pub type OllamaClient = HttpLLM;
 
 /// Create a new Ollama client
 #[allow(dead_code)]
 pub fn new_ollama_client(config: LLMConfig) -> OllamaClient {
-    HttpLLMClient::new(config, OllamaAdapter)
+    HttpLLM::new(config, OllamaAdapter)
 }
