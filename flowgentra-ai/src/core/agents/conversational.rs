@@ -257,7 +257,10 @@ mod tests {
 
     #[test]
     fn test_memory_trimming() {
-        let mut config = crate::core::agents::builders::new_prebuilt_agent_config("test", AgentType::Conversational);
+        let mut config = crate::core::agents::builders::new_prebuilt_agent_config(
+            "test",
+            AgentType::Conversational,
+        );
         config.memory_steps = 3;
         let mut agent = ConversationalAgent::new(config);
 

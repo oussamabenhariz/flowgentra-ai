@@ -7,7 +7,7 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
-use super::{LLM, Message, TokenUsage, ToolDefinition};
+use super::{Message, TokenUsage, ToolDefinition, LLM};
 
 /// In-memory LLM response cache.
 ///

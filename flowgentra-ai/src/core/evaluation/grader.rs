@@ -9,7 +9,7 @@
 //! - Suggestions for improvement
 
 use crate::core::error::Result;
-use crate::core::llm::{LLM, Message};
+use crate::core::llm::{Message, LLM};
 use crate::core::state::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

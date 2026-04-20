@@ -9,7 +9,7 @@
 use super::adapter::{
     AnthropicAdapter, AzureAdapter, HttpLLM, OllamaAdapter, OpenAICompatibleAdapter,
 };
-use super::{LLM, LLMConfig, LLMProvider};
+use super::{LLMConfig, LLMProvider, LLM};
 use crate::core::error::Result;
 use std::sync::Arc;
 
@@ -30,10 +30,7 @@ pub fn create_llm(config: &LLMConfig) -> Result<Arc<dyn LLM>> {
             config.clone(),
             OpenAICompatibleAdapter::new("OpenAI"),
         ))),
-        LLMProvider::Anthropic => Ok(Arc::new(HttpLLM::new(
-            config.clone(),
-            AnthropicAdapter,
-        ))),
+        LLMProvider::Anthropic => Ok(Arc::new(HttpLLM::new(config.clone(), AnthropicAdapter))),
         LLMProvider::Mistral => Ok(Arc::new(HttpLLM::new(
             config.clone(),
             OpenAICompatibleAdapter::new("Mistral"),

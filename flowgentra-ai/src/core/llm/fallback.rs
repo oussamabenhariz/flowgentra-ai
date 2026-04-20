@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::{LLM, Message, TokenUsage, ToolDefinition};
+use super::{Message, TokenUsage, ToolDefinition, LLM};
 
 /// An LLM that tries multiple providers in order.
 ///

@@ -9,7 +9,7 @@ use super::{
     StructuredChatNode, ToolCallingNode, ToolExecutorNode, ToolSpec,
 };
 use crate::core::error::FlowgentraError;
-use crate::core::llm::{LLM, Message};
+use crate::core::llm::{Message, LLM};
 use crate::core::mcp::MCPConfig;
 use crate::core::state::context::Context;
 use crate::core::state::{DynState, DynStateUpdate};
@@ -26,8 +26,7 @@ struct StubLLM;
 impl LLM for StubLLM {
     async fn chat(&self, _messages: Vec<Message>) -> crate::core::error::Result<Message> {
         Ok(Message::assistant(
-            "This is a stub client. Please provide an actual LLM when creating agents."
-                .to_string(),
+            "This is a stub client. Please provide an actual LLM when creating agents.".to_string(),
         ))
     }
 
@@ -161,9 +160,14 @@ impl GraphBasedAgent {
     ) -> Result<StateGraph<DynState>, FlowgentraError> {
         let agent_config = config.clone();
         let tool_config = config.clone();
-        let tool_executor = tool_executor.unwrap_or_else(|| Arc::new(|name: &str, _args: &str| {
-            format!("Tool '{}' has no executor registered. Set tool_executor in AgentConfig.", name)
-        }));
+        let tool_executor = tool_executor.unwrap_or_else(|| {
+            Arc::new(|name: &str, _args: &str| {
+                format!(
+                    "Tool '{}' has no executor registered. Set tool_executor in AgentConfig.",
+                    name
+                )
+            })
+        });
 
         // Create agent reasoning node (wraps the actual node logic)
         let agent_node = Arc::new(FunctionNode::new(
@@ -806,11 +810,15 @@ impl Agent for GraphBasedAgent {
 ///
 /// ```no_run
 /// # use std::sync::Arc;
+/// # use flowgentra_ai::{LLMConfig, LLMProvider, create_llm};
 /// use flowgentra_ai::core::agents::{FewShotReAct, AgentConfig, ToolSpec};
 ///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let llm = create_llm(&LLMConfig::new(LLMProvider::OpenAI, "gpt-4o".to_string(), String::new())).unwrap();
 /// let agent = FewShotReAct::new(AgentConfig {
 ///     name: "classifier".into(),
-///     llm: llm,
+///     llm,
 ///     system_prompt: Some("Example 1: urgent bug → Priority: HIGH".into()),
 ///     tools: vec![ToolSpec::new("search", "Search the web")],
 ///     retries: 2,
@@ -819,6 +827,8 @@ impl Agent for GraphBasedAgent {
 /// })?;
 ///
 /// let result = agent.execute_input("App crashes on login").await?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct AgentConfig {
     /// Agent name (default: `"agent"`)
@@ -901,7 +911,9 @@ macro_rules! impl_typed_agent {
             pub fn new(config: AgentConfig) -> Result<Self, FlowgentraError> {
                 let executor = config.tool_executor.clone();
                 let prebuilt = config.into_prebuilt($agent_type);
-                Ok(Self { inner: GraphBasedAgent::new(prebuilt, executor)? })
+                Ok(Self {
+                    inner: GraphBasedAgent::new(prebuilt, executor)?,
+                })
             }
 
             /// Execute the agent with a text input and return a text response.

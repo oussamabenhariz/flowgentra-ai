@@ -43,7 +43,10 @@ impl ReactDocstoreAgent {
 
 impl Default for ReactDocstoreAgent {
     fn default() -> Self {
-        let mut config = crate::core::agents::builders::new_prebuilt_agent_config("react_docstore", AgentType::ReactDocstore);
+        let mut config = crate::core::agents::builders::new_prebuilt_agent_config(
+            "react_docstore",
+            AgentType::ReactDocstore,
+        );
         // Pre-register the required Search and Lookup tool stubs
         config.tools.insert(
             "search".to_string(),

@@ -161,6 +161,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    #[allow(dead_code)]
     fn make_result(id: &str, text: &str, score: f32) -> SearchResult {
         SearchResult {
             id: id.to_string(),

@@ -64,7 +64,7 @@ urlencoding = "2.1"
 inventory = "0.1"
 
 # Procedural macros for handler registration
-flowgentra-ai-macros = { version = "0.1.8" }
+flowgentra-ai-macros = { path = "../flowgentra-ai-macros", version = "0.1.9" }
 
 # Visualization (SVG generation for graphs)
 svg = { version = "0.13" }

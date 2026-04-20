@@ -220,9 +220,7 @@ impl Context {
     // ── LLM ──
 
     /// Get the configured LLM.
-    pub fn get_llm(
-        &self,
-    ) -> crate::core::error::Result<Arc<dyn crate::core::llm::LLM>> {
+    pub fn get_llm(&self) -> crate::core::error::Result<Arc<dyn crate::core::llm::LLM>> {
         let config = self.llm_config.as_ref().ok_or_else(|| {
             crate::core::error::FlowgentraError::ConfigError(
                 "LLM config not found in context. Make sure LLM is configured in config.yaml"

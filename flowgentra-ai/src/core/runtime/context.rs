@@ -442,12 +442,6 @@ impl std::fmt::Debug for ExecutionContext {
 // =============================================================================
 
 impl ExecutionContext {
-    /// Builder-style method to set LLM
-    pub fn with_llm(mut self, client: Arc<dyn LLM>) -> Self {
-        self.llm = Some(client);
-        self
-    }
-
     /// Builder-style method to add MCP client
     pub fn with_mcp(mut self, name: impl Into<String>, client: Arc<dyn MCPClient>) -> Self {
         self.mcp_clients.insert(name.into(), client);

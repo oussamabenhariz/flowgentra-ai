@@ -1143,10 +1143,7 @@ fn from_config_path_impl(
                     cfg.strategy,
                     crate::core::node::orchestrator_node::OrchestrationStrategy::Dynamic
                 ) {
-                    let llm = config
-                        .create_llm()
-                        .ok()
-                        .map(|c| c as Arc<dyn LLM>);
+                    let llm = config.create_llm().ok().map(|c| c as Arc<dyn LLM>);
                     create_supervisor_handler_with_llm(cfg, child_arcs, llm, child_mcps)
                 } else {
                     create_supervisor_handler(cfg, child_arcs, child_mcps)

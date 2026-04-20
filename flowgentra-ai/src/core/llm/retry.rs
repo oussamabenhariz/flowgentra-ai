@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{LLM, Message, TokenUsage, ToolDefinition};
+use super::{Message, TokenUsage, ToolDefinition, LLM};
 use crate::core::error::{FlowgentraError, Result};
 
 /// Circuit breaker state for tracking consecutive failures.

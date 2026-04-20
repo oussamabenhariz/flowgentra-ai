@@ -39,7 +39,7 @@
 //!     endpoint: "http://localhost:80"
 //! ```
 
-use super::{LLM, LLMConfig, Message};
+use super::{LLMConfig, Message, LLM};
 use crate::core::error::FlowgentraError;
 use serde_json::json;
 

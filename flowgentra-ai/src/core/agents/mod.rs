@@ -31,8 +31,8 @@ mod tool_calling;
 mod zero_shot_react;
 
 pub use builders::{
-    AgentConfig, Conversational, FewShotReAct, GraphBasedAgent, PrebuiltAgentConfig,
-    ReactDocstore, SelfAskWithSearch, StructuredChat, ToolCalling, ZeroShotReAct,
+    AgentConfig, Conversational, FewShotReAct, GraphBasedAgent, PrebuiltAgentConfig, ReactDocstore,
+    SelfAskWithSearch, StructuredChat, ToolCalling, ZeroShotReAct,
 };
 pub use conversational::ConversationalAgent;
 pub use few_shot_react::FewShotReActAgent;

@@ -47,8 +47,10 @@ impl SelfAskWithSearchAgent {
 
 impl Default for SelfAskWithSearchAgent {
     fn default() -> Self {
-        let mut config =
-            crate::core::agents::builders::new_prebuilt_agent_config("self_ask_with_search", AgentType::SelfAskWithSearch);
+        let mut config = crate::core::agents::builders::new_prebuilt_agent_config(
+            "self_ask_with_search",
+            AgentType::SelfAskWithSearch,
+        );
         // Pre-register the required search tool stub so users see it in `.tools()`
         config.tools.insert(
             "search".to_string(),

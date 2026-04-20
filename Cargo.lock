@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "flowgentra-ai"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "axum",
@@ -1134,7 +1134,7 @@ dependencies = [
  "csv",
  "dashmap",
  "dotenv",
- "flowgentra-ai-macros 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "flowgentra-ai-macros",
  "futures",
  "inventory",
  "lru",
@@ -1169,20 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "flowgentra-ai-macros"
-version = "0.1.8"
-dependencies = [
- "convert_case 0.6.0",
- "inventory",
- "proc-macro2",
- "quote",
- "syn 2.0.116",
-]
-
-[[package]]
-name = "flowgentra-ai-macros"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff454bbe984e3878dd367efde3fe8a53bf71b07f9046f439d6c776330435c2b2"
+version = "0.1.9"
 dependencies = [
  "convert_case 0.6.0",
  "inventory",

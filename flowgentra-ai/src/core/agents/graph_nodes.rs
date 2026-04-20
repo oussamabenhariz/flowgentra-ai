@@ -9,7 +9,7 @@
 
 use super::builders::PrebuiltAgentConfig;
 use crate::core::error::FlowgentraError;
-use crate::core::llm::{Message, ToolCall, ToolDefinition};
+use crate::core::llm::{LLMProvider, Message, ToolCall, ToolDefinition};
 use crate::core::state::DynState;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -584,7 +584,10 @@ impl StructuredChatNode {
         let mut messages = vec![Message::system(&system_prompt)];
 
         // Include prior tool result as an Observation in the scratchpad
-        if let Some(tool_result) = state.get("tool_result").and_then(|v| v.as_str().map(String::from)) {
+        if let Some(tool_result) = state
+            .get("tool_result")
+            .and_then(|v| v.as_str().map(String::from))
+        {
             if let Some(prev) = state
                 .get("llm_response")
                 .and_then(|v| v.as_str().map(String::from))
@@ -953,6 +956,29 @@ pub fn docstore_router(state: &DynState) -> Result<String, FlowgentraError> {
     } else {
         debug!("Docstore router: directing to END");
         Ok("END".to_string())
+    }
+}
+
+// =============================================================================
+// Provider resolution
+// =============================================================================
+
+/// Infers the LLM provider from a model name string.
+pub fn resolve_provider(model: &str) -> LLMProvider {
+    let m = model.to_lowercase();
+    if m.contains("gpt") || m.contains("o1") || m.contains("o3") || m.contains("o4") {
+        LLMProvider::OpenAI
+    } else if m.contains("claude") {
+        LLMProvider::Anthropic
+    } else if m.contains("mistral") || m.contains("mixtral") {
+        LLMProvider::Mistral
+    } else if m.contains("llama") || m.contains("groq") || m.contains("gemma") || m.contains("qwen")
+    {
+        LLMProvider::Groq
+    } else if m.contains("ollama") {
+        LLMProvider::Ollama
+    } else {
+        LLMProvider::OpenAI
     }
 }
 

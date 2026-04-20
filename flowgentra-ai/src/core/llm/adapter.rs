@@ -7,8 +7,7 @@
 //! needs to implement the adapter trait with its specific differences.
 
 use super::{
-    LLM, LLMConfig, Message, MessageRole, ResponseFormat, TokenUsage, ToolCall,
-    ToolDefinition,
+    LLMConfig, Message, MessageRole, ResponseFormat, TokenUsage, ToolCall, ToolDefinition, LLM,
 };
 use crate::core::error::FlowgentraError;
 use serde_json::{json, Value};
