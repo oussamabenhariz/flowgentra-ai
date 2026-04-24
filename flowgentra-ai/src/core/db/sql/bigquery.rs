@@ -99,8 +99,8 @@ impl BigQueryDatabase {
         }
     }
 
-    async fn run_query(&self, sql: &str) -> Result<Vec<Row>, DbError> {
-        let body = json!({
+    async fn run_query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, DbError> {
+        let mut body = json!({
             "query":            sql,
             "useLegacySql":     false,
             "timeoutMs":        30000,
@@ -109,6 +109,16 @@ impl BigQueryDatabase {
                 "datasetId": self.config.dataset_id,
             }
         });
+
+        if !params.is_empty() {
+            let query_parameters: Vec<Value> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| bq_query_parameter(&format!("param_{}", i), p))
+                .collect();
+            body["queryParameters"] = json!(query_parameters);
+            body["parameterMode"] = json!("NAMED");
+        }
 
         let resp = self
             .auth(self.client.post(&self.query_url()))
@@ -160,6 +170,31 @@ impl BigQueryDatabase {
     }
 }
 
+/// Convert a `serde_json::Value` into a BigQuery named query parameter object.
+///
+/// This uses the BigQuery Jobs REST API `queryParameters` format so values are
+/// never interpolated into the SQL string — eliminating SQL injection risk.
+fn bq_query_parameter(name: &str, value: &Value) -> Value {
+    let (type_name, value_obj) = match value {
+        Value::String(s) => ("STRING", json!({ "value": s })),
+        Value::Bool(b) => ("BOOL", json!({ "value": if *b { "true" } else { "false" } })),
+        Value::Number(n) => {
+            if n.is_f64() {
+                ("FLOAT64", json!({ "value": n.to_string() }))
+            } else {
+                ("INT64", json!({ "value": n.to_string() }))
+            }
+        }
+        Value::Null => ("STRING", json!({ "value": null })),
+        other => ("STRING", json!({ "value": other.to_string() })),
+    };
+    json!({
+        "name": name,
+        "parameterType": { "type": type_name },
+        "parameterValue": value_obj
+    })
+}
+
 fn parse_query_response(data: &Value) -> Vec<Row> {
     let schema_fields = data["schema"]["fields"].as_array();
     let rows = data["rows"].as_array();
@@ -188,27 +223,11 @@ fn parse_query_response(data: &Value) -> Vec<Row> {
 impl SqlDatabase for BigQueryDatabase {
     /// Run a BigQuery SQL query.
     ///
-    /// `params` are substituted as `@param_0`, `@param_1` etc. using named
-    /// query parameters. Use `@param_0` in your SQL to reference them.
+    /// `params` are passed as `@param_0`, `@param_1` etc. using BigQuery's
+    /// native named query parameter API (no string interpolation).
+    /// Use `@param_0` in your SQL to reference them.
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, DbError> {
-        let sql_with_params = if params.is_empty() {
-            sql.to_string()
-        } else {
-            // BigQuery uses named params; we do simple inline substitution for safety.
-            // For production, use the BigQuery parameterized query API.
-            let mut s = sql.to_string();
-            for (i, p) in params.iter().enumerate() {
-                let placeholder = format!("@param_{}", i);
-                let val = match p {
-                    Value::String(v) => format!("'{}'", v.replace('\'', "\\'")),
-                    Value::Null => "NULL".to_string(),
-                    other => other.to_string(),
-                };
-                s = s.replace(&placeholder, &val);
-            }
-            s
-        };
-        self.run_query(&sql_with_params).await
+        self.run_query(sql, params).await
     }
 
     /// Execute a DDL or DML statement (INSERT, UPDATE, DELETE, CREATE, etc.).
@@ -216,7 +235,6 @@ impl SqlDatabase for BigQueryDatabase {
     /// BigQuery is append-optimised; DML statements work but are slower than
     /// bulk load. Returns 0 for DDL (BigQuery doesn't report rows affected).
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, DbError> {
-        let rows = self.query(sql, params).await?;
-        Ok(rows.len() as u64)
+        self.run_query(sql, params).await.map(|rows| rows.len() as u64)
     }
 }

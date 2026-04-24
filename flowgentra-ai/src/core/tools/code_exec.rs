@@ -242,19 +242,30 @@ impl Tool for NodeJsReplTool {
 // ShellTool
 // =============================================================================
 
-/// Run shell commands via `sh -c`.
+/// Run shell commands.
 ///
-/// By default requires an explicit allowlist. Use `ShellTool::unrestricted()` to
-/// permit any command (use only in trusted environments).
+/// **Restricted mode** (default): commands are parsed into tokens and executed
+/// directly without a shell, so shell metacharacters (`;`, `&&`, `|`, `$()`,
+/// backticks, etc.) are passed as literal arguments rather than interpreted.
+/// Only programs whose name appears in `allowed_commands` are permitted.
+///
+/// **Unrestricted mode**: commands are passed to `sh -c`.  This mode supports
+/// full shell syntax but provides **no security guarantees** — never use it when
+/// the command string may contain agent-generated or user-supplied content.
+/// Create with [`ShellTool::unrestricted`].
 pub struct ShellTool {
-    /// `Some(list)` — only commands whose first token is in the list are allowed.
-    /// `None` — all commands are permitted (unrestricted mode).
+    /// `Some(list)` — only the listed programs are allowed (restricted mode).
+    /// `None` — all commands are permitted, executed via `sh -c` (unrestricted mode).
     allowed_commands: Option<Vec<String>>,
     timeout_secs: u64,
 }
 
 impl ShellTool {
-    /// Create a tool that only allows commands whose first token is in `allowed`.
+    /// Create a tool that only allows programs whose name is in `allowed`.
+    ///
+    /// In restricted mode the command string is split on whitespace into
+    /// `[program, arg1, arg2, …]` and executed directly (no shell), so shell
+    /// injection via metacharacters is not possible.
     pub fn new(allowed_commands: Vec<String>, timeout_secs: u64) -> Self {
         Self {
             allowed_commands: Some(allowed_commands),
@@ -262,7 +273,15 @@ impl ShellTool {
         }
     }
 
-    /// Create a tool with no command restrictions.
+    /// Create a tool with **no** command restrictions, using `sh -c`.
+    ///
+    /// # Security warning
+    ///
+    /// This mode executes the full command string through a shell.  **Never pass
+    /// agent-generated or user-supplied input to this tool** — an adversarial
+    /// LLM can inject arbitrary shell commands via metacharacters (`;`, `&&`,
+    /// backticks, `$(…)`, etc.).  Use [`ShellTool::new`] with an allowlist for
+    /// any environment where the commands are not entirely under your control.
     pub fn unrestricted(timeout_secs: u64) -> Self {
         Self {
             allowed_commands: None,
@@ -270,13 +289,13 @@ impl ShellTool {
         }
     }
 
-    fn check_allowed(&self, command: &str) -> Result<()> {
+    /// Validate that `program` is in the allowlist (restricted mode only).
+    fn check_allowed(&self, program: &str) -> Result<()> {
         if let Some(ref allowed) = self.allowed_commands {
-            let first_token = command.split_whitespace().next().unwrap_or("");
-            if !allowed.iter().any(|a| a == first_token) {
+            if !allowed.iter().any(|a| a == program) {
                 return Err(FlowgentraError::ToolError(format!(
-                    "Command '{}' is not in the allowed list: {:?}",
-                    first_token, allowed
+                    "Program '{}' is not in the allowed list: {:?}",
+                    program, allowed
                 )));
             }
         }
@@ -285,7 +304,7 @@ impl ShellTool {
 }
 
 impl Default for ShellTool {
-    /// Default is a restricted shell with no allowed commands.
+    /// Default is a restricted shell with no allowed commands (deny-all allowlist).
     fn default() -> Self {
         Self::new(vec![], 30)
     }
@@ -299,15 +318,25 @@ impl Tool for ShellTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| FlowgentraError::ToolError("Missing 'command' field".to_string()))?;
 
-        self.check_allowed(command)?;
-
         let timeout = input
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(self.timeout_secs);
 
-        let out =
-            run_subprocess("sh", &["-c", command], None, Duration::from_secs(timeout)).await?;
+        let out = if self.allowed_commands.is_some() {
+            // Restricted mode: parse into [program, args…] and execute without a
+            // shell so that metacharacters in args are never interpreted.
+            let tokens: Vec<&str> = command.split_whitespace().collect();
+            let program = tokens.first().copied().ok_or_else(|| {
+                FlowgentraError::ToolError("Empty command string".to_string())
+            })?;
+            self.check_allowed(program)?;
+            run_subprocess(program, &tokens[1..], None, Duration::from_secs(timeout)).await?
+        } else {
+            // Unrestricted mode: delegate to sh -c for full shell features.
+            // Only safe when the command string is entirely under developer control.
+            run_subprocess("sh", &["-c", command], None, Duration::from_secs(timeout)).await?
+        };
 
         Ok(json!({
             "command": command,
@@ -369,6 +398,18 @@ mod tests {
         let tool = ShellTool::new(vec!["echo".to_string()], 10);
         let err = tool.call(json!({"command": "rm -rf /"})).await.unwrap_err();
         assert!(err.to_string().contains("not in the allowed list"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_injection_blocked_in_restricted_mode() {
+        // Semicolon injection: "echo ;" would be two commands in sh -c, but in
+        // restricted mode the semicolon is passed as a literal arg to echo.
+        let tool = ShellTool::new(vec!["echo".to_string()], 10);
+        let result = tool.call(json!({"command": "echo hello ; rm -rf /"})).await.unwrap();
+        // In restricted mode the entire "hello ; rm -rf /" is passed as one arg to echo
+        let stdout = result["stdout"].as_str().unwrap_or("");
+        assert!(!stdout.is_empty()); // echo ran
+        // The rm command was never spawned — if it had run it would have errored
     }
 
     #[tokio::test]

@@ -446,8 +446,18 @@ pub struct GradingConfig {
 fn eval_default_true() -> bool {
     true
 }
+
+/// Default execution step limit for a graph.
+///
+/// Can be overridden at runtime by setting the `FLOWGENTRA_RECURSION_LIMIT`
+/// environment variable to any integer in the range 1–10 000.  The YAML field
+/// `graph.recursion_limit` always takes precedence over this default.
 fn default_recursion_limit() -> usize {
-    25
+    std::env::var("FLOWGENTRA_RECURSION_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 1 && n <= 10_000)
+        .unwrap_or(25)
 }
 fn eval_default_min_confidence() -> f64 {
     0.8
@@ -552,25 +562,19 @@ fn default_collection_name() -> String {
 
 /// Replace `${VAR_NAME}` tokens in `s` with the corresponding environment variable.
 ///
-/// Unknown variables are left as-is.
+/// Unknown variables are left as-is.  Uses the same cached regex as
+/// `substitute_env_vars` so that:
+/// - All occurrences are processed in a single pass (no re-scanning).
+/// - An env var whose value itself contains `${…}` does **not** trigger
+///   recursive expansion, preventing infinite loops.
 fn resolve_config_env_vars(s: &str) -> String {
-    let mut result = s.to_string();
-    loop {
-        let Some(start) = result.find("${") else {
-            break;
-        };
-        let Some(rel_end) = result[start..].find('}') else {
-            break;
-        };
-        let end = start + rel_end;
-        let var_name = &result[start + 2..end];
-        if let Ok(val) = std::env::var(var_name) {
-            result = format!("{}{}{}", &result[..start], val, &result[end + 1..]);
-        } else {
-            break; // unknown variable — stop to avoid an infinite loop
-        }
-    }
-    result
+    ENV_VAR_PATTERN
+        .replace_all(s, |caps: &regex::Captures| {
+            let var_name = &caps[1];
+            // Leave the placeholder as-is when the variable is not set.
+            std::env::var(var_name).unwrap_or_else(|_| caps[0].to_string())
+        })
+        .to_string()
 }
 
 /// Embeddings provider configuration
@@ -722,6 +726,13 @@ impl AgentConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> crate::core::error::Result<()> {
+        // Validate recursion limit is sensible
+        if self.graph.recursion_limit == 0 || self.graph.recursion_limit > 10_000 {
+            return Err(crate::core::error::FlowgentraError::ConfigError(
+                "graph.recursion_limit must be between 1 and 10000".to_string(),
+            ));
+        }
+
         // Validate individual node configurations
         for node in &self.graph.nodes {
             node.validate()?;

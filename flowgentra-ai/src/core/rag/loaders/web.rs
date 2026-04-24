@@ -21,6 +21,7 @@
 
 use serde_json::json;
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 use crate::core::rag::{document_loader::LoadedDocument, vector_db::VectorStoreError};
 
@@ -73,6 +74,8 @@ impl WebLoader {
 
     /// Fetch a single URL and return a `LoadedDocument`.
     pub async fn load(&self, url: &str) -> Result<LoadedDocument, VectorStoreError> {
+        validate_web_url(url).map_err(|e| VectorStoreError::Unknown(e))?;
+
         let response = self
             .client
             .get(url)
@@ -91,8 +94,11 @@ impl WebLoader {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                tracing::warn!(url, "Response missing Content-Type header, treating as text/html");
+                "text/html".to_string()
+            });
 
         let body = response
             .text()
@@ -142,6 +148,45 @@ impl Default for WebLoader {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Reject URLs that are not safe to fetch (non-HTTP/S, private IPs, metadata endpoints).
+fn validate_web_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL '{url}': {e}"))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("Blocked scheme '{scheme}': only HTTP/HTTPS allowed")),
+    }
+
+    if let Some(host) = parsed.host_str() {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if ip.is_loopback() || ip.is_unspecified() || is_private_ipv4_or_v6(ip) {
+                return Err(format!("Blocked private/loopback IP '{ip}' in URL"));
+            }
+        }
+        if host == "169.254.169.254"
+            || host == "metadata.google.internal"
+            || host.ends_with(".internal")
+        {
+            return Err(format!("Blocked metadata endpoint hostname '{host}'"));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_private_ipv4_or_v6(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            o[0] == 10
+                || (o[0] == 172 && (16..=31).contains(&o[1]))
+                || (o[0] == 192 && o[1] == 168)
+                || v4.is_link_local()
+        }
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
 
 fn url_to_id(url: &str) -> String {
     url.replace("https://", "")

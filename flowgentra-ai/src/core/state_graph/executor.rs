@@ -5,6 +5,22 @@ use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
+tokio::task_local! {
+    /// Per-task nesting depth counter for subgraph invocations.
+    ///
+    /// Incremented by one each time `invoke_with_id` is entered so that
+    /// deeply-nested subgraph chains are caught before they overflow.
+    static INVOKE_DEPTH: std::cell::Cell<usize>;
+}
+
+fn max_nesting_depth() -> usize {
+    std::env::var("FLOWGENTRA_MAX_NESTING")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 1 && n <= 1_000)
+        .unwrap_or(25)
+}
+
 use super::checkpoint::{Checkpoint, Checkpointer, InMemoryCheckpointer};
 use super::edge::{Edge, FixedEdge, END, START};
 use super::error::{Result, StateGraphError};
@@ -267,6 +283,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             plugins: self.plugins,
             context: self.context,
             broadcaster,
+            thread_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 }
@@ -328,6 +345,9 @@ pub struct StateGraph<S: State> {
     plugins: Arc<PluginRegistry>,
     context: Context,
     broadcaster: Arc<EventBroadcaster>,
+    /// Per-thread-id mutex map that serializes concurrent invocations on the
+    /// same thread_id so two callers cannot race on checkpoint read-modify-write.
+    thread_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl<S: State + Send + Sync + 'static> StateGraph<S> {
@@ -443,8 +463,42 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         self.invoke_with_id(thread_id, initial_state).await
     }
 
-    /// Execute the graph with a specific thread ID (for resuming from checkpoints)
+    /// Execute the graph with a specific thread ID (for resuming from checkpoints).
+    ///
+    /// Each nested subgraph call increments an async-task-local depth counter.
+    /// Once the counter reaches `FLOWGENTRA_MAX_NESTING` (default 25) a
+    /// `StateGraphError::RecursionLimitExceeded` error is returned to prevent
+    /// unbounded recursion.
     pub async fn invoke_with_id(&self, thread_id: String, initial_state: S) -> Result<S> {
+        let current_depth = INVOKE_DEPTH.try_with(|d| d.get()).unwrap_or(0);
+        let limit = max_nesting_depth();
+        if current_depth >= limit {
+            return Err(StateGraphError::RecursionLimitExceeded {
+                depth: current_depth,
+                limit,
+            });
+        }
+        INVOKE_DEPTH
+            .scope(
+                std::cell::Cell::new(current_depth + 1),
+                self.invoke_inner(thread_id, initial_state),
+            )
+            .await
+    }
+
+    async fn invoke_inner(&self, thread_id: String, initial_state: S) -> Result<S> {
+        // Serialize concurrent invocations on the same thread_id to prevent
+        // checkpoint read-modify-write races when two callers share a thread.
+        let thread_lock = {
+            let mut locks = self.thread_locks.lock().await;
+            Arc::clone(
+                locks
+                    .entry(thread_id.clone())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let _thread_guard = thread_lock.lock().await;
+
         let graph_id = thread_id.clone();
         self.broadcaster.emit(ExecutionEvent::GraphStarted {
             graph_id: graph_id.clone(),

@@ -769,7 +769,8 @@ impl MCPClient for DefaultMCPClient {
         // Enforce tool_exclude at call time
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration",
+                "Tool '{}' is excluded by the MCP server's allow/deny configuration. \
+                 Check the 'allowed_tools' or 'denied_tools' list in config.yaml.",
                 tool_name
             )));
         }
@@ -1029,7 +1030,8 @@ impl MCPClient for StdioMCPClient {
         // Enforce tool_exclude at call time
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration",
+                "Tool '{}' is excluded by the MCP server's allow/deny configuration. \
+                 Check the 'allowed_tools' or 'denied_tools' list in config.yaml.",
                 tool_name
             )));
         }
@@ -1149,7 +1151,8 @@ impl MCPClient for SSEMCPClient {
     ) -> Result<serde_json::Value> {
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration",
+                "Tool '{}' is excluded by the MCP server's allow/deny configuration. \
+                 Check the 'allowed_tools' or 'denied_tools' list in config.yaml.",
                 tool_name
             )));
         }
@@ -1179,7 +1182,8 @@ impl MCPClient for SSEMCPClient {
     ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Result<serde_json::Value>>> {
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration",
+                "Tool '{}' is excluded by the MCP server's allow/deny configuration. \
+                 Check the 'allowed_tools' or 'denied_tools' list in config.yaml.",
                 tool_name
             )));
         }
@@ -1524,7 +1528,8 @@ impl MCPClient for DockerMCPClient {
         // Enforce tool_exclude at call time
         if self.config.is_tool_excluded(tool_name) {
             return Err(FlowgentraError::ToolError(format!(
-                "Tool '{}' is excluded by configuration",
+                "Tool '{}' is excluded by the MCP server's allow/deny configuration. \
+                 Check the 'allowed_tools' or 'denied_tools' list in config.yaml.",
                 tool_name
             )));
         }

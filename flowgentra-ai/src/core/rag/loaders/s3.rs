@@ -79,27 +79,47 @@ impl S3Loader {
         Ok(keys)
     }
 
+    /// Reject keys that contain path traversal sequences or escape the configured prefix.
+    fn validate_key(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if key.contains("..") {
+            return Err(format!("S3 key contains path traversal sequence: '{key}'").into());
+        }
+        if !self.prefix.is_empty() && !key.starts_with(&self.prefix) {
+            return Err(format!(
+                "S3 key '{key}' is outside the configured prefix '{}'",
+                self.prefix
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     /// Download an object and load its content as a document.
     async fn load_object(
         &self,
         client: &reqwest::Client,
         key: &str,
     ) -> Result<Option<LoadedDocument>, Box<dyn std::error::Error>> {
+        self.validate_key(key)?;
+
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
             self.bucket, self.region, key
         );
         let bytes = client.get(&url).send().await?.bytes().await?;
 
-        // Write to a temp file and use the existing load_document infrastructure
+        // Write to a secure named temp file; no user-controlled path component.
         let ext = key.rsplit('.').next().unwrap_or("txt");
-        let tmp_path = format!("{}/{}", self.tmp_dir, key.replace('/', "_"));
+        let tmp_file = tempfile::Builder::new()
+            .suffix(&format!(".{ext}"))
+            .tempfile()?;
+        let tmp_path = tmp_file.path().to_string_lossy().to_string();
         std::fs::write(&tmp_path, &bytes)?;
 
         let loaded = load_document(&tmp_path).await.map_err(|e| {
             Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
         })?;
-        std::fs::remove_file(&tmp_path).ok();
+        // tmp_file (NamedTempFile) is dropped here, which deletes the file automatically.
 
         let s3_url = format!("s3://{}/{}", self.bucket, key);
         let mut metadata = HashMap::new();

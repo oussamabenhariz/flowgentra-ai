@@ -13,6 +13,34 @@ use crate::core::error::FlowgentraError;
 use serde_json::{json, Value};
 
 // =============================================================================
+// Error sanitization
+// =============================================================================
+
+/// Strip any line that looks like an auth header from an API error response body.
+/// Some proxies and gateways echo back request headers in error responses; this
+/// prevents API keys from appearing in logs or user-visible error messages.
+fn sanitize_api_error(body: &str) -> String {
+    let sensitive_patterns = [
+        "authorization",
+        "x-api-key",
+        "bearer ",
+        "api-key",
+        "x-auth",
+        "token",
+    ];
+    body.lines()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            !sensitive_patterns.iter().any(|p| lower.contains(p))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(512) // cap length to avoid log flooding
+        .collect()
+}
+
+// =============================================================================
 // Provider Adapter Trait
 // =============================================================================
 
@@ -31,7 +59,14 @@ pub trait ProviderAdapter: Send + Sync {
     /// Build the JSON request payload from messages and config
     fn build_payload(&self, config: &LLMConfig, messages: &[Message]) -> Value;
 
-    /// Return auth/custom headers as (header_name, header_value) pairs
+    /// Return auth/custom headers as (header_name, header_value) pairs.
+    ///
+    /// # Security
+    ///
+    /// The returned `String` values will contain API keys or bearer tokens.
+    /// Do **not** log them, include them in error messages, or expose them
+    /// outside the HTTP request pipeline.  The `HttpLLM` implementation passes
+    /// them directly to `reqwest` and does not retain references after the call.
     fn auth_headers(&self, config: &LLMConfig) -> Vec<(&'static str, String)>;
 
     /// Extract the assistant message content from the response JSON
@@ -91,7 +126,11 @@ impl HttpLLM {
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect(
+                "Failed to build reqwest Client with default timeouts. \
+                 This is a bug — please report it at \
+                 https://github.com/flowgentra/flowgentra-ai/issues",
+            );
         Self {
             config,
             client,
@@ -110,7 +149,11 @@ impl HttpLLM {
             .connect_timeout(connect_timeout)
             .timeout(request_timeout)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect(
+                "Failed to build reqwest Client with custom timeouts. \
+                 This is a bug — please report it at \
+                 https://github.com/flowgentra/flowgentra-ai/issues",
+            );
         Self {
             config,
             client,
@@ -153,10 +196,13 @@ impl LLM for HttpLLM {
         })?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let status = response.status();
+            let raw = response.text().await.unwrap_or_default();
             return Err(FlowgentraError::LLMError(format!(
-                "{} API error: {}",
-                name, error_text
+                "{} API error (HTTP {}): {}",
+                name,
+                status.as_u16(),
+                sanitize_api_error(&raw)
             )));
         }
 
@@ -195,10 +241,13 @@ impl LLM for HttpLLM {
         })?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let status = response.status();
+            let raw = response.text().await.unwrap_or_default();
             return Err(FlowgentraError::LLMError(format!(
-                "{} API error: {}",
-                name, error_text
+                "{} API error (HTTP {}): {}",
+                name,
+                status.as_u16(),
+                sanitize_api_error(&raw)
             )));
         }
 
@@ -257,10 +306,13 @@ impl LLM for HttpLLM {
         })?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let status = response.status();
+            let raw = response.text().await.unwrap_or_default();
             return Err(FlowgentraError::LLMError(format!(
-                "{} API stream error: {}",
-                name, error_text
+                "{} API stream error (HTTP {}): {}",
+                name,
+                status.as_u16(),
+                sanitize_api_error(&raw)
             )));
         }
 

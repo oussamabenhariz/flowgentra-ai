@@ -387,8 +387,12 @@ impl<T: State> Graph<T> {
     /// ```
     pub fn validate(&self) -> Result<()> {
         // Check for cycles using DFS (unless loops are allowed)
-        if !self.allow_cycles && self.has_cycle() {
-            return Err(crate::core::error::FlowgentraError::CycleDetected);
+        if !self.allow_cycles {
+            if let Some(cycle_nodes) = self.find_cycle_nodes() {
+                return Err(crate::core::error::FlowgentraError::CycleDetected {
+                    nodes: cycle_nodes.join(", "),
+                });
+            }
         }
 
         // Check all nodes referenced in edges exist
@@ -477,78 +481,73 @@ impl<T: State> Graph<T> {
     // Cycle Detection (Internal)
     // =========================================================================
 
-    /// Check if the graph contains a cycle (detects non-DAG property)
+    /// Check if the graph contains a cycle (detects non-DAG property).
     ///
-    /// Uses iterative DFS with explicit stack to avoid recursion limits.
-    /// Skips "END" node during traversal as it's a virtual terminal node.
+    /// Uses Kahn's iterative topological-sort algorithm — O(V + E), fully
+    /// iterative with no recursion, so it is safe on arbitrarily large graphs
+    /// without risk of stack overflow.
+    ///
+    /// Returns the nodes involved in a cycle (those whose in-degree never
+    /// reaches zero), or `None` if the graph is acyclic.  The list is sorted
+    /// for determinism.
     ///
     /// # Performance
-    /// * Time: O(V + E) - visits each vertex and edge once
-    /// * Space: O(V) - for visited set and recursion stack
-    fn has_cycle(&self) -> bool {
-        let mut visited = std::collections::HashSet::new();
-        let mut rec_stack = std::collections::HashSet::new();
+    /// * Time:  O(V + E)
+    /// * Space: O(V)  — in-degree table + BFS queue
+    fn find_cycle_nodes(&self) -> Option<Vec<String>> {
+        // Compute in-degree for every real node (skip "END" virtual node).
+        let mut in_degree: HashMap<&str, usize> = self
+            .nodes
+            .keys()
+            .map(|n| (n.as_str(), 0usize))
+            .collect();
 
-        for node_id in self.nodes.keys() {
-            if !visited.contains(node_id)
-                && self.has_cycle_util(node_id, &mut visited, &mut rec_stack)
-            {
-                return true;
+        for edge in &self.edges {
+            if edge.to != "END" {
+                if let Some(deg) = in_degree.get_mut(edge.to.as_str()) {
+                    *deg += 1;
+                }
             }
         }
 
-        false
-    }
+        // Enqueue all zero-in-degree nodes.
+        let mut queue: std::collections::VecDeque<&str> = in_degree
+            .iter()
+            .filter(|(_, &d)| d == 0)
+            .map(|(&n, _)| n)
+            .collect();
 
-    /// Recursive DFS helper for cycle detection
-    ///
-    /// # Arguments
-    /// * `node` - Current node being explored
-    /// * `visited` - Set of all visited nodes
-    /// * `rec_stack` - Stack of nodes in current recursion path (for cycle detection)
-    ///
-    /// # Returns
-    /// * `true` if a cycle is detected, `false` otherwise
-    ///
-    /// # Algorithm
-    /// Uses color-based approach:
-    /// - White (not in visited): Unvisited
-    /// - Gray (in rec_stack): Currently being explored
-    /// - Black (visited, not in rec_stack): Fully explored
-    ///   A back edge (to node in rec_stack) indicates a cycle.
-    fn has_cycle_util(
-        &self,
-        node: &str,
-        visited: &mut std::collections::HashSet<String>,
-        rec_stack: &mut std::collections::HashSet<String>,
-    ) -> bool {
-        visited.insert(node.to_string());
-        rec_stack.insert(node.to_string());
-
-        // Get all neighbors using adjacency list - avoid cloning by using borrowed strings
-        if let Some(indices) = self.adjacency_list.get(node) {
-            for &idx in indices {
-                if let Some(edge) = self.edges.get(idx) {
-                    let neighbor = &edge.to;
-
-                    // Skip virtual END node
-                    if neighbor == "END" {
-                        continue;
-                    }
-
-                    if !visited.contains(neighbor) {
-                        if self.has_cycle_util(neighbor, visited, rec_stack) {
-                            return true;
+        let mut processed = 0usize;
+        while let Some(node) = queue.pop_front() {
+            processed += 1;
+            if let Some(indices) = self.adjacency_list.get(node) {
+                for &idx in indices {
+                    if let Some(edge) = self.edges.get(idx) {
+                        if edge.to != "END" {
+                            if let Some(deg) = in_degree.get_mut(edge.to.as_str()) {
+                                *deg -= 1;
+                                if *deg == 0 {
+                                    queue.push_back(edge.to.as_str());
+                                }
+                            }
                         }
-                    } else if rec_stack.contains(neighbor) {
-                        return true;
                     }
                 }
             }
         }
 
-        rec_stack.remove(node);
-        false
+        if processed < self.nodes.len() {
+            // Nodes whose in-degree never reached zero are part of a cycle.
+            let mut cycle_nodes: Vec<String> = in_degree
+                .into_iter()
+                .filter(|(_, d)| d > 0)
+                .map(|(n, _)| n.to_string())
+                .collect();
+            cycle_nodes.sort();
+            Some(cycle_nodes)
+        } else {
+            None
+        }
     }
 
     // =========================================================================
@@ -624,9 +623,17 @@ impl<T: State> Graph<T> {
             }
         }
 
-        // If we didn't process all nodes, there's a cycle
+        // If we didn't process all nodes, there's a cycle — collect the unprocessed nodes
         if result.len() != self.nodes.len() {
-            return Err(crate::core::error::FlowgentraError::CycleDetected);
+            let mut cycle_nodes: Vec<String> = in_degree
+                .iter()
+                .filter(|(_, &deg)| deg > 0)
+                .map(|(&id, _)| id.to_string())
+                .collect();
+            cycle_nodes.sort();
+            return Err(crate::core::error::FlowgentraError::CycleDetected {
+                nodes: cycle_nodes.join(", "),
+            });
         }
 
         Ok(result)

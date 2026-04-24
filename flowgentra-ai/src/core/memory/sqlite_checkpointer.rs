@@ -31,6 +31,10 @@ mod inner {
     use crate::core::state::DynState;
     use sqlx::SqlitePool;
 
+    /// Maximum serialized state size accepted when loading from the database (16 MB).
+    /// Prevents memory exhaustion from oversized or tampered checkpoint rows.
+    const MAX_STATE_JSON_BYTES: usize = 16 * 1024 * 1024;
+
     /// SQLite-backed checkpointer.
     ///
     /// Creates the `checkpoints` table on first use if it does not exist.
@@ -106,6 +110,13 @@ mod inner {
                     match row {
                         None => Ok(None),
                         Some((state_json, metadata_json)) => {
+                            if state_json.len() > MAX_STATE_JSON_BYTES {
+                                return Err(FlowgentraError::StateError(format!(
+                                    "Checkpoint state_json exceeds size limit ({} > {} bytes)",
+                                    state_json.len(),
+                                    MAX_STATE_JSON_BYTES
+                                )));
+                            }
                             let state_value: serde_json::Value = serde_json::from_str(&state_json)
                                 .map_err(|e| {
                                     FlowgentraError::StateError(format!(

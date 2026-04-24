@@ -254,7 +254,10 @@ pub mod sqlite_async {
         pub async fn new(url: &str) -> Result<Self> {
             let pool = SqlitePool::connect(url)
                 .await
-                .map_err(|e| FlowgentraError::StateError(format!("SQLite connect: {e}")))?;
+                .map_err(|e| FlowgentraError::StateError(format!(
+                    "SQLite connect failed for '{url}': {e}. \
+                     Check that the path exists and is writable, or use ':memory:' for in-process storage."
+                )))?;
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS checkpoints (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,

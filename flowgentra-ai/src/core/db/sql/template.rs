@@ -14,6 +14,22 @@
 //! - Do NOT add backend-specific public methods to the struct; keep them private.
 //! - Return [`DbError`] — never expose the backend's own error type through the trait.
 //! - `params` are positional; translate `?` / `$N` placeholders as needed.
+//!
+//! # SECURITY — SQL Injection Prevention
+//!
+//! **Always** pass user-supplied values via the `params: &[Value]` argument and
+//! use positional placeholders (`?` for MySQL/SQLite, `$1`/`$2` for PostgreSQL)
+//! in the `sql` string.  **Never** interpolate user data into `sql` via
+//! `format!()` or string concatenation — that opens SQL injection vulnerabilities.
+//!
+//! ```rust,ignore
+//! // ✅ Safe — user input goes through the driver's parameterised query path
+//! db.query("SELECT * FROM users WHERE id = $1", &[json!(user_id)]).await?;
+//!
+//! // ❌ Unsafe — never do this
+//! let sql = format!("SELECT * FROM users WHERE id = {}", user_id);
+//! db.query(&sql, &[]).await?;
+//! ```
 
 use async_trait::async_trait;
 use serde_json::Value;

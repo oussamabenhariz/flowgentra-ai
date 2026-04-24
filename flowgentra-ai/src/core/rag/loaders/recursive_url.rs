@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
+use std::net::IpAddr;
 
 use serde_json::json;
 
@@ -54,6 +55,8 @@ impl RecursiveUrlLoader {
     }
 
     pub async fn load(&self) -> Result<Vec<LoadedDocument>, Box<dyn std::error::Error>> {
+        validate_url(&self.root_url).map_err(|e| format!("Root URL rejected: {e}"))?;
+
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
             .build()?;
@@ -80,6 +83,10 @@ impl RecursiveUrlLoader {
                 .iter()
                 .any(|p| url.contains(p.as_str()))
             {
+                continue;
+            }
+            // Re-validate each URL before fetching (handles redirected/resolved links)
+            if validate_url(&url).is_err() {
                 continue;
             }
             visited.insert(url.clone());
@@ -139,12 +146,61 @@ impl RecursiveUrlLoader {
     }
 }
 
+/// Returns `Err` if `url` should not be fetched (wrong scheme, private IP, etc.).
+fn validate_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("Blocked scheme '{scheme}': only HTTP/HTTPS allowed")),
+    }
+
+    if let Some(host) = parsed.host_str() {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if ip.is_loopback() || is_private_ip(ip) || ip.is_unspecified() {
+                return Err(format!("Blocked private/loopback IP: {ip}"));
+            }
+        }
+        // Block cloud metadata endpoints by hostname
+        if host == "169.254.169.254"
+            || host == "metadata.google.internal"
+            || host.ends_with(".internal")
+        {
+            return Err(format!("Blocked metadata endpoint: {host}"));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            octets[0] == 10
+                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 168)
+                || v4.is_link_local()
+        }
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
 fn base_url(url: &str) -> String {
-    let trimmed = url.trim_end_matches('/');
-    if let Some(pos) = trimmed[8..].find('/') {
-        trimmed[..8 + pos].to_string()
+    if let Ok(parsed) = url::Url::parse(url) {
+        let mut base = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or(""));
+        if let Some(port) = parsed.port() {
+            base.push_str(&format!(":{port}"));
+        }
+        base
     } else {
-        trimmed.to_string()
+        // Fallback: trim trailing path component
+        let trimmed = url.trim_end_matches('/');
+        if let Some(pos) = trimmed.rfind("://").and_then(|p| trimmed[p + 3..].find('/').map(|q| p + 3 + q)) {
+            trimmed[..pos].to_string()
+        } else {
+            trimmed.to_string()
+        }
     }
 }
 
@@ -153,20 +209,36 @@ fn extract_links(html: &str, base: &str, prefix: &str) -> Vec<String> {
     for part in html.split("href=\"").skip(1) {
         let href = part.split('"').next().unwrap_or("").trim();
         let full = resolve_url(href, base);
-        if full.starts_with(prefix) && !full.contains('#') {
-            links.push(full);
+        // Require exact host prefix match, not just string prefix, to prevent
+        // attacks like https://example.com.evil.com/ passing a prefix check.
+        if !full.contains('#') && url_matches_prefix(&full, prefix) {
+            if validate_url(&full).is_ok() {
+                links.push(full);
+            }
         }
     }
     links
 }
 
+/// Returns true only when `url` is under the same origin + path prefix as `prefix`.
+fn url_matches_prefix(url: &str, prefix: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else { return false };
+    let Ok(p) = url::Url::parse(prefix) else { return url.starts_with(prefix) };
+
+    u.scheme() == p.scheme()
+        && u.host() == p.host()
+        && u.port() == p.port()
+        && u.path().starts_with(p.path())
+}
+
 fn resolve_url(href: &str, base: &str) -> String {
-    if href.starts_with("http") {
+    if href.starts_with("http://") || href.starts_with("https://") {
         href.to_string()
+    } else if let Ok(base_parsed) = url::Url::parse(base) {
+        base_parsed.join(href).map(|u| u.to_string()).unwrap_or_default()
     } else if href.starts_with('/') {
         format!("{}{}", base_url(base), href)
     } else {
-        // relative path
         let base_dir = base.rfind('/').map(|i| &base[..=i]).unwrap_or(base);
         format!("{base_dir}{href}")
     }

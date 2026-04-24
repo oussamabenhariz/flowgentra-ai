@@ -52,8 +52,8 @@ pub enum FlowgentraError {
     RoutingError(String),
 
     /// Cycle detected in acyclic graph
-    #[error("Cycle detected in graph")]
-    CycleDetected,
+    #[error("Cycle detected in graph involving node(s): [{nodes}]. Set `allow_cycles: true` in config.yaml if cycles are intentional, or remove the back-edge between these nodes.")]
+    CycleDetected { nodes: String },
 
     /// Recursion limit exceeded during graph execution
     #[error("Recursion limit of {limit} steps exceeded. Ensure your graph has a termination condition that routes to END. You can raise the limit via `recursion_limit` in the graph config.")]
@@ -85,7 +85,7 @@ pub enum FlowgentraError {
     ExecutionAborted(String),
 
     /// Operation timed out
-    #[error("Timeout error")]
+    #[error("Operation timed out. Increase the timeout in config.yaml, or check for blocking calls inside async handlers (use tokio::task::spawn_blocking for CPU-heavy work).")]
     TimeoutError,
 
     /// Execution timeout
@@ -239,7 +239,7 @@ impl FlowgentraError {
                 Some("Edge references a node that was not added to the graph. \
                       Call builder.add_node(\"name\", ...) before adding edges to it.")
             }
-            FlowgentraError::CycleDetected => {
+            FlowgentraError::CycleDetected { .. } => {
                 Some("Your graph has a cycle but no conditional edge routing to END. \
                       Add .add_conditional_edge(\"node\", router) where the router returns END \
                       when the termination condition is met.")

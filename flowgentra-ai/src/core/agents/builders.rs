@@ -120,7 +120,11 @@ pub struct GraphBasedAgent {
     name: String,
     graph: StateGraph<DynState>,
     /// Conversation history for multi-turn context: Vec<(role, content)>
-    conversation_history: std::sync::Mutex<Vec<(String, String)>>,
+    ///
+    /// Uses `tokio::sync::Mutex` (not `std::sync::Mutex`) so that a panic in a
+    /// concurrent task never poisons the lock and makes the agent permanently
+    /// unusable.
+    conversation_history: tokio::sync::Mutex<Vec<(String, String)>>,
 }
 
 impl GraphBasedAgent {
@@ -149,7 +153,7 @@ impl GraphBasedAgent {
             config,
             name,
             graph,
-            conversation_history: std::sync::Mutex::new(Vec::new()),
+            conversation_history: tokio::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -645,9 +649,7 @@ impl GraphBasedAgent {
 
         // Inject conversation history into state for multi-turn context
         {
-            let history = self.conversation_history.lock().map_err(|_| {
-                FlowgentraError::StateError("Failed to lock conversation history".to_string())
-            })?;
+            let history = self.conversation_history.lock().await;
             if !history.is_empty() {
                 let history_json: Vec<serde_json::Value> = history
                     .iter()
@@ -671,11 +673,13 @@ impl GraphBasedAgent {
                     .and_then(|v| v.as_str().map(|s| s.to_string()))
                     .unwrap_or_else(|| "No response generated".to_string());
 
-                // Try to extract content from <answer> tags
+                // Try to extract content from <answer> tags.
+                // Use tag lengths via .len() to avoid hard-coded magic offsets
+                // and to stay correct on valid UTF-8 boundaries (all tags are ASCII).
                 if let Some(start) = full_response.find("<answer>") {
-                    if let Some(end) = full_response.find("</answer>") {
-                        let start_idx = start + 8;
-                        if start_idx < end {
+                    if let Some(end) = full_response.rfind("</answer>") {
+                        let start_idx = start + "<answer>".len();
+                        if start_idx <= end {
                             return Ok(full_response[start_idx..end].trim().to_string());
                         }
                     }
@@ -683,7 +687,7 @@ impl GraphBasedAgent {
 
                 // Remove thinking blocks if present
                 if let Some(thinking_end) = full_response.find("</thinking>") {
-                    full_response[thinking_end + 11..].trim().to_string()
+                    full_response[thinking_end + "</thinking>".len()..].trim().to_string()
                 } else {
                     full_response
                 }
@@ -734,13 +738,22 @@ impl GraphBasedAgent {
                 .unwrap_or_else(|| "No response generated".to_string()),
         };
 
-        // Append to conversation history for future turns
+        // Append to conversation history for future turns, then enforce the
+        // memory window (memory_steps turns = 2× entries) to prevent unbounded
+        // growth and eventual LLM context-window overflow.
         {
-            let mut history = self.conversation_history.lock().map_err(|_| {
-                FlowgentraError::StateError("Failed to lock conversation history".to_string())
-            })?;
+            let mut history = self.conversation_history.lock().await;
             history.push(("user".to_string(), input.to_string()));
             history.push(("assistant".to_string(), response.clone()));
+            // Each turn produces 2 entries (user + assistant). memory_steps == 0
+            // means "unlimited" for backward compatibility.
+            if self.config.memory_steps > 0 {
+                let max_entries = self.config.memory_steps * 2;
+                if history.len() > max_entries {
+                    let drain_count = history.len() - max_entries;
+                    history.drain(..drain_count);
+                }
+            }
         }
 
         Ok(response)
@@ -784,8 +797,10 @@ impl Agent for GraphBasedAgent {
 
     fn process(&self, _input: &str, _state: &DynState) -> Result<String, FlowgentraError> {
         // Synchronous wrapper - use execute_input() for async execution
-        Err(FlowgentraError::StateError(
-            "Use execute_input() for async execution".to_string(),
+        Err(FlowgentraError::RuntimeError(
+            "process() is not supported on this agent type — call execute_input() instead, \
+             which runs the async graph executor."
+                .to_string(),
         ))
     }
 

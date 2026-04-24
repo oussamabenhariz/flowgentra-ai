@@ -418,18 +418,18 @@ impl AgentRuntime {
         let mut plan_steps: usize = 0;
 
         // Recursion / step limit — prevents infinite loops in cyclic graphs.
+        // Counts loop *iterations* (one per BFS wave), not individual node executions,
+        // so the limit is predictable regardless of how many nodes run in parallel.
         let recursion_limit = self.config.graph.recursion_limit;
-        let mut total_steps: usize = 0;
 
         // Start from START node
         let mut current_nodes = self.graph.start_nodes().to_vec();
-        let mut iteration = 0;
+        let mut iteration: usize = 0;
 
         while !current_nodes.is_empty() {
             iteration += 1;
-            total_steps += current_nodes.len();
 
-            if total_steps > recursion_limit {
+            if iteration > recursion_limit {
                 return Err(
                     crate::core::error::FlowgentraError::RecursionLimitExceeded {
                         limit: recursion_limit,
@@ -439,7 +439,7 @@ impl AgentRuntime {
 
             let node_count = current_nodes.len();
 
-            tracing::debug!(iteration, node_count, total_steps, nodes = ?current_nodes, "Processing iteration");
+            tracing::debug!(iteration, node_count, nodes = ?current_nodes, "Processing iteration");
 
             let mut next_nodes = Vec::new();
 

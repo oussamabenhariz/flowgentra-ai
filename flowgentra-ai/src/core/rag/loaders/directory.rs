@@ -21,6 +21,7 @@
 //! let docs = DirectoryLoader::default_for("./data").load().await?;
 //! ```
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::core::rag::{
@@ -54,7 +55,7 @@ impl Default for DirectoryLoaderConfig {
         Self {
             extensions: vec![],
             recursive: true,
-            max_depth: 0,
+            max_depth: 10, // capped by default; set 0 for unlimited (use with care)
             skip_errors: true,
             json_text_field: "text".into(),
             jsonl_text_field: "text".into(),
@@ -84,7 +85,14 @@ impl DirectoryLoader {
     /// Load all matching documents from the directory.
     pub async fn load(&self) -> Result<Vec<LoadedDocument>, VectorStoreError> {
         let mut docs = Vec::new();
-        self.collect_docs(&self.root, 0, &mut docs).await?;
+        let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
+        // Canonicalize the root so inode-based cycle detection works across symlinks.
+        let canonical_root = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        visited_dirs.insert(canonical_root);
+        self.collect_docs(&self.root, 0, &mut docs, &mut visited_dirs).await?;
         Ok(docs)
     }
 
@@ -93,6 +101,7 @@ impl DirectoryLoader {
         dir: &Path,
         depth: usize,
         docs: &mut Vec<LoadedDocument>,
+        visited_dirs: &mut HashSet<PathBuf>,
     ) -> Result<(), VectorStoreError> {
         // Stop if max_depth is set and exceeded
         if self.config.max_depth > 0 && depth >= self.config.max_depth {
@@ -112,7 +121,14 @@ impl DirectoryLoader {
 
             if path.is_dir() {
                 if self.config.recursive {
-                    Box::pin(self.collect_docs(&path, depth + 1, docs)).await?;
+                    // Canonicalize to detect symlink cycles (same inode reachable via different paths).
+                    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    if visited_dirs.contains(&canonical) {
+                        tracing::warn!("Skipping symlink cycle at {:?}", path);
+                        continue;
+                    }
+                    visited_dirs.insert(canonical);
+                    Box::pin(self.collect_docs(&path, depth + 1, docs, visited_dirs)).await?;
                 }
                 continue;
             }
