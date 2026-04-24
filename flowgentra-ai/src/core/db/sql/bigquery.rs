@@ -177,7 +177,10 @@ impl BigQueryDatabase {
 fn bq_query_parameter(name: &str, value: &Value) -> Value {
     let (type_name, value_obj) = match value {
         Value::String(s) => ("STRING", json!({ "value": s })),
-        Value::Bool(b) => ("BOOL", json!({ "value": if *b { "true" } else { "false" } })),
+        Value::Bool(b) => (
+            "BOOL",
+            json!({ "value": if *b { "true" } else { "false" } }),
+        ),
         Value::Number(n) => {
             if n.is_f64() {
                 ("FLOAT64", json!({ "value": n.to_string() }))
@@ -235,6 +238,8 @@ impl SqlDatabase for BigQueryDatabase {
     /// BigQuery is append-optimised; DML statements work but are slower than
     /// bulk load. Returns 0 for DDL (BigQuery doesn't report rows affected).
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, DbError> {
-        self.run_query(sql, params).await.map(|rows| rows.len() as u64)
+        self.run_query(sql, params)
+            .await
+            .map(|rows| rows.len() as u64)
     }
 }

@@ -496,11 +496,8 @@ impl<T: State> Graph<T> {
     /// * Space: O(V)  — in-degree table + BFS queue
     fn find_cycle_nodes(&self) -> Option<Vec<String>> {
         // Compute in-degree for every real node (skip "END" virtual node).
-        let mut in_degree: HashMap<&str, usize> = self
-            .nodes
-            .keys()
-            .map(|n| (n.as_str(), 0usize))
-            .collect();
+        let mut in_degree: HashMap<&str, usize> =
+            self.nodes.keys().map(|n| (n.as_str(), 0usize)).collect();
 
         for edge in &self.edges {
             if edge.to != "END" {
@@ -540,7 +537,7 @@ impl<T: State> Graph<T> {
             // Nodes whose in-degree never reached zero are part of a cycle.
             let mut cycle_nodes: Vec<String> = in_degree
                 .into_iter()
-                .filter(|(_, d)| d > 0)
+                .filter(|(_, d)| *d > 0)
                 .map(|(n, _)| n.to_string())
                 .collect();
             cycle_nodes.sort();

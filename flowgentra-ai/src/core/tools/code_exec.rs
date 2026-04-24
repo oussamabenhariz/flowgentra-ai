@@ -327,9 +327,10 @@ impl Tool for ShellTool {
             // Restricted mode: parse into [program, args…] and execute without a
             // shell so that metacharacters in args are never interpreted.
             let tokens: Vec<&str> = command.split_whitespace().collect();
-            let program = tokens.first().copied().ok_or_else(|| {
-                FlowgentraError::ToolError("Empty command string".to_string())
-            })?;
+            let program = tokens
+                .first()
+                .copied()
+                .ok_or_else(|| FlowgentraError::ToolError("Empty command string".to_string()))?;
             self.check_allowed(program)?;
             run_subprocess(program, &tokens[1..], None, Duration::from_secs(timeout)).await?
         } else {
@@ -405,11 +406,14 @@ mod tests {
         // Semicolon injection: "echo ;" would be two commands in sh -c, but in
         // restricted mode the semicolon is passed as a literal arg to echo.
         let tool = ShellTool::new(vec!["echo".to_string()], 10);
-        let result = tool.call(json!({"command": "echo hello ; rm -rf /"})).await.unwrap();
+        let result = tool
+            .call(json!({"command": "echo hello ; rm -rf /"}))
+            .await
+            .unwrap();
         // In restricted mode the entire "hello ; rm -rf /" is passed as one arg to echo
         let stdout = result["stdout"].as_str().unwrap_or("");
         assert!(!stdout.is_empty()); // echo ran
-        // The rm command was never spawned — if it had run it would have errored
+                                     // The rm command was never spawned — if it had run it would have errored
     }
 
     #[tokio::test]

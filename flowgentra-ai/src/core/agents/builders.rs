@@ -687,7 +687,9 @@ impl GraphBasedAgent {
 
                 // Remove thinking blocks if present
                 if let Some(thinking_end) = full_response.find("</thinking>") {
-                    full_response[thinking_end + "</thinking>".len()..].trim().to_string()
+                    full_response[thinking_end + "</thinking>".len()..]
+                        .trim()
+                        .to_string()
                 } else {
                     full_response
                 }

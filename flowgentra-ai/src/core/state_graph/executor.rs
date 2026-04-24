@@ -17,7 +17,7 @@ fn max_nesting_depth() -> usize {
     std::env::var("FLOWGENTRA_MAX_NESTING")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n >= 1 && n <= 1_000)
+        .filter(|&n| (1..=1_000).contains(&n))
         .unwrap_or(25)
 }
 

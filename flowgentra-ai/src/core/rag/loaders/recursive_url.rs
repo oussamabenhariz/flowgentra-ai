@@ -152,7 +152,11 @@ fn validate_url(url: &str) -> Result<(), String> {
 
     match parsed.scheme() {
         "http" | "https" => {}
-        scheme => return Err(format!("Blocked scheme '{scheme}': only HTTP/HTTPS allowed")),
+        scheme => {
+            return Err(format!(
+                "Blocked scheme '{scheme}': only HTTP/HTTPS allowed"
+            ))
+        }
     }
 
     if let Some(host) = parsed.host_str() {
@@ -196,7 +200,10 @@ fn base_url(url: &str) -> String {
     } else {
         // Fallback: trim trailing path component
         let trimmed = url.trim_end_matches('/');
-        if let Some(pos) = trimmed.rfind("://").and_then(|p| trimmed[p + 3..].find('/').map(|q| p + 3 + q)) {
+        if let Some(pos) = trimmed
+            .rfind("://")
+            .and_then(|p| trimmed[p + 3..].find('/').map(|q| p + 3 + q))
+        {
             trimmed[..pos].to_string()
         } else {
             trimmed.to_string()
@@ -211,10 +218,8 @@ fn extract_links(html: &str, base: &str, prefix: &str) -> Vec<String> {
         let full = resolve_url(href, base);
         // Require exact host prefix match, not just string prefix, to prevent
         // attacks like https://example.com.evil.com/ passing a prefix check.
-        if !full.contains('#') && url_matches_prefix(&full, prefix) {
-            if validate_url(&full).is_ok() {
-                links.push(full);
-            }
+        if !full.contains('#') && url_matches_prefix(&full, prefix) && validate_url(&full).is_ok() {
+            links.push(full);
         }
     }
     links
@@ -222,8 +227,12 @@ fn extract_links(html: &str, base: &str, prefix: &str) -> Vec<String> {
 
 /// Returns true only when `url` is under the same origin + path prefix as `prefix`.
 fn url_matches_prefix(url: &str, prefix: &str) -> bool {
-    let Ok(u) = url::Url::parse(url) else { return false };
-    let Ok(p) = url::Url::parse(prefix) else { return url.starts_with(prefix) };
+    let Ok(u) = url::Url::parse(url) else {
+        return false;
+    };
+    let Ok(p) = url::Url::parse(prefix) else {
+        return url.starts_with(prefix);
+    };
 
     u.scheme() == p.scheme()
         && u.host() == p.host()
@@ -235,7 +244,10 @@ fn resolve_url(href: &str, base: &str) -> String {
     if href.starts_with("http://") || href.starts_with("https://") {
         href.to_string()
     } else if let Ok(base_parsed) = url::Url::parse(base) {
-        base_parsed.join(href).map(|u| u.to_string()).unwrap_or_default()
+        base_parsed
+            .join(href)
+            .map(|u| u.to_string())
+            .unwrap_or_default()
     } else if href.starts_with('/') {
         format!("{}{}", base_url(base), href)
     } else {

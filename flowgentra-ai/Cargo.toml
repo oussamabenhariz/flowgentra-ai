@@ -100,6 +100,8 @@ neo4rs = { version = "0.7", optional = true }
 tiberius    = { version = "0.9",  optional = true, default-features = false, features = ["rustls", "sql-browser-tokio"] }
 bb8         = { version = "0.8",  optional = true }
 bb8-tiberius = { version = "0.11", optional = true }
+indexmap = "2.14.0"
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"

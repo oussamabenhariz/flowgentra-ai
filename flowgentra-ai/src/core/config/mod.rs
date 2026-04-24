@@ -456,7 +456,7 @@ fn default_recursion_limit() -> usize {
     std::env::var("FLOWGENTRA_RECURSION_LIMIT")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n >= 1 && n <= 10_000)
+        .filter(|&n| (1..=10_000).contains(&n))
         .unwrap_or(25)
 }
 fn eval_default_min_confidence() -> f64 {

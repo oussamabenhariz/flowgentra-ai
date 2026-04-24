@@ -92,7 +92,8 @@ impl DirectoryLoader {
             .canonicalize()
             .unwrap_or_else(|_| self.root.clone());
         visited_dirs.insert(canonical_root);
-        self.collect_docs(&self.root, 0, &mut docs, &mut visited_dirs).await?;
+        self.collect_docs(&self.root, 0, &mut docs, &mut visited_dirs)
+            .await?;
         Ok(docs)
     }
 

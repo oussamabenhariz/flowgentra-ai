@@ -74,7 +74,7 @@ impl WebLoader {
 
     /// Fetch a single URL and return a `LoadedDocument`.
     pub async fn load(&self, url: &str) -> Result<LoadedDocument, VectorStoreError> {
-        validate_web_url(url).map_err(|e| VectorStoreError::Unknown(e))?;
+        validate_web_url(url).map_err(VectorStoreError::Unknown)?;
 
         let response = self
             .client
@@ -96,7 +96,10 @@ impl WebLoader {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
-                tracing::warn!(url, "Response missing Content-Type header, treating as text/html");
+                tracing::warn!(
+                    url,
+                    "Response missing Content-Type header, treating as text/html"
+                );
                 "text/html".to_string()
             });
 
@@ -155,7 +158,11 @@ fn validate_web_url(url: &str) -> Result<(), String> {
 
     match parsed.scheme() {
         "http" | "https" => {}
-        scheme => return Err(format!("Blocked scheme '{scheme}': only HTTP/HTTPS allowed")),
+        scheme => {
+            return Err(format!(
+                "Blocked scheme '{scheme}': only HTTP/HTTPS allowed"
+            ))
+        }
     }
 
     if let Some(host) = parsed.host_str() {

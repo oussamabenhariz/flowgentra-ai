@@ -43,7 +43,7 @@ pub struct Skill {
 // ── SKILL.md frontmatter ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Default)]
-struct SkillFrontmatter {
+pub struct SkillFrontmatter {
     pub name: Option<String>,
     pub description: Option<String>,
     pub version: Option<String>,
@@ -57,7 +57,7 @@ struct SkillFrontmatter {
 /// Parse a SKILL.md file contents into a [`Skill`].
 ///
 /// The `dir_name` is used as a fallback `name` when the frontmatter omits it.
-pub fn parse_skill_md(content: &str, dir_name: &str) -> Result<(SkillFrontmatter, String)> {
+pub fn parse_skill_md(content: &str, _dir_name: &str) -> Result<(SkillFrontmatter, String)> {
     let content = content.trim_start();
 
     if !content.starts_with("---") {
@@ -66,9 +66,11 @@ pub fn parse_skill_md(content: &str, dir_name: &str) -> Result<(SkillFrontmatter
 
     // Skip the opening `---` and find the closing `\n---`
     let after_open = &content[3..];
-    let close_pos = after_open
-        .find("\n---")
-        .ok_or_else(|| FlowgentraError::Config("SKILL.md has an unclosed frontmatter block (missing closing ---)".into()))?;
+    let close_pos = after_open.find("\n---").ok_or_else(|| {
+        FlowgentraError::ConfigError(
+            "SKILL.md has an unclosed frontmatter block (missing closing ---)".into(),
+        )
+    })?;
 
     let frontmatter_str = &after_open[..close_pos];
     let body_start = close_pos + 4; // len("\n---") == 4
@@ -79,7 +81,7 @@ pub fn parse_skill_md(content: &str, dir_name: &str) -> Result<(SkillFrontmatter
         .to_string();
 
     let frontmatter: SkillFrontmatter = serde_yml::from_str(frontmatter_str)
-        .map_err(|e| FlowgentraError::Config(format!("Invalid SKILL.md frontmatter: {e}")))?;
+        .map_err(|e| FlowgentraError::ConfigError(format!("Invalid SKILL.md frontmatter: {e}")))?;
 
     Ok((frontmatter, body))
 }
@@ -100,7 +102,7 @@ pub enum SkillError {
 
 impl From<SkillError> for FlowgentraError {
     fn from(e: SkillError) -> Self {
-        FlowgentraError::Config(e.to_string())
+        FlowgentraError::ConfigError(e.to_string())
     }
 }
 
@@ -138,11 +140,7 @@ impl SkillRegistry {
     /// Build a [`Skill`] from raw SKILL.md content plus pre-loaded reference texts.
     ///
     /// `dir_name` is used as a fallback name when the frontmatter omits `name`.
-    pub fn build_skill(
-        content: &str,
-        dir_name: &str,
-        references: Vec<String>,
-    ) -> Result<Skill> {
+    pub fn build_skill(content: &str, dir_name: &str, references: Vec<String>) -> Result<Skill> {
         let (fm, instructions) = parse_skill_md(content, dir_name)?;
         Ok(Skill {
             name: fm.name.unwrap_or_else(|| dir_name.to_string()),
@@ -235,7 +233,10 @@ impl SkillRegistry {
         let sections: Vec<String> = skills
             .iter()
             .map(|skill| {
-                let mut parts = vec![format!("## Skill: {}\n\n{}", skill.name, skill.instructions)];
+                let mut parts = vec![format!(
+                    "## Skill: {}\n\n{}",
+                    skill.name, skill.instructions
+                )];
                 if !skill.references.is_empty() {
                     parts.push(skill.references.join("\n\n"));
                 }
