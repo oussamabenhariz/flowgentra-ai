@@ -32,6 +32,7 @@
 pub mod docker;
 pub mod factory;
 pub mod sse;
+pub mod sse_protocol;
 pub mod stdio;
 
 // Re-exports for convenience
@@ -40,6 +41,7 @@ pub use docker::{
 };
 pub use factory::MCPClientFactory;
 pub use sse::{SSEConnection, SSEMessage, SSEResponse, SSEStatus, SSEStreamReceiver};
+pub use sse_protocol::MCPSseProtocolClient;
 pub use stdio::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, StdioConnection, StdioConnectionBuilder,
 };

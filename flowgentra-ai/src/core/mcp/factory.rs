@@ -1,8 +1,8 @@
 //! Factory for creating MCP clients based on connection type
 
 use super::{
-    DefaultMCPClient, DockerMCPClient, MCPClient, MCPConfig, MCPConnectionType, RetryMCPClient,
-    StdioMCPClient,
+    DefaultMCPClient, DockerMCPClient, MCPClient, MCPConfig, MCPConnectionType,
+    MCPSseProtocolClient, RetryMCPClient, StdioMCPClient,
 };
 use crate::core::error::Result;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ impl MCPClientFactory {
         let inner: Arc<dyn MCPClient> = match config.connection_type {
             MCPConnectionType::Sse => {
                 tracing::info!(name = %config.name, uri = %config.uri, "Creating SSE MCP client");
-                Arc::new(DefaultMCPClient::new(config))
+                Arc::new(MCPSseProtocolClient::new(config))
             }
             MCPConnectionType::Stdio => {
                 tracing::info!(name = %config.name, command = %config.stdio_command(), "Creating Stdio MCP client");
