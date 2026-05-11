@@ -92,11 +92,22 @@ fn format_tools_for_prompt(config: &PrebuiltAgentConfig) -> String {
     }
 
     let mut formatted = String::new();
-    for (idx, (name, spec)) in config.tools.iter().enumerate() {
-        formatted.push_str(&format!("{}. {}: {}\n", idx + 1, name, spec.description));
-        if !spec.parameters.is_empty() {
-            for (param_name, param_type) in &spec.parameters {
-                let req = if spec.required.contains(param_name) {
+    for (idx, (name, def)) in config.tools.iter().enumerate() {
+        formatted.push_str(&format!("{}. {}: {}\n", idx + 1, name, def.description));
+        // Extract parameter names/types/required from the JSON Schema parameters field
+        if let Some(props) = def.parameters.get("properties").and_then(|p| p.as_object()) {
+            let required: Vec<&str> = def
+                .parameters
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            for (param_name, param_schema) in props {
+                let param_type = param_schema
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("any");
+                let req = if required.contains(&param_name.as_str()) {
                     " (required)"
                 } else {
                     " (optional)"
@@ -356,28 +367,6 @@ pub fn reasoning_router(state: &DynState) -> Result<String, FlowgentraError> {
 // Shared helpers
 // =============================================================================
 
-/// Convert a `ToolSpec` into an LLM `ToolDefinition` with a JSON Schema body.
-fn tool_spec_to_definition(spec: &super::ToolSpec) -> ToolDefinition {
-    let mut properties = serde_json::Map::new();
-    for (name, param_type) in &spec.parameters {
-        let json_type = match param_type.to_lowercase().as_str() {
-            "integer" | "int" => "integer",
-            "boolean" | "bool" => "boolean",
-            "number" | "float" | "f32" | "f64" => "number",
-            "array" | "list" | "vec" => "array",
-            "object" | "map" | "dict" => "object",
-            _ => "string",
-        };
-        properties.insert(name.clone(), serde_json::json!({ "type": json_type }));
-    }
-    let parameters = serde_json::json!({
-        "type": "object",
-        "properties": properties,
-        "required": spec.required,
-    });
-    ToolDefinition::new(&spec.name, &spec.description, parameters)
-}
-
 // =============================================================================
 // ToolCallingNode
 // =============================================================================
@@ -407,12 +396,7 @@ impl ToolCallingNode {
     pub async fn execute(&self, state: &DynState) -> Result<DynState, FlowgentraError> {
         let client = self.config.llm.clone();
 
-        let tool_defs: Vec<ToolDefinition> = self
-            .config
-            .tools
-            .values()
-            .map(tool_spec_to_definition)
-            .collect();
+        let tool_defs: Vec<ToolDefinition> = self.config.tools.values().cloned().collect();
 
         let input = state
             .get("input")

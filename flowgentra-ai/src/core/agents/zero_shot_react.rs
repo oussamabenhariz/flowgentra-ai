@@ -2,14 +2,15 @@
 ///
 /// General-purpose reasoning + action agent that works without examples.
 /// Best for open-ended tasks requiring flexible problem-solving.
-use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
+use super::{Agent, AgentType, PrebuiltAgentConfig};
 use crate::core::error::FlowgentraError;
+use crate::core::llm::ToolDefinition;
 use std::collections::HashMap;
 
 /// Zero-shot ReAct agent implementation
 pub struct ZeroShotReActAgent {
     config: PrebuiltAgentConfig,
-    tools: HashMap<String, ToolSpec>,
+    tools: HashMap<String, ToolDefinition>,
 }
 
 impl ZeroShotReActAgent {
@@ -24,22 +25,30 @@ impl ZeroShotReActAgent {
         if self.tools.is_empty() {
             return "No tools available".to_string();
         }
-
         let mut formatted = String::new();
-        for (idx, (name, spec)) in self.tools.iter().enumerate() {
-            formatted.push_str(&format!("{}. {}: {}\n", idx + 1, name, spec.description));
-            if !spec.parameters.is_empty() {
-                formatted.push_str("   Parameters:\n");
-                for (param_name, param_type) in &spec.parameters {
-                    let required = if spec.required.contains(param_name) {
-                        "(required)"
-                    } else {
-                        "(optional)"
-                    };
-                    formatted.push_str(&format!(
-                        "     - {}: {} {}\n",
-                        param_name, param_type, required
-                    ));
+        for (idx, (name, def)) in self.tools.iter().enumerate() {
+            formatted.push_str(&format!("{}. {}: {}\n", idx + 1, name, def.description));
+            if let Some(props) = def.parameters.get("properties").and_then(|p| p.as_object()) {
+                if !props.is_empty() {
+                    let required: Vec<&str> = def
+                        .parameters
+                        .get("required")
+                        .and_then(|r| r.as_array())
+                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                        .unwrap_or_default();
+                    formatted.push_str("   Parameters:\n");
+                    for (param_name, param_schema) in props {
+                        let ptype = param_schema
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("string");
+                        let req = if required.contains(&param_name.as_str()) {
+                            "(required)"
+                        } else {
+                            "(optional)"
+                        };
+                        formatted.push_str(&format!("     - {}: {} {}\n", param_name, ptype, req));
+                    }
                 }
             }
         }
@@ -150,22 +159,21 @@ impl Agent for ZeroShotReActAgent {
         &self.config
     }
 
-    fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError> {
+    fn add_tool(&mut self, tool_name: &str, tool: ToolDefinition) -> Result<(), FlowgentraError> {
         if self.tools.contains_key(tool_name) {
             return Err(FlowgentraError::ConfigError(format!(
                 "Tool '{}' already exists",
                 tool_name
             )));
         }
-        self.tools.insert(tool_name.to_string(), tool_spec);
-        // Update config
         self.config
             .tools
-            .insert(tool_name.to_string(), self.tools[tool_name].clone());
+            .insert(tool_name.to_string(), tool.clone());
+        self.tools.insert(tool_name.to_string(), tool);
         Ok(())
     }
 
-    fn tools(&self) -> Vec<&ToolSpec> {
+    fn tools(&self) -> Vec<&ToolDefinition> {
         self.tools.values().collect()
     }
 }
@@ -173,6 +181,7 @@ impl Agent for ZeroShotReActAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::agents::ToolSpec;
 
     #[test]
     fn test_zero_shot_react_creation() {
@@ -188,7 +197,7 @@ mod tests {
             .with_parameter("query", "string")
             .required("query");
 
-        assert!(agent.add_tool("search", tool).is_ok());
+        assert!(agent.add_tool("search", tool.into()).is_ok());
         assert_eq!(agent.tools().len(), 1);
     }
 
@@ -198,8 +207,8 @@ mod tests {
         let tool1 = ToolSpec::new("calc", "Calculator");
         let tool2 = ToolSpec::new("calc", "Another calculator");
 
-        agent.add_tool("calc", tool1).unwrap();
-        let result = agent.add_tool("calc", tool2);
+        agent.add_tool("calc", tool1.into()).unwrap();
+        let result = agent.add_tool("calc", tool2.into());
         assert!(result.is_err());
     }
 
@@ -211,7 +220,8 @@ mod tests {
                 "math",
                 ToolSpec::new("math", "Perform math operations")
                     .with_parameter("operation", "string")
-                    .required("operation"),
+                    .required("operation")
+                    .into(),
             )
             .unwrap();
 

@@ -29,11 +29,13 @@
 // }
 // ```
 
-use crate::core::agent::Agent;
+use crate::core::agent::{Agent, ArcHandler};
 use crate::core::error::{FlowgentraError, Result};
 use crate::core::llm::{Message, MessageRole};
 use crate::core::memory::ConversationMemory;
+use crate::core::state::DynState;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Memory-aware agent wrapper that handles conversation memory automatically.
@@ -71,6 +73,24 @@ impl MemoryAwareAgent {
     /// ```
     pub fn from_config(config_path: &str) -> Result<Self> {
         let agent = crate::core::agent::from_config_path(config_path)?;
+        let conversation_memory = agent.conversation_memory();
+
+        Ok(Self {
+            agent,
+            thread_id: "default".to_string(),
+            conversation_memory,
+        })
+    }
+
+    /// Create from a YAML config file with extra handlers (e.g. Python callables).
+    ///
+    /// Used by the PyO3 binding to inject Python handlers discovered at runtime.
+    pub fn from_config_with_extra_handlers(
+        config_path: &str,
+        extra_handlers: HashMap<String, ArcHandler<DynState>>,
+    ) -> Result<Self> {
+        let agent =
+            crate::core::agent::from_config_path_with_extra_handlers(config_path, extra_handlers)?;
         let conversation_memory = agent.conversation_memory();
 
         Ok(Self {

@@ -37,7 +37,20 @@ pub struct MCPSseProtocolClient {
 impl MCPSseProtocolClient {
     pub fn new(config: MCPConfig) -> Self {
         let timeout = config.connection_settings.timeout.unwrap_or(30);
-        let base_url = config.uri.trim_end_matches('/').to_string();
+
+        // base_url = origin only (scheme + host + port), used to make session path absolute.
+        // e.g. "http://127.0.0.1:8888/sse" → "http://127.0.0.1:8888"
+        let base_url = {
+            let uri = config.uri.trim_end_matches('/');
+            // Strip any path component — keep only scheme://host:port
+            if let Some(after_scheme) = uri.find("://") {
+                let rest = &uri[after_scheme + 3..];
+                let host_end = rest.find('/').map_or(rest.len(), |i| i);
+                format!("{}://{}", &uri[..after_scheme], &rest[..host_end])
+            } else {
+                uri.to_string()
+            }
+        };
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(timeout))
@@ -62,7 +75,8 @@ impl MCPSseProtocolClient {
             return Ok(());
         }
 
-        let sse_url = format!("{}/sse", self.state.base_url);
+        // Use config URI directly — the caller passes the full SSE endpoint URL.
+        let sse_url = self.config.uri.trim_end_matches('/').to_string();
         tracing::debug!(url = %sse_url, "Opening MCP SSE connection");
 
         let response = self
@@ -102,10 +116,14 @@ impl MCPSseProtocolClient {
 
                 buf.push_str(&String::from_utf8_lossy(&bytes));
 
-                // SSE events are separated by a blank line (\n\n)
-                while let Some(pos) = buf.find("\n\n") {
+                // SSE events are separated by a blank line — handle both \n\n and \r\n\r\n
+                while let Some((pos, sep_len)) = buf
+                    .find("\r\n\r\n")
+                    .map(|p| (p, 4))
+                    .or_else(|| buf.find("\n\n").map(|p| (p, 2)))
+                {
                     let event_str = buf[..pos].to_string();
-                    buf.drain(..pos + 2);
+                    buf.drain(..pos + sep_len);
 
                     let (event_type, data) = parse_sse_fields(&event_str);
 
@@ -348,6 +366,7 @@ fn parse_sse_fields(event_str: &str) -> (String, String) {
     let mut data = String::new();
 
     for line in event_str.lines() {
+        let line = line.trim_end_matches('\r');
         if let Some(v) = line.strip_prefix("event:") {
             event_type = v.trim().to_string();
         } else if let Some(v) = line.strip_prefix("data:") {

@@ -90,10 +90,15 @@ pub fn parse_skill_md(content: &str, _dir_name: &str) -> Result<(SkillFrontmatte
 
 #[derive(Debug, thiserror::Error)]
 pub enum SkillError {
-    #[error("Skill '{name}' lists tool '{tool}' in allowed-tools but it could not be resolved")]
+    #[error(
+        "Skill '{name}' lists tool '{tool}' in allowed-tools but it could not be resolved.\n\
+         If '{tool}' is a built-in tool, pass tool_registry=ToolRegistry.with_builtins() to \
+         SkillRegistry.from_directory() or the SkillRegistry() constructor.\n\
+         If '{tool}' is a custom tool, register it on the ToolRegistry before loading the skill."
+    )]
     ToolNotFound { name: String, tool: String },
 
-    #[error("Skill '{0}' is already registered. Use allow_override=true to replace it")]
+    #[error("Skill '{0}' is already registered. Use allow_override=True to replace it")]
     AlreadyRegistered(String),
 
     #[error("Skill '{0}' not found")]

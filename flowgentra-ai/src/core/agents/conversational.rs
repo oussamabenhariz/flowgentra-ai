@@ -2,8 +2,9 @@
 ///
 /// Multi-turn dialogue agent with memory support.
 /// Maintains conversation history and context across multiple interactions.
-use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
+use super::{Agent, AgentType, PrebuiltAgentConfig};
 use crate::core::error::FlowgentraError;
+use crate::core::llm::ToolDefinition;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -37,7 +38,7 @@ impl Message {
 /// Conversational agent with memory
 pub struct ConversationalAgent {
     config: PrebuiltAgentConfig,
-    tools: HashMap<String, ToolSpec>,
+    tools: HashMap<String, ToolDefinition>,
     history: VecDeque<Message>,
 }
 
@@ -114,10 +115,9 @@ impl ConversationalAgent {
         if self.tools.is_empty() {
             return "No tools available".to_string();
         }
-
         let mut formatted = String::new();
-        for (idx, (name, spec)) in self.tools.iter().enumerate() {
-            formatted.push_str(&format!("{}. {}: {}\n", idx + 1, name, spec.description));
+        for (idx, (name, def)) in self.tools.iter().enumerate() {
+            formatted.push_str(&format!("{}. {}: {}\n", idx + 1, name, def.description));
         }
         formatted
     }
@@ -214,21 +214,21 @@ impl Agent for ConversationalAgent {
         &self.config
     }
 
-    fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError> {
+    fn add_tool(&mut self, tool_name: &str, tool: ToolDefinition) -> Result<(), FlowgentraError> {
         if self.tools.contains_key(tool_name) {
             return Err(FlowgentraError::ConfigError(format!(
                 "Tool '{}' already exists",
                 tool_name
             )));
         }
-        self.tools.insert(tool_name.to_string(), tool_spec);
         self.config
             .tools
-            .insert(tool_name.to_string(), self.tools[tool_name].clone());
+            .insert(tool_name.to_string(), tool.clone());
+        self.tools.insert(tool_name.to_string(), tool);
         Ok(())
     }
 
-    fn tools(&self) -> Vec<&ToolSpec> {
+    fn tools(&self) -> Vec<&ToolDefinition> {
         self.tools.values().collect()
     }
 }

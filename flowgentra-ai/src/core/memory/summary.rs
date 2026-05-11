@@ -4,12 +4,20 @@
 //! - **TokenBufferMemory** — keeps recent messages up to a token limit
 
 use crate::core::error::Result;
-use crate::core::llm::Message;
+use crate::core::llm::{Message, LLM};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::pin::Pin;
+use std::sync::{Arc, RwLock};
 
 use super::conversation::ConversationMemory;
+
+/// Boxed summarize function — use with `SummaryMemory::with_llm` or `SummaryMemory::new`.
+pub type BoxedSummarizeFn = Box<
+    dyn Fn(String) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 // =============================================================================
 // TokenBufferMemory
@@ -54,6 +62,24 @@ impl TokenBufferMemory {
             }
         }
     }
+
+    /// Current estimated token count for a thread.
+    pub fn token_count(&self, thread_id: &str) -> Result<usize> {
+        let guard = self
+            .store
+            .read()
+            .map_err(|e| crate::core::error::FlowgentraError::StateError(e.to_string()))?;
+        let total = guard
+            .get(thread_id)
+            .map(|list| list.iter().map(Self::estimate_tokens).sum())
+            .unwrap_or(0);
+        Ok(total)
+    }
+
+    /// The configured token budget.
+    pub fn max_tokens(&self) -> usize {
+        self.max_tokens
+    }
 }
 
 impl ConversationMemory for TokenBufferMemory {
@@ -94,6 +120,27 @@ impl ConversationMemory for TokenBufferMemory {
 // =============================================================================
 // SummaryMemory
 // =============================================================================
+
+impl SummaryMemory<BoxedSummarizeFn> {
+    /// Create a SummaryMemory that uses an LLM to summarize old messages.
+    ///
+    /// When the message buffer exceeds `config.buffer_size`, older messages are
+    /// summarized by sending them to `llm.chat()`.
+    pub fn with_llm(config: SummaryConfig, llm: Arc<dyn LLM>) -> Self {
+        let fn_box: BoxedSummarizeFn = Box::new(move |text: String| {
+            let llm = llm.clone();
+            Box::pin(async move {
+                let msg = Message::user(format!(
+                    "Summarize this conversation in 2-3 sentences:\n{}",
+                    text
+                ));
+                let response = llm.chat(vec![msg]).await?;
+                Ok(response.content)
+            })
+        });
+        SummaryMemory::new(config, fn_box)
+    }
+}
 
 /// Configuration for summary memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]

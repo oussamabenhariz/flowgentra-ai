@@ -22,12 +22,13 @@
 /// ```
 use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
 use crate::core::error::FlowgentraError;
+use crate::core::llm::ToolDefinition;
 use std::collections::HashMap;
 
 /// Self Ask With Search agent implementation
 pub struct SelfAskWithSearchAgent {
     config: PrebuiltAgentConfig,
-    tools: HashMap<String, ToolSpec>,
+    tools: HashMap<String, ToolDefinition>,
 }
 
 impl SelfAskWithSearchAgent {
@@ -38,7 +39,7 @@ impl SelfAskWithSearchAgent {
     }
 
     /// Return the registered search tool, if any.
-    pub fn search_tool(&self) -> Option<&ToolSpec> {
+    pub fn search_tool(&self) -> Option<&ToolDefinition> {
         self.tools
             .values()
             .find(|t| t.name.to_lowercase() == "search")
@@ -59,7 +60,8 @@ impl Default for SelfAskWithSearchAgent {
                 "Search for information to answer follow-up questions",
             )
             .with_parameter("query", "string")
-            .required("query"),
+            .required("query")
+            .into(),
         );
         Self::new(config)
     }
@@ -107,21 +109,21 @@ impl Agent for SelfAskWithSearchAgent {
         &self.config
     }
 
-    fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError> {
+    fn add_tool(&mut self, tool_name: &str, tool: ToolDefinition) -> Result<(), FlowgentraError> {
         if self.tools.contains_key(tool_name) {
             return Err(FlowgentraError::ConfigError(format!(
                 "Tool '{}' already exists",
                 tool_name
             )));
         }
-        self.tools.insert(tool_name.to_string(), tool_spec);
         self.config
             .tools
-            .insert(tool_name.to_string(), self.tools[tool_name].clone());
+            .insert(tool_name.to_string(), tool.clone());
+        self.tools.insert(tool_name.to_string(), tool);
         Ok(())
     }
 
-    fn tools(&self) -> Vec<&ToolSpec> {
+    fn tools(&self) -> Vec<&ToolDefinition> {
         self.tools.values().collect()
     }
 }

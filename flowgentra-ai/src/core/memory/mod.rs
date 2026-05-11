@@ -20,7 +20,7 @@ pub use checkpointer::{
 };
 pub use config::{CheckpointerConfig, ConversationMemoryConfig, MemoryConfig};
 pub use conversation::{BufferWindowConfig, ConversationMemory, InMemoryConversationMemory};
-pub use summary::{SummaryConfig, SummaryMemory, TokenBufferMemory};
+pub use summary::{BoxedSummarizeFn, SummaryConfig, SummaryMemory, TokenBufferMemory};
 
 // Async checkpointer trait and in-memory implementation
 pub use async_checkpointer::{

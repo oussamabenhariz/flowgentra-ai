@@ -50,6 +50,7 @@ pub use tool_calling::ToolCallingAgent;
 pub use zero_shot_react::ZeroShotReActAgent;
 
 use crate::core::error::FlowgentraError;
+use crate::core::llm::ToolDefinition;
 use std::collections::HashMap;
 
 /// Agent type enumeration
@@ -112,10 +113,14 @@ pub trait Agent: Send + Sync {
     fn config(&self) -> &PrebuiltAgentConfig;
 
     /// Add tool to agent
-    fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError>;
+    fn add_tool(
+        &mut self,
+        tool_name: &str,
+        tool: crate::core::llm::ToolDefinition,
+    ) -> Result<(), FlowgentraError>;
 
     /// Get available tools
-    fn tools(&self) -> Vec<&ToolSpec>;
+    fn tools(&self) -> Vec<&crate::core::llm::ToolDefinition>;
 }
 
 /// Tool specification
@@ -152,6 +157,33 @@ impl ToolSpec {
     pub fn required(mut self, param: impl Into<String>) -> Self {
         self.required.push(param.into());
         self
+    }
+}
+
+/// Convert a `ToolSpec` into the LLM `ToolDefinition` format.
+///
+/// Allows existing Rust code that builds `ToolSpec` to pass it wherever
+/// `ToolDefinition` is expected via `.into()`.
+impl From<ToolSpec> for ToolDefinition {
+    fn from(spec: ToolSpec) -> Self {
+        let mut properties = serde_json::Map::new();
+        for (name, param_type) in &spec.parameters {
+            let json_type = match param_type.to_lowercase().as_str() {
+                "integer" | "int" => "integer",
+                "boolean" | "bool" => "boolean",
+                "number" | "float" | "f32" | "f64" => "number",
+                "array" | "list" | "vec" => "array",
+                "object" | "map" | "dict" => "object",
+                _ => "string",
+            };
+            properties.insert(name.clone(), serde_json::json!({ "type": json_type }));
+        }
+        let parameters = serde_json::json!({
+            "type": "object",
+            "properties": properties,
+            "required": spec.required,
+        });
+        ToolDefinition::new(spec.name, spec.description, parameters)
     }
 }
 

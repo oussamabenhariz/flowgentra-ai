@@ -6,10 +6,10 @@ use super::graph_nodes::ToolExecutorFn;
 use super::{
     docstore_router, reasoning_router, self_ask_router, tool_calling_router, Agent,
     AgentReasoningNode, AgentType, ConversationalNode, DocstoreNode, SelfAskNode,
-    StructuredChatNode, ToolCallingNode, ToolExecutorNode, ToolSpec,
+    StructuredChatNode, ToolCallingNode, ToolExecutorNode,
 };
 use crate::core::error::FlowgentraError;
-use crate::core::llm::{Message, LLM};
+use crate::core::llm::{Message, ToolDefinition, LLM};
 use crate::core::mcp::MCPConfig;
 use crate::core::state::context::Context;
 use crate::core::state::{DynState, DynStateUpdate};
@@ -66,7 +66,7 @@ pub struct PrebuiltAgentConfig {
     pub system_prompt: String,
 
     /// Tools available to agent
-    pub tools: HashMap<String, ToolSpec>,
+    pub tools: HashMap<String, ToolDefinition>,
 
     /// MCP (Model Context Protocol) configurations
     pub mcps: Vec<MCPConfig>,
@@ -772,7 +772,7 @@ impl GraphBasedAgent {
     }
 
     /// Get tools from config
-    pub fn tools(&self) -> Vec<&ToolSpec> {
+    pub fn tools(&self) -> Vec<&ToolDefinition> {
         self.config.tools.values().collect()
     }
 }
@@ -810,13 +810,13 @@ impl Agent for GraphBasedAgent {
         &self.config
     }
 
-    fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError> {
-        self.config.tools.insert(tool_name.to_string(), tool_spec);
+    fn add_tool(&mut self, tool_name: &str, tool: ToolDefinition) -> Result<(), FlowgentraError> {
+        self.config.tools.insert(tool_name.to_string(), tool);
         debug!("Added tool: {}", tool_name);
         Ok(())
     }
 
-    fn tools(&self) -> Vec<&ToolSpec> {
+    fn tools(&self) -> Vec<&ToolDefinition> {
         self.config.tools.values().collect()
     }
 }
@@ -837,7 +837,7 @@ impl Agent for GraphBasedAgent {
 ///     name: "classifier".into(),
 ///     llm,
 ///     system_prompt: Some("Example 1: urgent bug → Priority: HIGH".into()),
-///     tools: vec![ToolSpec::new("search", "Search the web")],
+///     tools: vec![ToolSpec::new("search", "Search the web").into()],
 ///     retries: 2,
 ///     memory_steps: Some(10),
 ///     ..Default::default()
@@ -854,8 +854,9 @@ pub struct AgentConfig {
     pub llm: Arc<dyn LLM>,
     /// System prompt override; uses agent-type default when `None`
     pub system_prompt: Option<String>,
-    /// Tools available to the agent
-    pub tools: Vec<ToolSpec>,
+    /// Tools available to the agent.  Accepts the same `ToolDefinition` used by
+    /// `LLM::chat_with_tools` so the tool schema is defined in one place.
+    pub tools: Vec<ToolDefinition>,
     /// MCP server configurations
     pub mcps: Vec<MCPConfig>,
     /// Sampling temperature 0.0–1.0 (default: `0.7`)
@@ -949,7 +950,7 @@ macro_rules! impl_typed_agent {
             }
 
             /// Tools registered with this agent.
-            pub fn tools(&self) -> Vec<&ToolSpec> {
+            pub fn tools(&self) -> Vec<&ToolDefinition> {
                 self.inner.tools()
             }
 
@@ -1025,6 +1026,7 @@ impl AgentType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::agents::ToolSpec;
 
     #[test]
     fn test_agent_config_defaults() {
@@ -1094,7 +1096,7 @@ mod tests {
     fn test_zero_shot_react_build() {
         let agent = ZeroShotReAct::new(AgentConfig {
             name: "test_agent".into(),
-            tools: vec![ToolSpec::new("calculator", "Perform math")],
+            tools: vec![ToolSpec::new("calculator", "Perform math").into()],
             tool_executor: Some(Arc::new(|name: &str, args: &str| {
                 format!("Executed {} with {}", name, args)
             })),

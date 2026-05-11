@@ -25,12 +25,13 @@
 /// ```
 use super::{Agent, AgentType, PrebuiltAgentConfig, ToolSpec};
 use crate::core::error::FlowgentraError;
+use crate::core::llm::ToolDefinition;
 use std::collections::HashMap;
 
 /// ReAct Docstore agent implementation
 pub struct ReactDocstoreAgent {
     config: PrebuiltAgentConfig,
-    tools: HashMap<String, ToolSpec>,
+    tools: HashMap<String, ToolDefinition>,
 }
 
 impl ReactDocstoreAgent {
@@ -52,7 +53,8 @@ impl Default for ReactDocstoreAgent {
             "search".to_string(),
             ToolSpec::new("search", "Search the document store for a query")
                 .with_parameter("query", "string")
-                .required("query"),
+                .required("query")
+                .into(),
         );
         config.tools.insert(
             "lookup".to_string(),
@@ -61,7 +63,8 @@ impl Default for ReactDocstoreAgent {
                 "Look up a term in the most recently found document",
             )
             .with_parameter("term", "string")
-            .required("term"),
+            .required("term")
+            .into(),
         );
         Self::new(config)
     }
@@ -110,21 +113,21 @@ impl Agent for ReactDocstoreAgent {
         &self.config
     }
 
-    fn add_tool(&mut self, tool_name: &str, tool_spec: ToolSpec) -> Result<(), FlowgentraError> {
+    fn add_tool(&mut self, tool_name: &str, tool: ToolDefinition) -> Result<(), FlowgentraError> {
         if self.tools.contains_key(tool_name) {
             return Err(FlowgentraError::ConfigError(format!(
                 "Tool '{}' already exists",
                 tool_name
             )));
         }
-        self.tools.insert(tool_name.to_string(), tool_spec);
         self.config
             .tools
-            .insert(tool_name.to_string(), self.tools[tool_name].clone());
+            .insert(tool_name.to_string(), tool.clone());
+        self.tools.insert(tool_name.to_string(), tool);
         Ok(())
     }
 
-    fn tools(&self) -> Vec<&ToolSpec> {
+    fn tools(&self) -> Vec<&ToolDefinition> {
         self.tools.values().collect()
     }
 }
