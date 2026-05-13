@@ -8,7 +8,7 @@ use crate::core::llm::Message;
 use crate::core::reducer::{Append, Reducer};
 use crate::core::state::{Context, State};
 use crate::core::state_graph::error::Result;
-use crate::core::state_graph::executor::{StateGraph, StateGraphBuilder};
+use crate::core::state_graph::executor::StateGraphBuilder;
 use crate::core::state_graph::node::Node;
 use crate::core::state_graph::RouterFn;
 
@@ -129,7 +129,7 @@ impl MessageGraphBuilder {
     }
 
     /// Compile the graph.
-    pub fn compile(self) -> Result<StateGraph<MessageState>> {
+    pub fn compile(self) -> Result<crate::core::state_graph::MessageGraph> {
         self.inner.compile()
     }
 }

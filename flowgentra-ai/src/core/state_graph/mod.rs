@@ -35,6 +35,8 @@ pub use error::{Result, StateGraphError};
 pub use executor::{StateGraph, StateGraphBuilder, SubgraphNode};
 pub use file_checkpointer::FileCheckpointer;
 pub use message_graph::{MessageGraphBuilder, MessageState, MessageStateUpdate};
+/// Compiled message-centric graph. Returned by [`MessageGraphBuilder::compile`].
+pub type MessageGraph = StateGraph<MessageState>;
 pub use node::{FunctionNode, Node};
 pub use tool_node::{
     create_tool_node, store_tool_calls, tools_condition, ToolCallInfo, ToolExecutorFn, ToolResult,

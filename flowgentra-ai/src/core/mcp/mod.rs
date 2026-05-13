@@ -1771,6 +1771,10 @@ impl RetryMCPClient {
 
 #[async_trait::async_trait]
 impl MCPClient for RetryMCPClient {
+    async fn initialize(&self) -> Result<String> {
+        self.inner.initialize().await
+    }
+
     async fn list_tools(&self) -> Result<Vec<MCPTool>> {
         // Return cached tools if still within TTL
         {

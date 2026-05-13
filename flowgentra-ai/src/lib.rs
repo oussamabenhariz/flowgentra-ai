@@ -109,7 +109,7 @@ pub mod prelude {
         runtime::{AgentRuntime, CloneStats, OptimizedState},
         state::{Context, State},
         state_graph::{
-            create_tool_node, node::FunctionNode, store_tool_calls, tools_condition,
+            create_tool_node, node::FunctionNode, store_tool_calls, tools_condition, MessageGraph,
             MessageGraphBuilder, MessageState, MessageStateUpdate, StateGraph, StateGraphBuilder,
             ToolState, ToolStateUpdate,
         },
