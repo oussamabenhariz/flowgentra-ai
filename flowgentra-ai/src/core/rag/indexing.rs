@@ -162,7 +162,6 @@ impl RecordManager for InMemoryRecordManager {
 #[cfg(feature = "sqlite")]
 pub mod sqlite_record_manager {
     use super::*;
-    use crate::core::error::FlowgentraError;
     use sqlx::SqlitePool;
 
     /// SQLite-backed `RecordManager` with full persistence.

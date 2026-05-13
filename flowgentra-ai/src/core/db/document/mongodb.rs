@@ -107,7 +107,6 @@ impl DocumentStore for MongoDocumentStore {
 
         let mut results = Vec::new();
         use futures::TryStreamExt;
-        use mongodb::error::Result as MongoResult;
         while let Some(doc) = cursor
             .try_next()
             .await

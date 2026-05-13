@@ -429,7 +429,7 @@ pub mod sqlite_backend {
                 for col in row.columns() {
                     let val: Value = row
                         .try_get_raw(col.ordinal())
-                        .map(|raw| {
+                        .map(|_raw| {
                             if let Ok(s) = row.try_get::<String, _>(col.ordinal()) {
                                 json!(s)
                             } else if let Ok(i) = row.try_get::<i64, _>(col.ordinal()) {

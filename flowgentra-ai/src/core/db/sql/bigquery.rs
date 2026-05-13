@@ -31,8 +31,6 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::collections::HashMap;
-
 use super::{DbError, Row, SqlDatabase};
 
 /// Configuration for [`BigQueryDatabase`].
@@ -67,6 +65,7 @@ impl BigQueryDatabase {
         )
     }
 
+    #[allow(dead_code)]
     fn jobs_url(&self) -> String {
         format!(
             "https://bigquery.googleapis.com/bigquery/v2/projects/{}/jobs",

@@ -84,11 +84,13 @@ impl MongoAtlasVectorStore {
         })
     }
 
+    #[allow(dead_code)]
     fn json_to_bson(v: Value) -> Result<BsonDoc, VectorStoreError> {
         mongodb::bson::to_document(&v)
             .map_err(|e| VectorStoreError::SerializationError(e.to_string()))
     }
 
+    #[allow(dead_code)]
     fn bson_to_json(doc: BsonDoc) -> Value {
         let map: serde_json::Map<String, Value> = doc
             .into_iter()

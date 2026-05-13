@@ -66,7 +66,7 @@ impl RedisVectorStore {
 
         // Verify connection
         let mut conn = client
-            .get_async_connection()
+            .get_multiplexed_async_connection()
             .await
             .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))?;
 
@@ -75,9 +75,9 @@ impl RedisVectorStore {
         Ok(store)
     }
 
-    async fn conn(&self) -> Result<redis::aio::Connection, VectorStoreError> {
+    async fn conn(&self) -> Result<redis::aio::MultiplexedConnection, VectorStoreError> {
         self.client
-            .get_async_connection()
+            .get_multiplexed_async_connection()
             .await
             .map_err(|e| VectorStoreError::ConnectionError(e.to_string()))
     }
@@ -94,7 +94,7 @@ impl RedisVectorStore {
     /// Create the RediSearch HNSW index (no-op if it already exists).
     async fn ensure_index(
         &self,
-        conn: &mut redis::aio::Connection,
+        conn: &mut redis::aio::MultiplexedConnection,
     ) -> Result<(), VectorStoreError> {
         let dim = self.config.embedding_dim;
         let idx = &self.config.index_name;
@@ -188,7 +188,7 @@ impl VectorStoreBackend for RedisVectorStore {
             .arg(&metadata_json)
             .arg("embedding")
             .arg(&embedding_bytes)
-            .query_async::<_, ()>(&mut conn)
+            .query_async::<()>(&mut conn)
             .await
             .map_err(|e| VectorStoreError::ApiError(e.to_string()))?;
         Ok(())
@@ -237,8 +237,8 @@ impl VectorStoreBackend for RedisVectorStore {
 
         fn redis_str(v: &redis::Value) -> &str {
             match v {
-                redis::Value::Data(b) => std::str::from_utf8(b).unwrap_or(""),
-                redis::Value::Status(s) => s.as_str(),
+                redis::Value::BulkString(b) => std::str::from_utf8(b).unwrap_or(""),
+                redis::Value::SimpleString(s) => s.as_str(),
                 _ => "",
             }
         }
@@ -248,7 +248,7 @@ impl VectorStoreBackend for RedisVectorStore {
         let mut i = 1usize; // skip total count
         while i + 1 < raw.len() {
             i += 1; // skip key
-            if let Some(redis::Value::Bulk(fields)) = raw.get(i) {
+            if let Some(redis::Value::Array(fields)) = raw.get(i) {
                 let mut map: HashMap<String, String> = HashMap::new();
                 let mut j = 0;
                 while j + 1 < fields.len() {

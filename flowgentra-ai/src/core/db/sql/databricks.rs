@@ -26,8 +26,6 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::collections::HashMap;
-
 use super::{DbError, Row, SqlDatabase};
 
 /// Configuration for [`DatabricksDatabase`].

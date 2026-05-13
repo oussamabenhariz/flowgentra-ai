@@ -51,11 +51,11 @@ impl RedisDocumentStore {
         let client = redis::Client::open(url).map_err(|e| DbError::Connection(e.to_string()))?;
         // Verify the connection is reachable.
         let mut conn = client
-            .get_async_connection()
+            .get_multiplexed_async_connection()
             .await
             .map_err(|e| DbError::Connection(e.to_string()))?;
         redis::cmd("PING")
-            .query_async::<_, ()>(&mut conn)
+            .query_async::<()>(&mut conn)
             .await
             .map_err(|e| DbError::Connection(e.to_string()))?;
         Ok(Self { client })
@@ -69,9 +69,9 @@ impl RedisDocumentStore {
         format!("doc_ids:{}", collection)
     }
 
-    async fn conn(&self) -> Result<redis::aio::Connection, DbError> {
+    async fn conn(&self) -> Result<redis::aio::MultiplexedConnection, DbError> {
         self.client
-            .get_async_connection()
+            .get_multiplexed_async_connection()
             .await
             .map_err(|e| DbError::Connection(e.to_string()))
     }

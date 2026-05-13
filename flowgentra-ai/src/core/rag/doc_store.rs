@@ -328,7 +328,6 @@ pub mod redis_doc_store {
 #[cfg(feature = "mongodb-store")]
 pub mod mongo_doc_store {
     use super::*;
-    use futures::TryStreamExt;
     use mongodb::{bson::doc, Client};
 
     /// Stores documents as MongoDB documents.

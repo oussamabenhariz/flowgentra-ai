@@ -39,7 +39,7 @@ mod inner {
     /// - field `state`    → JSON-encoded state value
     /// - field `metadata` → JSON-encoded CheckpointMetadata
     pub struct RedisCheckpointer {
-        client: Arc<Mutex<redis::aio::Connection>>,
+        client: Arc<Mutex<redis::aio::MultiplexedConnection>>,
         ttl_seconds: Option<usize>,
     }
 
@@ -51,7 +51,7 @@ mod inner {
             let client = redis::Client::open(url)
                 .map_err(|e| FlowgentraError::StateError(format!("Redis client error: {e}")))?;
             let conn = client
-                .get_async_connection()
+                .get_multiplexed_async_connection()
                 .await
                 .map_err(|e| FlowgentraError::StateError(format!("Redis connect error: {e}")))?;
             Ok(Self {
