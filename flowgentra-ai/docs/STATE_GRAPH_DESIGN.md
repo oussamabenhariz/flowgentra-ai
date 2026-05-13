@@ -79,13 +79,14 @@ pub trait Node<S: State>: Send + Sync {
    - Enables hierarchical graph composition
    - The inner graph runs to completion and returns its final state
    ```rust
-   let inner_graph = StateGraph::builder()
+   // #[derive(State, Default, Clone)] struct MyState { ... }
+   let inner_graph = StateGraph::<MyState>::builder()
        .add_node("a", node_a)
        .add_node("b", node_b)
-       .set_entry_point("a")
+       .set_entry("a")
        .add_edge("a", "b")
-       .add_edge("b", END)
-       .compile()?;
+       .set_finish("b")
+       .build()?;
 
    let subgraph_node = SubgraphNode::new("sub_workflow", inner_graph);
    ```
@@ -96,13 +97,12 @@ The `#[node]` proc macro provides a clean way to define nodes without boilerplat
 
 ```rust
 #[node]
-async fn classify(state: &PlainState) -> Result<PlainState> {
-    let mut new_state = state.clone();
-    new_state.set("category", json!("urgent"));
-    Ok(new_state)
+async fn classify(state: &mut MyState) -> Result<()> {
+    state.category = "urgent".to_string();
+    Ok(())
 }
 
-// Produces an Arc<dyn Node<PlainState>> ready for .add_node()
+// Produces an Arc<dyn Node<MyState>> ready for .add_node()
 ```
 
 ---
@@ -139,22 +139,22 @@ pub enum Edge<S: State> {
 **Synchronous Router Example:**
 
 ```rust
-.add_conditional_edge("agent", Box::new(|state| {
-    if state.get("done").as_bool().unwrap_or(false) {
+.conditional_edge("agent", |state: &AgentState| {
+    if state.done {
         Ok(END.to_string())
     } else {
         Ok("tool_executor".to_string())
     }
-}))
+})
 ```
 
 **Async Router Example:**
 
 ```rust
-.add_async_conditional_edge("classifier", Box::new(|state| {
+.add_async_conditional_edge("classifier", Box::new(|state: &ClassifierState| {
     Box::pin(async move {
         // Call an external classification service
-        let category = external_api::classify(&state.get("text")).await?;
+        let category = external_api::classify(&state.text).await?;
         match category.as_str() {
             "urgent" => Ok("priority_handler".to_string()),
             "spam" => Ok(END.to_string()),
@@ -208,10 +208,11 @@ pub struct Checkpoint<S: State> {
    - **Cons**: Slower than in-memory, not suitable for high-throughput distributed systems
    ```rust
    let checkpointer = FileCheckpointer::new("./checkpoints")?;
-   let graph = StateGraph::builder()
+   // #[derive(State, Default, Clone)] struct MyState { ... }
+   let graph = StateGraph::<MyState>::builder()
        .set_checkpointer(Arc::new(checkpointer))
        // ...
-       .compile()?;
+       .build()?;
    ```
 
 3. **Planned Implementations:**
@@ -278,23 +279,24 @@ let update_node = UpdateNode::new("scorer", config, |state| {
 SubgraphNode enables composing graphs within graphs. A compiled `StateGraph<S>` can be embedded as a single node in a parent graph using `add_subgraph`:
 
 ```rust
-let inner = StateGraph::builder()
+// #[derive(State, Default, Clone)] struct PipelineState { ... }
+let inner = StateGraph::<PipelineState>::builder()
     .add_node("fetch", fetch_node)
     .add_node("parse", parse_node)
-    .set_entry_point("fetch")
+    .set_entry("fetch")
     .add_edge("fetch", "parse")
-    .add_edge("parse", END)
-    .compile()?;
+    .set_finish("parse")
+    .build()?;
 
-let outer = StateGraph::builder()
+let outer = StateGraph::<PipelineState>::builder()
     .add_node("prepare", prepare_node)
     .add_subgraph("data_pipeline", inner)
     .add_node("summarize", summarize_node)
-    .set_entry_point("prepare")
+    .set_entry("prepare")
     .add_edge("prepare", "data_pipeline")
     .add_edge("data_pipeline", "summarize")
-    .add_edge("summarize", END)
-    .compile()?;
+    .set_finish("summarize")
+    .build()?;
 ```
 
 **Design:**
@@ -329,11 +331,12 @@ pub enum MergeStrategy {
 **Usage in graph construction:**
 
 ```rust
-let graph = StateGraph::builder()
+// #[derive(State, Default, Clone)] struct BranchState { ... }
+let graph = StateGraph::<BranchState>::builder()
     .add_node("branch_a", node_a)
     .add_node("branch_b", node_b)
     .add_node("merge", merge_node)
-    .set_entry_point("start")
+    .set_entry("start")
     .add_parallel(
         "start",
         vec!["branch_a", "branch_b"],
@@ -344,8 +347,8 @@ let graph = StateGraph::builder()
     )
     .add_edge("branch_a", "merge")
     .add_edge("branch_b", "merge")
-    .add_edge("merge", END)
-    .compile()?;
+    .set_finish("merge")
+    .build()?;
 ```
 
 Nodes `branch_a` and `branch_b` execute concurrently via `tokio::spawn`. Their outputs are merged according to the specified `MergeStrategy` before proceeding to `merge`.
@@ -359,14 +362,15 @@ The StateGraph supports interrupt-based human-in-the-loop workflows. Execution c
 **Setting interrupts:**
 
 ```rust
-let graph = StateGraph::builder()
+// #[derive(State, Default, Clone)] struct PublishState { ... }
+let graph = StateGraph::<PublishState>::builder()
     .add_node("draft", draft_node)
     .add_node("publish", publish_node)
-    .set_entry_point("draft")
+    .set_entry("draft")
     .add_edge("draft", "publish")
-    .add_edge("publish", END)
+    .set_finish("publish")
     .interrupt_before("publish")   // Pause before publishing
-    .compile()?;
+    .build()?;
 ```
 
 **Handling the interrupt:**
@@ -446,27 +450,29 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
 **Builder Pattern:**
 
 ```rust
-StateGraph::builder()
+// #[derive(State, Default, Clone)] struct MyState { ... }
+StateGraph::<MyState>::builder()
     .add_node("node1", node1_arc)
     .add_node("node2", node2_arc)
-    .add_fn("node3", |state| Box::pin(async { Ok(new_state) }))  // convenience method
+    .add_fn("node3", |state: &mut MyState| Box::pin(async move { Ok(()) }))  // convenience method
     .add_subgraph("sub", compiled_subgraph)
     .add_edge("node1", "node2")
-    .add_conditional_edge("node2", router_fn)
+    .conditional_edge("node2", router_fn)
     .add_async_conditional_edge("node3", async_router_fn)
-    .set_entry_point("node1")
+    .set_entry("node1")
     .set_checkpointer(Arc::new(checkpointer))
     .interrupt_before("node2")
     .interrupt_after("node3")
-    .compile()?
+    .build()?
 ```
 
 **Graph Export:**
 
 ```rust
-let graph = StateGraph::builder()
+// #[derive(State, Default, Clone)] struct MyState { ... }
+let graph = StateGraph::<MyState>::builder()
     // ... build graph ...
-    .compile()?;
+    .build()?;
 
 // Graphviz DOT format
 let dot = graph.to_dot();
@@ -596,7 +602,7 @@ trait Node<S: State>: Send + Sync  // Generic
 impl<S> Node<S> for FunctionNode<S, F>
 ```
 
-Compile-time type checking of state. No vtable lookup in hot paths (if monomorphized). StateGraph<S> must know S at compile time. Cannot store `Node<PlainState>` and `Node<MyState>` in same Vec.
+Compile-time type checking of state. No vtable lookup in hot paths (if monomorphized). StateGraph<S> must know S at compile time. Cannot store `Node<StateA>` and `Node<StateB>` in same Vec.
 
 **Decision**: Generic approach. Type safety > flexibility. If needed, users can use trait objects on top.
 
@@ -707,12 +713,12 @@ pub enum StateGraphError {
 match graph.invoke(state).await {
     Err(StateGraphError::ExecutionError { .. }) => {
         // Resume from last checkpoint
-        let recovered = graph.resume(thread_id).await?;
+        let recovered = graph.resume(&thread_id).await?;
     }
     Err(StateGraphError::InterruptedAtBreakpoint { node }) => {
         // Human reviews, modifies state, resumes
-        let modified = get_human_approval(thread_id).await;
-        graph.resume_with_state(thread_id, modified).await?;
+        let modified = get_human_approval(&thread_id).await;
+        graph.resume_with_state(&thread_id, modified).await?;
     }
     _ => { /* handle other errors */ }
 }
@@ -756,15 +762,16 @@ All components have unit tests. Example test:
 ```rust
 #[tokio::test]
 async fn test_graph_with_checkpointing() {
-    let node1 = Arc::new(FunctionNode::new("n1", ...));
-    let graph = StateGraph::builder()
-        .add_node("n1", node1)
-        .set_entry_point("n1")
-        .add_edge("n1", END)
-        .compile()?;
+    // #[derive(State, Default, Clone)] struct MyState { counter: i64 }
+    // #[node] async fn n1(state: &mut MyState) -> Result<()> { ... }
+    let graph = StateGraph::<MyState>::builder()
+        .add_node("n1", n1)
+        .set_entry("n1")
+        .set_finish("n1")
+        .build()?;
 
-    let result = graph.invoke(initial_state).await?;
-    assert_eq!(result.get("counter"), 1);
+    let result = graph.invoke(MyState::default()).await?;
+    assert_eq!(result.counter, 1);
 
     // Verify checkpoint was saved
     let checkpoint = graph.checkpointer

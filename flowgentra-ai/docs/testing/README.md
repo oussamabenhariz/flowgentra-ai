@@ -9,14 +9,12 @@ Handlers are plain async functions -- test them directly:
 ```rust
 #[tokio::test]
 async fn test_validate_input() {
-    let mut state = PlainState::new();
-    state.set("input", json!("test data"));
+    let mut state = MyState { input: "test data".into(), ..Default::default() };
 
-    let result = validate_input(state).await;
+    let result = validate_input(&mut state).await;
 
     assert!(result.is_ok());
-    let final_state = result.unwrap();
-    assert_eq!(final_state.get("valid").unwrap(), &json!(true));
+    assert_eq!(state.valid, true);
 }
 ```
 
@@ -25,10 +23,10 @@ async fn test_validate_input() {
 ```rust
 #[tokio::test]
 async fn test_missing_required_field() {
-    let state = PlainState::new();
-    // Missing "input" field
+    let mut state = MyState::default();
+    // Missing input field
 
-    let result = validate_input(state).await;
+    let result = validate_input(&mut state).await;
     assert!(result.is_err());
 }
 ```
@@ -40,15 +38,20 @@ async fn test_missing_required_field() {
 ### State Operations
 
 ```rust
+#[derive(State, Default, Clone)]
+struct TestState {
+    key: Option<String>,
+}
+
 #[test]
 fn test_state_operations() {
-    let mut state = PlainState::new();
+    let mut state = TestState::default();
 
-    state.set("key", json!("value"));
-    assert_eq!(state.get("key").unwrap(), &json!("value"));
+    state.key = Some("value".into());
+    assert_eq!(state.key.as_deref(), Some("value"));
 
-    state.remove("key");
-    assert!(state.get("key").is_none());
+    state.key = None;
+    assert!(state.key.is_none());
 }
 ```
 
@@ -104,27 +107,33 @@ fn test_scoped_state_isolation() {
 ### Full Graph Execution
 
 ```rust
+#[derive(State, Default, Clone)]
+struct WorkflowState {
+    step1: bool,
+    step2: bool,
+}
+
 #[tokio::test]
 async fn test_graph_workflow() {
-    let graph = StateGraphBuilder::new()
-        .add_fn("step1", |mut s: PlainState| async move {
-            s.set("step1", json!(true));
-            Ok(s)
+    let graph = StateGraph::<WorkflowState>::builder()
+        .add_fn("step1", |s: &mut WorkflowState| async move {
+            s.step1 = true;
+            Ok(())
         })
-        .add_fn("step2", |mut s: PlainState| async move {
-            assert!(s.get("step1").is_some()); // step1 ran first
-            s.set("step2", json!(true));
-            Ok(s)
+        .add_fn("step2", |s: &mut WorkflowState| async move {
+            assert!(s.step1); // step1 ran first
+            s.step2 = true;
+            Ok(())
         })
-        .set_entry_point("step1")
+        .set_entry("step1")
         .add_edge("step1", "step2")
-        .add_edge("step2", "__end__")
-        .compile()
+        .set_finish("step2")
+        .build()
         .unwrap();
 
-    let result = graph.run(PlainState::new()).await.unwrap();
-    assert_eq!(result.get("step1").unwrap(), &json!(true));
-    assert_eq!(result.get("step2").unwrap(), &json!(true));
+    let result = graph.invoke(WorkflowState::default()).await.unwrap();
+    assert!(result.step1);
+    assert!(result.step2);
 }
 ```
 
@@ -133,20 +142,18 @@ async fn test_graph_workflow() {
 ```rust
 #[tokio::test]
 async fn test_conditional_takes_simple_path() {
-    let mut state = PlainState::new();
-    state.set("score", json!(30)); // Low score -> simple path
+    let state = RoutingState { score: 30, ..Default::default() }; // Low score -> simple path
 
-    let result = graph.run(state).await.unwrap();
-    assert_eq!(result.get("path_taken").unwrap(), &json!("simple"));
+    let result = graph.invoke(state).await.unwrap();
+    assert_eq!(result.path_taken.as_str(), "simple");
 }
 
 #[tokio::test]
 async fn test_conditional_takes_complex_path() {
-    let mut state = PlainState::new();
-    state.set("score", json!(90)); // High score -> complex path
+    let state = RoutingState { score: 90, ..Default::default() }; // High score -> complex path
 
-    let result = graph.run(state).await.unwrap();
-    assert_eq!(result.get("path_taken").unwrap(), &json!("complex"));
+    let result = graph.invoke(state).await.unwrap();
+    assert_eq!(result.path_taken.as_str(), "complex");
 }
 ```
 
@@ -178,18 +185,17 @@ Simulate a full pipeline without the graph runtime:
 ```rust
 #[tokio::test]
 async fn test_pipeline() {
-    let mut state = PlainState::new();
-    state.set("input", json!("test data"));
+    let mut state = PipelineState { input: "test data".into(), ..Default::default() };
 
     // Run handlers in sequence
-    state = validate(state).await.unwrap();
-    assert_eq!(state.get("valid").unwrap(), &json!(true));
+    validate(&mut state).await.unwrap();
+    assert!(state.valid);
 
-    state = process(state).await.unwrap();
-    assert!(state.get("processed").is_some());
+    process(&mut state).await.unwrap();
+    assert!(state.processed);
 
-    state = format_output(state).await.unwrap();
-    assert!(state.get("output").is_some());
+    format_output(&mut state).await.unwrap();
+    assert!(!state.output.is_empty());
 }
 ```
 
@@ -200,17 +206,15 @@ async fn test_pipeline() {
 ### Mock LLM Responses
 
 ```rust
-fn mock_state_with_llm_response() -> PlainState {
-    let mut state = PlainState::new();
-    state.set("llm_response", json!("Mocked answer"));
-    state
+fn mock_state_with_llm_response() -> MyState {
+    MyState { llm_response: "Mocked answer".into(), ..Default::default() }
 }
 
 #[tokio::test]
 async fn test_with_mocked_llm() {
-    let state = mock_state_with_llm_response();
-    let result = format_response(state).await.unwrap();
-    assert!(result.get("output").is_some());
+    let mut state = mock_state_with_llm_response();
+    format_response(&mut state).await.unwrap();
+    assert!(!state.output.is_empty());
 }
 ```
 
@@ -219,13 +223,13 @@ async fn test_with_mocked_llm() {
 ```rust
 #[tokio::test]
 async fn test_with_mocked_tools() {
-    let mut state = PlainState::new();
-    state.set("search_results", json!([
-        {"title": "Result 1", "url": "https://example.com"}
-    ]));
+    let mut state = MyState {
+        search_results: vec![SearchResult { title: "Result 1".into(), url: "https://example.com".into() }],
+        ..Default::default()
+    };
 
-    let result = summarize_results(state).await.unwrap();
-    assert!(result.get("summary").is_some());
+    summarize_results(&mut state).await.unwrap();
+    assert!(!state.summary.is_empty());
 }
 ```
 

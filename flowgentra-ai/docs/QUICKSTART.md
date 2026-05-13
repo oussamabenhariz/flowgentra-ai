@@ -22,7 +22,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-flowgentra-ai = "0.1"
+flowgentra-ai = "0.2"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -61,47 +61,47 @@ For custom workflows with typed state and conditional routing:
 
 ```rust
 use flowgentra_ai::prelude::*;
-use serde_json::json;
 
-// Define node functions
-async fn greet(state: &DynState) -> Result<DynState> {
-    let name = state.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("World");
-    
-    let greeting = format!("Hello, {}!", name);
-    state.set("greeting", json!(greeting));
-    Ok(state.clone())
+// 1. Define typed state
+#[derive(State, Default, Clone)]
+struct GreetState {
+    name:     String,
+    greeting: String,
+    output:   String,
 }
 
-async fn format_output(state: &DynState) -> Result<DynState> {
-    let greeting = state.get("greeting")
-        .and_then(|v| v.as_str())
-        .unwrap_or("???");
-    
-    state.set("output", json!(format!("[{}]", greeting)));
-    Ok(state.clone())
+// 2. Define nodes with the #[node] macro
+#[node]
+async fn greet(state: &mut GreetState) -> Result<()> {
+    state.greeting = format!("Hello, {}!", state.name);
+    Ok(())
+}
+
+#[node]
+async fn format_output(state: &mut GreetState) -> Result<()> {
+    state.output = format!("[{}]", state.greeting);
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Build the graph
-    let graph = StateGraphBuilder::new()
-        .add_node("greet", Box::new(FunctionNode::new(greet)))
-        .add_node("format", Box::new(FunctionNode::new(format_output)))
-        .set_entry_point("greet")
+    // 3. Build the graph
+    let graph = StateGraph::<GreetState>::builder()
+        .add_node("greet",  greet)
+        .add_node("format", format_output)
+        .set_entry("greet")
         .add_edge("greet", "format")
-        .add_edge("format", "__end__")
-        .compile()?;
+        .set_finish("format")
+        .build()?;
 
-    // Create state and run
-    let state = DynState::new();
-    state.set("name", json!("Alice"));
+    // 4. Run with initial state
+    let result = graph.invoke(GreetState {
+        name: "Alice".into(),
+        ..Default::default()
+    }).await?;
 
-    let result = graph.invoke(state).await?;
-    println!("{}", result.get("output").unwrap());
-    // Prints: ["Hello, Alice!"]
-
+    println!("{}", result.output);
+    // Prints: [Hello, Alice!]
     Ok(())
 }
 ```
@@ -155,30 +155,25 @@ assert_eq!(state.get("user_input"), Some(json!("hello")));
 Route execution based on state values at runtime:
 
 ```rust
-let graph = StateGraphBuilder::new()
-    .add_node("classify", Box::new(FunctionNode::new(classify)))
-    .add_node("simple_path", Box::new(FunctionNode::new(simple)))
-    .add_node("complex_path", Box::new(FunctionNode::new(complex)))
-    .set_entry_point("classify")
-    .add_conditional_edge("classify", |state| {
-        let complexity = state.get("score")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        
-        if complexity > 5 {
-            Ok("complex_path".to_string())
-        } else {
-            Ok("simple_path".to_string())
-        }
+#[derive(State, Default, Clone)]
+struct RouterState { score: i64, result: String }
+
+#[node] async fn classify(s: &mut RouterState)    -> Result<()> { Ok(()) }
+#[node] async fn simple_path(s: &mut RouterState) -> Result<()> { s.result = "simple".into(); Ok(()) }
+#[node] async fn complex_path(s: &mut RouterState)-> Result<()> { s.result = "complex".into(); Ok(()) }
+
+let graph = StateGraph::<RouterState>::builder()
+    .add_node("classify",     classify)
+    .add_node("simple_path",  simple_path)
+    .add_node("complex_path", complex_path)
+    .set_entry("classify")
+    .conditional_edge("classify", |state| {
+        if state.score > 5 { "complex_path" } else { "simple_path" }
     })
-    .add_edge("simple_path", "__end__")
-    .add_edge("complex_path", "__end__")
-    .compile()?;
+    .set_finish("simple_path")
+    .set_finish("complex_path")
+    .build()?;
 ```
-
----
-
-## Next Steps by Complexity
 
 ---
 
@@ -188,10 +183,8 @@ let graph = StateGraphBuilder::new()
 
 Route to different branches based on state:
 ```rust
-.add_conditional_edge("classify", |state| {
-    // Return next node name
-    let score = state.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-    if score > 5 { Ok("complex".into()) } else { Ok("simple".into()) }
+.conditional_edge("classify", |state: &RouterState| {
+    if state.score > 5 { "complex" } else { "simple" }
 })
 ```
 
@@ -213,11 +206,7 @@ let tool = ToolDefinition {
 };
 
 // Create an LLM
-let llm_config = LLMConfig {
-    provider: LLMProvider::OpenAI,
-    model: "gpt-4".to_string(),
-    ..Default::default()
-};
+let client = LLM::from_config(LLMConfig::openai("gpt-4o"))?;
 ```
 
 ### Add Checkpointing
@@ -239,13 +228,13 @@ For multi-turn conversations with message history:
 ```rust
 use flowgentra_ai::prelude::*;
 
-let graph = MessageGraphBuilder::new()
-    .add_node("llm", Box::new(FunctionNode::new(llm_node)))
-    .add_node("tools", Box::new(FunctionNode::new(tool_node)))
-    .set_entry_point("llm")
+let graph = StateGraph::<MessageState>::builder()
+    .add_node("llm",   llm_node)
+    .add_node("tools", tool_node)
+    .set_entry("llm")
     .add_edge("llm", "tools")
-    .add_edge("tools", "__end__")
-    .compile()?;
+    .set_finish("tools")
+    .build()?;
 ```
 
 ---

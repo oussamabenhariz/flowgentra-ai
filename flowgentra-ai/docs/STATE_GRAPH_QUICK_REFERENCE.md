@@ -6,53 +6,45 @@
 
 ```rust
 // Option A: Use add_fn (simplest)
-builder.add_fn("my_node", |mut state: PlainState| async move {
-    state.set("result", json!("success"));
-    Ok(state)
+builder.add_fn("my_node", |state: &mut MyState| async move {
+    state.result = "success".into();
+    Ok(())
 })
 
 // Option B: Use #[node] macro
 #[node]
-async fn my_node(mut state: PlainState) -> Result<PlainState> {
-    state.set("result", json!("success"));
-    Ok(state)
+async fn my_node(state: &mut MyState) -> Result<()> {
+    state.result = "success".into();
+    Ok(())
 }
-// Generates: my_node_node() factory function
 
-// Option C: Arc<dyn Node<S>> (manual)
-let node = Arc::new(FunctionNode::new("my_node", |state: &PlainState| {
-    Box::pin(async {
-        let mut new_state = state.clone();
-        new_state.set("result", json!("success"));
-        Ok(new_state)
-    })
-}));
 ```
 
 ### 2. Build a Graph
 
 ```rust
-let graph = StateGraphBuilder::new()
+// #[derive(State, Default, Clone)] struct MyState { ... }
+let graph = StateGraph::<MyState>::builder()
     .add_fn("step1", step1_fn)
     .add_fn("step2", step2_fn)
-    .set_entry_point("step1")
+    .set_entry("step1")
     .add_edge("step1", "step2")
-    .add_edge("step2", "__end__")
-    .compile()?;
+    .set_finish("step2")
+    .build()?;
 ```
 
 ### 3. Execute
 
 ```rust
-let initial_state = PlainState::new();
-let final_state = graph.run(initial_state).await?;
+let initial_state = MyState::default();
+let final_state = graph.invoke(initial_state).await?;
 ```
 
 ### 4. Conditional Routing
 
 ```rust
-builder.add_conditional_edge("step1", |state| {
-    if state.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+builder.conditional_edge("step1", |state: &MyState| {
+    if state.done {
         Ok("__end__".to_string())
     } else {
         Ok("step2".to_string())
@@ -63,9 +55,9 @@ builder.add_conditional_edge("step1", |state| {
 ### 5. Async Conditional Routing
 
 ```rust
-builder.add_async_conditional_edge("step1", Box::new(|state| {
+builder.add_async_conditional_edge("step1", Box::new(|state: &MyState| {
     Box::pin(async move {
-        let result = call_api(&state).await?;
+        let result = call_api(state).await?;
         Ok(result.next_step)
     })
 }))
@@ -85,7 +77,7 @@ step1 -> step2 -> step3 -> END
 builder
     .add_edge("step1", "step2")
     .add_edge("step2", "step3")
-    .add_edge("step3", "__end__")
+    .set_finish("step3")
 ```
 
 ### ReAct Agent Loop
@@ -102,9 +94,9 @@ builder
 builder
     .add_fn("agent", agent_fn)
     .add_fn("tool_executor", tool_fn)
-    .set_entry_point("agent")
-    .add_conditional_edge("agent", |state| {
-        if needs_tool(state) { Ok("tool_executor".into()) }
+    .set_entry("agent")
+    .conditional_edge("agent", |state: &AgentState| {
+        if state.needs_tool { Ok("tool_executor".into()) }
         else { Ok("__end__".into()) }
     })
     .add_edge("tool_executor", "agent")
@@ -129,13 +121,14 @@ let result = executor.execute(branches, state).await?;
 ### Subgraph Composition
 
 ```rust
-let inner = StateGraphBuilder::new()
+// #[derive(State, Default, Clone)] struct MyState { ... }
+let inner = StateGraph::<MyState>::builder()
     .add_fn("a", step_a)
     .add_fn("b", step_b)
-    .set_entry_point("a")
+    .set_entry("a")
     .add_edge("a", "b")
-    .add_edge("b", "__end__")
-    .compile()?;
+    .set_finish("b")
+    .build()?;
 
 builder.add_subgraph("pipeline", inner)
 ```
@@ -210,7 +203,7 @@ Available: `Overwrite`, `Append`, `Sum`, `DeepMerge`, `Max`, `Min`, `AppendUniqu
 ## Graph Export
 
 ```rust
-let graph = builder.compile()?;
+let graph = builder.build()?;
 
 let dot = graph.to_dot();         // Graphviz DOT
 let mermaid = graph.to_mermaid(); // Mermaid diagram
@@ -222,7 +215,7 @@ let json = graph.to_json();       // JSON structure
 ## Error Handling
 
 ```rust
-match graph.run(state).await {
+match graph.invoke(state).await {
     Ok(result) => { /* success */ }
     Err(StateGraphError::NodeNotFound(name)) => { /* missing node */ }
     Err(StateGraphError::ExecutionError { node, reason }) => { /* node failed */ }
@@ -240,25 +233,26 @@ match graph.run(state).await {
 
 | Method | Status | Description |
 |--------|--------|-------------|
-| `new()` | Done | Create builder |
+| `StateGraph::<S>::builder()` | Done | Create typed builder |
 | `add_node(name, node)` | Done | Register node (Arc) |
 | `add_fn(name, fn)` | Done | Register node (closure) |
 | `add_subgraph(name, graph)` | Done | Embed subgraph as node |
 | `add_edge(from, to)` | Done | Fixed edge |
-| `add_conditional_edge(from, router)` | Done | Sync routing |
+| `set_finish(name)` | Done | Terminal edge to END |
+| `conditional_edge(from, router)` | Done | Sync routing |
 | `add_async_conditional_edge(from, router)` | Done | Async routing |
-| `set_entry_point(name)` | Done | Graph start |
+| `set_entry(name)` | Done | Graph start |
 | `set_checkpointer(checkpointer)` | Done | Persistence backend |
 | `set_max_steps(n)` | Done | Safety limit |
 | `interrupt_before(name)` | Done | Pause before node |
 | `interrupt_after(name)` | Done | Pause after node |
-| `compile()` | Done | Build and validate |
+| `build()` | Done | Build and validate |
 
 ### StateGraph
 
 | Method | Status | Description |
 |--------|--------|-------------|
-| `run(state)` | Done | Execute graph |
+| `invoke(state)` | Done | Execute graph |
 | `invoke_with_id(id, state)` | Done | Execute with thread ID |
 | `resume(thread_id)` | Done | Resume from checkpoint |
 | `resume_with_state(id, state)` | Done | Resume with modified state |

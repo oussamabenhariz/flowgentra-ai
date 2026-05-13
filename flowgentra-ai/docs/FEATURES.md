@@ -10,20 +10,26 @@ The graph engine is the core of FlowgentraAI. Build workflows as directed graphs
 
 ### StateGraph Builder
 
-Build workflows programmatically with dynamic state:
+Build workflows programmatically with typed state:
 
 ```rust
 use flowgentra_ai::prelude::*;
 
-let graph = StateGraphBuilder::new()
-    .add_node("step1", Box::new(FunctionNode::new(process_input)))
-    .add_node("step2", Box::new(FunctionNode::new(generate_output)))
-    .set_entry_point("step1")
-    .add_edge("step1", "step2")
-    .add_edge("step2", "__end__")
-    .compile()?;
+#[derive(State, Default, Clone)]
+struct WorkflowState {
+    input: String,
+    output: String,
+}
 
-let state = DynState::new();
+let graph = StateGraph::<WorkflowState>::builder()
+    .add_fn("step1", process_input)
+    .add_fn("step2", generate_output)
+    .set_entry("step1")
+    .add_edge("step1", "step2")
+    .set_finish("step2")
+    .build()?;
+
+let state = WorkflowState::default();
 let result = graph.invoke(state).await?;
 ```
 
@@ -57,24 +63,22 @@ builder.add_conditional_edge("check", Box::new(|state| {
 Nest entire graphs as single nodes inside a parent graph:
 
 ```rust
-let inner_graph = StateGraphBuilder::new()
-    .add_node("a", Box::new(FunctionNode::new(step_a)))
-    .add_node("b", Box::new(FunctionNode::new(step_b)))
-    .set_entry_point("a")
+// #[derive(State, Default, Clone)] struct MyState { ... }
+let inner_graph = StateGraph::<MyState>::builder()
+    .add_fn("a", step_a)
+    .add_fn("b", step_b)
+    .set_entry("a")
     .add_edge("a", "b")
-    .add_edge("b", "__end__")
-    .compile()?;
+    .set_finish("b")
+    .build()?;
 
-let outer = StateGraphBuilder::new()
-    .add_node("inner", Box::new(FunctionNode::new(move |state| {
-        let g = inner_graph.clone();
-        Box::pin(async move { g.invoke(state).await })
-    })))
-    .add_node("final", Box::new(FunctionNode::new(finalize)))
-    .set_entry_point("inner")
+let outer = StateGraph::<MyState>::builder()
+    .add_subgraph("inner", inner_graph)
+    .add_fn("final", finalize)
+    .set_entry("inner")
     .add_edge("inner", "final")
-    .add_edge("final", "__end__")
-    .compile()?;
+    .set_finish("final")
+    .build()?;
 ```
 
 ### Graph Export
@@ -100,18 +104,13 @@ A specialized builder for chat workflows with automatic message accumulation:
 use flowgentra_ai::prelude::*;
 
 let graph = MessageGraphBuilder::new()
-    .add_node("echo", Box::new(FunctionNode::new(|state| {
-        Box::pin(async move {
-            let state_clone = state.clone();
-            Ok(state_clone)
-        })
-    })))
-    .set_entry_point("echo")
-    .add_edge("echo", "__end__")
-    .compile()?;
+    .add_fn("echo", |state: &mut MessageState| async move { Ok(()) })
+    .set_entry("echo")
+    .set_finish("echo")
+    .build()?;
 
-let mut state = MessageState::default();
-let result = graph.invoke(&state).await?;
+let state = MessageState::default();
+let result = graph.invoke(state).await?;
 ```
 
 ### ToolNode
@@ -777,18 +776,21 @@ graph:
 Generate node factory functions from plain async functions:
 
 ```rust
-use flowgentra_ai_macros::node;
+use flowgentra_ai::prelude::*;
 
 #[node]
-async fn my_processor(state: PlainState) -> Result<PlainState> {
+async fn my_processor(state: &mut MyState) -> Result<()> {
     // your logic
-    Ok(state)
+    Ok(())
 }
 
-// Generates: fn my_processor_node() -> impl Node<PlainState>
-let graph = StateGraphBuilder::new()
+// Generates: fn my_processor_node() -> impl Node<MyState>
+// #[derive(State, Default, Clone)] struct MyState { ... }
+let graph = StateGraph::<MyState>::builder()
     .add_node("processor", my_processor_node())
-    .compile()?;
+    .set_entry("processor")
+    .set_finish("processor")
+    .build()?;
 ```
 
 ### #[register_handler]

@@ -20,28 +20,35 @@ This guide covers both. The StateGraph API is recommended for most use cases.
 ### Basic Graph
 
 ```rust
-use flowgentra_ai::core::state_graph::StateGraphBuilder;
-use flowgentra_ai::core::state::PlainState;
+use flowgentra_ai::prelude::*;
 
-async fn step_a(mut state: PlainState) -> Result<PlainState> {
-    state.set("processed", json!(true));
-    Ok(state)
+#[derive(State, Default, Clone)]
+struct PipelineState {
+    processed: bool,
+    output:    String,
 }
 
-async fn step_b(mut state: PlainState) -> Result<PlainState> {
-    state.set("output", json!("done"));
-    Ok(state)
+#[node]
+async fn step_a(state: &mut PipelineState) -> Result<()> {
+    state.processed = true;
+    Ok(())
 }
 
-let graph = StateGraphBuilder::new()
-    .add_fn("step_a", step_a)
-    .add_fn("step_b", step_b)
-    .set_entry_point("step_a")
+#[node]
+async fn step_b(state: &mut PipelineState) -> Result<()> {
+    state.output = "done".into();
+    Ok(())
+}
+
+let graph = StateGraph::<PipelineState>::builder()
+    .add_node("step_a", step_a)
+    .add_node("step_b", step_b)
+    .set_entry("step_a")
     .add_edge("step_a", "step_b")
-    .add_edge("step_b", "__end__")
-    .compile()?;
+    .set_finish("step_b")
+    .build()?;
 
-let result = graph.run(PlainState::new()).await?;
+let result = graph.invoke(PipelineState::default()).await?;
 ```
 
 ### Conditional Routing
@@ -49,24 +56,24 @@ let result = graph.run(PlainState::new()).await?;
 Route to different nodes based on state:
 
 ```rust
-let graph = StateGraphBuilder::new()
-    .add_fn("classify", classify)
-    .add_fn("simple", handle_simple)
-    .add_fn("complex", handle_complex)
-    .set_entry_point("classify")
-    .add_conditional_edge("classify", |state| {
-        let score = state.get("score")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        if score > 70 {
-            Ok("complex".into())
-        } else {
-            Ok("simple".into())
-        }
+#[derive(State, Default, Clone)]
+struct RouterState { score: i64, result: String }
+
+#[node] async fn classify(s: &mut RouterState)      -> Result<()> { Ok(()) }
+#[node] async fn handle_simple(s: &mut RouterState)  -> Result<()> { s.result = "simple".into(); Ok(()) }
+#[node] async fn handle_complex(s: &mut RouterState) -> Result<()> { s.result = "complex".into(); Ok(()) }
+
+let graph = StateGraph::<RouterState>::builder()
+    .add_node("classify", classify)
+    .add_node("simple",   handle_simple)
+    .add_node("complex",  handle_complex)
+    .set_entry("classify")
+    .conditional_edge("classify", |state: &RouterState| {
+        if state.score > 70 { "complex" } else { "simple" }
     })
-    .add_edge("simple", "__end__")
-    .add_edge("complex", "__end__")
-    .compile()?;
+    .set_finish("simple")
+    .set_finish("complex")
+    .build()?;
 ```
 
 ### Async Conditional Edges
@@ -74,15 +81,13 @@ let graph = StateGraphBuilder::new()
 When routing decisions need async operations (API calls, DB lookups):
 
 ```rust
-builder.add_async_conditional_edge(
+builder.async_conditional_edge(
     "check_status",
-    Box::new(|state| {
-        Box::pin(async move {
-            // Call an external service to decide routing
-            let status = check_external_api(&state).await?;
-            Ok(status.next_step)
-        })
-    })
+    |state: MyState| async move {
+        // Call an external service to decide routing
+        let status = check_external_api(&state).await?;
+        Ok(status.next_step)
+    },
 )
 ```
 
@@ -93,27 +98,35 @@ builder.add_async_conditional_edge(
 Nest an entire compiled graph as a single node inside a parent graph:
 
 ```rust
-use flowgentra_ai::core::state_graph::SubgraphNode;
+use flowgentra_ai::prelude::*;
+
+#[derive(State, Default, Clone)]
+struct PipelineState { /* shared state fields */ }
+
+#[node] async fn check_format(s: &mut PipelineState)  -> Result<()> { Ok(()) }
+#[node] async fn check_content(s: &mut PipelineState) -> Result<()> { Ok(()) }
+#[node] async fn process_data(s: &mut PipelineState)  -> Result<()> { Ok(()) }
+#[node] async fn format_output(s: &mut PipelineState) -> Result<()> { Ok(()) }
 
 // Build the inner graph
-let validation_graph = StateGraphBuilder::new()
-    .add_fn("check_format", check_format)
-    .add_fn("check_content", check_content)
-    .set_entry_point("check_format")
+let validation_graph = StateGraph::<PipelineState>::builder()
+    .add_node("check_format",  check_format)
+    .add_node("check_content", check_content)
+    .set_entry("check_format")
     .add_edge("check_format", "check_content")
-    .add_edge("check_content", "__end__")
-    .compile()?;
+    .set_finish("check_content")
+    .build()?;
 
 // Use it as a node in a parent graph
-let pipeline = StateGraphBuilder::new()
+let pipeline = StateGraph::<PipelineState>::builder()
     .add_subgraph("validate", validation_graph)
-    .add_fn("process", process_data)
-    .add_fn("output", format_output)
-    .set_entry_point("validate")
+    .add_node("process", process_data)
+    .add_node("output",  format_output)
+    .set_entry("validate")
     .add_edge("validate", "process")
-    .add_edge("process", "output")
-    .add_edge("output", "__end__")
-    .compile()?;
+    .add_edge("process",  "output")
+    .set_finish("output")
+    .build()?;
 ```
 
 This keeps complex logic encapsulated. Each subgraph is a self-contained unit.
@@ -153,7 +166,7 @@ let result = executor.execute(branches, initial_state).await?;
 Visualize your graph structure in multiple formats:
 
 ```rust
-let graph = builder.compile()?;
+let graph = builder.build()?;
 
 // Graphviz DOT format
 let dot = graph.to_dot();
@@ -178,21 +191,29 @@ Render DOT output with Graphviz (`dot -Tpng graph.dot -o graph.png`) or paste Me
 Pause execution before or after a node for human review:
 
 ```rust
-let graph = StateGraphBuilder::new()
-    .add_fn("draft", draft_email)
-    .add_fn("send", send_email)
-    .set_entry_point("draft")
+#[derive(State, Default, Clone)]
+struct EmailState {
+    draft_body: String,
+}
+
+#[node] async fn draft_email(s: &mut EmailState) -> Result<()> { Ok(()) }
+#[node] async fn send_email(s: &mut EmailState)  -> Result<()> { Ok(()) }
+
+let graph = StateGraph::<EmailState>::builder()
+    .add_node("draft", draft_email)
+    .add_node("send",  send_email)
+    .set_entry("draft")
     .interrupt_before("send")  // Pause before sending
     .add_edge("draft", "send")
-    .add_edge("send", "__end__")
-    .compile()?;
+    .set_finish("send")
+    .build()?;
 
 // First run: executes "draft", then pauses
-let partial = graph.run(state).await?;
+let partial = graph.invoke(EmailState::default()).await?;
 
 // Human reviews and edits the draft...
 let mut edited = partial.clone();
-edited.set("draft_body", json!("Revised email body"));
+edited.draft_body = "Revised email body".into();
 
 // Resume with the edited state
 let final_result = graph.resume_with_state("thread-1", edited).await?;
@@ -260,31 +281,33 @@ A convenience wrapper for chat-focused workflows. Automatically manages a `"mess
 ```rust
 use flowgentra_ai::prelude::*;
 
-let graph = MessageGraphBuilder::new()
-    .add_fn("echo", |state: &PlainState| {
-        let messages = MessageGraphBuilder::get_messages(state);
-        let last = messages.last().map(|m| m.content.clone()).unwrap_or_default();
-        let mut s = state.clone();
-        s = MessageGraphBuilder::add_message(s, Message::assistant(format!("Echo: {}", last)));
-        Box::pin(async move { Ok(s) })
-    })
-    .set_entry_point("echo")
-    .add_edge("echo", "__end__")
-    .compile()?;
+#[derive(State, Default, Clone)]
+struct MessageState {
+    messages: Vec<Message>,
+}
 
-// Create state with initial messages
-let state = MessageGraphBuilder::initial_state(vec![Message::user("Hello")]);
-let result = graph.invoke(state).await?;
+#[node]
+async fn echo(state: &mut MessageState) -> Result<()> {
+    let last = state.messages.last()
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    state.messages.push(Message::assistant(format!("Echo: {}", last)));
+    Ok(())
+}
 
-let messages = MessageGraphBuilder::get_messages(&result);
-assert_eq!(messages[1].content, "Echo: Hello");
+let graph = StateGraph::<MessageState>::builder()
+    .add_node("echo", echo)
+    .set_entry("echo")
+    .set_finish("echo")
+    .build()?;
+
+let result = graph.invoke(MessageState {
+    messages: vec![Message::user("Hello")],
+    ..Default::default()
+}).await?;
+
+assert_eq!(result.messages[1].content, "Echo: Hello");
 ```
-
-Helper functions:
-- `MessageGraphBuilder::initial_state(messages)` -- create state with initial messages
-- `MessageGraphBuilder::get_messages(state)` -- extract messages from state
-- `MessageGraphBuilder::add_message(state, message)` -- append a message to state
-- `MessageGraphBuilder::last_message(state)` -- get the most recent message
 
 ---
 
@@ -322,7 +345,7 @@ builder.add_node("tools", tool_node);
 Router function for conditional edges. Routes to the tool node when tool calls are present, or to `"__end__"` when there are none:
 
 ```rust
-builder.add_conditional_edge("agent", tools_condition("tools"));
+builder.conditional_edge("agent", tools_condition("tools"));
 // If state has tool_calls → route to "tools"
 // If no tool_calls → route to "__end__"
 ```
@@ -340,13 +363,20 @@ let state = store_tool_calls(state, &response);
 ### Typical ReAct Loop
 
 ```rust
-let graph = StateGraphBuilder::new()
-    .add_fn("agent", agent_fn)         // LLM generates response + tool calls
-    .add_node("tools", tool_node)       // Execute tool calls
-    .set_entry_point("agent")
-    .add_conditional_edge("agent", tools_condition("tools"))
-    .add_edge("tools", "agent")         // Loop back after tool execution
-    .compile()?;
+#[derive(State, Default, Clone)]
+struct AgentState {
+    messages:     Vec<Message>,
+    tool_calls:   Vec<ToolCall>,
+    tool_results: Vec<String>,
+}
+
+let graph = StateGraph::<AgentState>::builder()
+    .add_node("agent", agent_fn)   // LLM generates response + tool calls
+    .add_node("tools", tool_node)  // Execute tool calls
+    .set_entry("agent")
+    .conditional_edge("agent", tools_condition("tools"))
+    .add_edge("tools", "agent")    // Loop back after tool execution
+    .build()?;
 ```
 
 ---
@@ -365,7 +395,7 @@ Register a handler for this node before running the graph.
 ## Best Practices
 
 1. **Name nodes clearly** -- `validate_input` not `step1`
-2. **Always terminate paths** -- Every path should reach `__end__` (StateGraph) or `END` (config)
+2. **Always terminate paths** -- Every path should call `.set_finish("node")` (StateGraph) or reach `END` (config)
 3. **Keep conditions simple** -- Complex routing logic belongs in a dedicated classifier node
 4. **Test each path** -- Write tests with state that triggers each branch
 5. **Use subgraphs for reuse** -- Extract repeated patterns into subgraphs

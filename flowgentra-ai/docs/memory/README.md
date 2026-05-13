@@ -99,7 +99,7 @@ Save the full state at each step so workflows can resume after interruptions.
 Fast, ephemeral storage. Good for development and testing.
 
 ```rust
-use flowgentra_ai::core::state_graph::InMemoryCheckpointer;
+use flowgentra_ai::prelude::*;
 
 let checkpointer = InMemoryCheckpointer::new();
 
@@ -117,7 +117,7 @@ Data is lost when the process exits.
 Persist checkpoints as JSON files on disk. Survives process restarts.
 
 ```rust
-use flowgentra_ai::core::state_graph::FileCheckpointer;
+use flowgentra_ai::prelude::*;
 
 let checkpointer = FileCheckpointer::new("./checkpoints");
 
@@ -171,17 +171,23 @@ Conversation memory handles the chat context. Checkpointing handles the full wor
 Checkpointing pairs naturally with the human-in-the-loop pattern:
 
 ```rust
-let graph = StateGraphBuilder::new()
+#[derive(State, Default, Clone)]
+struct ChatState {
+    draft: String,
+    approved: bool,
+}
+
+let graph = StateGraph::<ChatState>::builder()
     .add_fn("draft", draft_response)
     .add_fn("send", send_response)
-    .set_entry_point("draft")
+    .set_entry("draft")
     .interrupt_before("send")
     .add_edge("draft", "send")
-    .add_edge("send", "__end__")
-    .compile()?;
+    .set_finish("send")
+    .build()?;
 
 // Run until interrupt -- state is checkpointed
-let partial = graph.run(state).await?;
+let partial = graph.invoke(state).await?;
 
 // Human reviews, edits, approves...
 

@@ -111,11 +111,8 @@ agents.insert("writer".to_string(), writer);
 agents.insert("reviewer".to_string(), reviewer);
 
 // Router function decides which agent handles each step
-let router = |state: &PlainState| -> Result<String> {
-    let phase = state.get("phase")
-        .and_then(|v| v.as_str())
-        .unwrap_or("research");
-    Ok(phase.to_string())
+let router = |state: &AgentState| -> Result<String> {
+    Ok(if state.phase.is_empty() { "research".to_string() } else { state.phase.clone() })
 };
 
 let supervisor = Supervisor::new(router, agents, 10); // max 10 rounds
@@ -145,25 +142,28 @@ let result = supervisor.run(initial_state).await?;
 When predefined agents aren't enough, build a custom workflow with the StateGraph API:
 
 ```rust
-use flowgentra_ai::core::state_graph::StateGraphBuilder;
+use flowgentra_ai::prelude::*;
 
-let graph = StateGraphBuilder::new()
+#[derive(State, Default, Clone)]
+struct ContentState {
+    content: String,
+    quality_score: f64,
+}
+
+let graph = StateGraph::<ContentState>::builder()
     .add_fn("intake", intake_handler)
     .add_fn("research", research_handler)
     .add_fn("draft", draft_handler)
     .add_fn("review", review_handler)
-    .set_entry_point("intake")
+    .set_entry("intake")
     .add_edge("intake", "research")
     .add_edge("research", "draft")
-    .add_conditional_edge("draft", |state| {
-        let quality = state.get("quality_score")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        if quality > 0.8 { Ok("__end__".into()) }
+    .conditional_edge("draft", |state: &ContentState| {
+        if state.quality_score > 0.8 { Ok("__end__".into()) }
         else { Ok("review".into()) }
     })
     .add_edge("review", "draft")  // Loop back for improvement
-    .compile()?;
+    .build()?;
 ```
 
 ---

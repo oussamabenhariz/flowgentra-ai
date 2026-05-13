@@ -9,12 +9,12 @@ The `#[node]` attribute macro turns a plain async function into a node factory t
 ### Before (manual)
 
 ```rust
-use flowgentra_ai::core::state_graph::UpdateNode;
+use flowgentra_ai::prelude::*;
 
-let node = UpdateNode::new("my_processor", |state| {
+let node = UpdateNode::new("my_processor", |state: &mut MyState| {
     Box::pin(async move {
         // processing logic
-        Ok(state)
+        Ok(())
     })
 });
 
@@ -24,23 +24,26 @@ builder.add_node("my_processor", node)
 ### After (with macro)
 
 ```rust
-use flowgentra_ai_macros::node;
-use flowgentra_ai::core::state::PlainState;
-use flowgentra_ai::core::error::Result;
+use flowgentra_ai::prelude::*;
 
-#[node]
-async fn my_processor(mut state: PlainState) -> Result<PlainState> {
-    state.set("processed", json!(true));
-    Ok(state)
+#[derive(State, Default, Clone)]
+struct MyState {
+    processed: bool,
 }
 
-// Generates: fn my_processor_node() -> impl Node<PlainState>
+#[node]
+async fn my_processor(state: &mut MyState) -> Result<()> {
+    state.processed = true;
+    Ok(())
+}
 
-let graph = StateGraphBuilder::new()
+// Generates: fn my_processor_node() -> impl Node<MyState>
+
+let graph = StateGraph::<MyState>::builder()
     .add_node("processor", my_processor_node())
-    .set_entry_point("processor")
-    .add_edge("processor", "__end__")
-    .compile()?;
+    .set_entry("processor")
+    .set_finish("processor")
+    .build()?;
 ```
 
 ### What It Generates

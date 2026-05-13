@@ -4,18 +4,18 @@ Write the functions that power each node in your workflow.
 
 ## The Pattern
 
-Every handler follows the same shape: take state in, do work, return updated state.
+Every handler follows the same shape: take state by mutable reference, do work, return `Ok(())`.
 
 ```rust
-pub async fn my_handler(mut state: State) -> Result<State> {
-    let input = state.get("input").and_then(|v| v.as_str()).unwrap_or("");
-    let result = process(input);
-    state.set("output", json!(result));
-    Ok(state)
+#[node]
+pub async fn my_handler(state: &mut MyState) -> Result<()> {
+    let result = process(&state.input);
+    state.output = result;
+    Ok(())
 }
 ```
 
-That's it. Every handler is an async function with this signature.
+That's it. Every handler is an async function decorated with `#[node]`.
 
 ---
 
@@ -26,13 +26,14 @@ That's it. Every handler is an async function with this signature.
 Pass functions directly -- no macro needed:
 
 ```rust
-let graph = StateGraphBuilder::new()
+// #[derive(State, Default, Clone)] struct PipelineState { ... }
+let graph = StateGraph::<PipelineState>::builder()
     .add_fn("validate", validate_input)
     .add_fn("process", process_data)
-    .set_entry_point("validate")
+    .set_entry("validate")
     .add_edge("validate", "process")
-    .add_edge("process", "__end__")
-    .compile()?;
+    .set_finish("process")
+    .build()?;
 ```
 
 ### With Config Files (YAML)
@@ -43,10 +44,9 @@ Use `#[register_handler]` for auto-discovery:
 use flowgentra_ai::prelude::*;
 
 #[register_handler]
-pub async fn validate_input(mut state: State) -> Result<State> {
-    let input = state.get_str("user_input")?;
-    state.set("valid", json!(!input.is_empty()));
-    Ok(state)
+pub async fn validate_input(state: &mut MyState) -> Result<()> {
+    state.valid = !state.user_input.is_empty();
+    Ok(())
 }
 ```
 
@@ -61,7 +61,7 @@ graph:
 let agent = from_config_path("config.yaml")?;  // Handlers auto-discovered
 ```
 
-Requirements for `#[register_handler]`: `pub`, `async fn`, one `State` param, returns `Result<State>`.
+Requirements for `#[register_handler]`: `pub`, `async fn`, one `&mut MyState` param, returns `Result<()`.
 
 See [macros/README.md](../macros/README.md) for full details.
 
@@ -72,56 +72,56 @@ See [macros/README.md](../macros/README.md) for full details.
 ### Using LLM
 
 ```rust
-pub async fn generate_response(mut state: State) -> Result<State> {
+#[node]
+pub async fn generate_response(state: &mut MyState) -> Result<()> {
     let llm = state.get_llm()?;
-    let input = state.get_str("input")?;
 
     let response = llm.chat(vec![
         Message::system("You are helpful."),
-        Message::user(&input),
+        Message::user(&state.input),
     ]).await?;
 
-    state.set("response", json!(response.content));
-    Ok(state)
+    state.response = response.content;
+    Ok(())
 }
 ```
 
 ### Using RAG
 
 ```rust
-pub async fn retrieve_context(mut state: State) -> Result<State> {
+#[node]
+pub async fn retrieve_context(state: &mut MyState) -> Result<()> {
     let rag = state.get_rag_client()?;
-    let query = state.get_str("query")?;
 
-    let docs = rag.retrieve(query, 5).await?;
-    let context = docs.iter().map(|d| d.content.clone()).collect::<Vec<_>>().join("\n---\n");
+    let docs = rag.retrieve(&state.query, 5).await?;
+    state.context = docs.iter().map(|d| d.content.clone()).collect::<Vec<_>>().join("\n---\n");
 
-    state.set("context", json!(context));
-    Ok(state)
+    Ok(())
 }
 ```
 
 ### Using MCP Tools
 
 ```rust
-pub async fn search_web(mut state: State) -> Result<State> {
+#[node]
+pub async fn search_web(state: &mut MyState) -> Result<()> {
     let mcp = state.get_mcp_client()?;
-    let query = state.get_str("query")?;
 
     let results = mcp.execute_tool(
         "web_search",
-        json!({"query": query, "max_results": 5})
+        json!({"query": state.query, "max_results": 5})
     ).await?;
 
-    state.set("search_results", results);
-    Ok(state)
+    state.search_results = results;
+    Ok(())
 }
 ```
 
 ### Running Concurrent Operations
 
 ```rust
-pub async fn parallel_work(mut state: State) -> Result<State> {
+#[node]
+pub async fn parallel_work(state: &mut MyState) -> Result<()> {
     let mcp = state.get_mcp_client()?;
 
     let (search, calc) = tokio::join!(
@@ -129,9 +129,9 @@ pub async fn parallel_work(mut state: State) -> Result<State> {
         mcp.execute_tool("calculator", json!({"expr": "2+2"}))
     );
 
-    state.set("search", search?);
-    state.set("calc", calc?);
-    Ok(state)
+    state.search = search?;
+    state.calc = calc?;
+    Ok(())
 }
 ```
 
@@ -140,25 +140,25 @@ pub async fn parallel_work(mut state: State) -> Result<State> {
 Set a field that conditional edges can route on:
 
 ```rust
-pub async fn classify(mut state: State) -> Result<State> {
-    let score = state.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-
-    if score > 70 {
-        state.set("path", json!("complex"));
+#[node]
+pub async fn classify(state: &mut MyState) -> Result<()> {
+    if state.score > 70 {
+        state.path = "complex".to_string();
     } else {
-        state.set("path", json!("simple"));
+        state.path = "simple".to_string();
     }
 
-    Ok(state)
+    Ok(())
 }
 ```
 
 ### Passthrough (Logging / Debug)
 
 ```rust
-pub async fn debug_state(state: State) -> Result<State> {
+#[node]
+pub async fn debug_state(state: &mut MyState) -> Result<()> {
     println!("State: {:#?}", state);
-    Ok(state)  // No changes
+    Ok(())  // No changes
 }
 ```
 
@@ -167,24 +167,24 @@ pub async fn debug_state(state: State) -> Result<State> {
 ## Error Handling
 
 ```rust
-pub async fn safe_handler(mut state: State) -> Result<State> {
+#[node]
+pub async fn safe_handler(state: &mut MyState) -> Result<()> {
     // Propagate errors with ?
-    let required = state.get_str("required_field")?;
+    let required = state.required_field.as_str();
 
     // Provide defaults
-    let optional = state.get("optional")
-        .and_then(|v| v.as_str())
-        .unwrap_or("default");
+    let optional = state.optional.as_deref().unwrap_or("default");
 
     // Custom errors
-    let data = state.get("data")
-        .ok_or_else(|| FlowgentraError::StateError("data field required".into()))?;
+    if state.data.is_empty() {
+        return Err(FlowgentraError::StateError("data field required".into()));
+    }
 
-    Ok(state)
+    Ok(())
 }
 ```
 
-Always return `Result<State>`. Never panic in handlers.
+Always return `Result<()>`. Never panic in handlers.
 
 ---
 
@@ -195,20 +195,18 @@ Handlers are plain async functions, so they're straightforward to test:
 ```rust
 #[tokio::test]
 async fn test_validate_input() {
-    let mut state = State::new();
-    state.set("user_input", json!("hello"));
+    let mut state = MyState { user_input: "hello".into(), ..Default::default() };
 
-    let result = validate_input(state).await.unwrap();
-    assert_eq!(result.get_bool("valid").unwrap(), true);
+    validate_input(&mut state).await.unwrap();
+    assert_eq!(state.valid, true);
 }
 
 #[tokio::test]
 async fn test_empty_input() {
-    let mut state = State::new();
-    state.set("user_input", json!(""));
+    let mut state = MyState { user_input: "".into(), ..Default::default() };
 
-    let result = validate_input(state).await.unwrap();
-    assert_eq!(result.get_bool("valid").unwrap(), false);
+    validate_input(&mut state).await.unwrap();
+    assert_eq!(state.valid, false);
 }
 ```
 

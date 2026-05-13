@@ -60,7 +60,7 @@ Connect to anything:
 
 ```toml
 [dependencies]
-flowgentra-ai = "0.1"
+flowgentra-ai = "0.2.5"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -71,35 +71,36 @@ The core API is `StateGraph` - build workflows as directed graphs:
 
 ```rust
 use flowgentra_ai::prelude::*;
-use serde_json::json;
 
-// Define a node function
-async fn greet(state: &DynState) -> Result<DynState> {
-    let name = state.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("World");
-    
-    state.set("greeting", json!(format!("Hello, {}!", name)));
-    Ok(state.clone())
+// 1. Define your state
+#[derive(State, Default, Clone)]
+struct GreetState {
+    name:     String,
+    greeting: String,
+}
+
+// 2. Write a node
+#[node]
+async fn greet(state: &mut GreetState) -> Result<()> {
+    state.greeting = format!("Hello, {}!", state.name);
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Build the graph
-    let graph = StateGraphBuilder::new()
-        .add_node("greet", Box::new(FunctionNode::new(greet)))
-        .set_entry_point("greet")
-        .add_edge("greet", "__end__")
-        .compile()?;
-    
-    // Create state and run
-    let state = DynState::new();
-    state.set("name", json!("Alice"));
-    
-    let result = graph.invoke(state).await?;
-    println!("{}", result.get("greeting").unwrap());
+    // 3. Build and run
+    let graph = StateGraph::<GreetState>::builder()
+        .add_node("greet", greet)
+        .set_entry("greet")
+        .build()?;
+
+    let result = graph.invoke(GreetState {
+        name: "Alice".into(),
+        ..Default::default()
+    }).await?;
+
+    println!("{}", result.greeting);
     // Prints: "Hello, Alice!"
-    
     Ok(())
 }
 ```
@@ -138,11 +139,19 @@ The core of FlowgentraAI is a **directed acyclic graph (DAG)** where:
 - **State** = Key-value data flowing through the graph
 - **Conditional Edges** = Runtime routing based on state
 
-### DynState
+### State
 
-Flexible key-value state container for passing data between nodes:
+Use `#[derive(State)]` for typed state. For config-driven agents, `DynState` (JSON key-value) is also available:
 
 ```rust
+// Typed (recommended for code-driven graphs)
+#[derive(State, Default, Clone)]
+struct MyState {
+    user_input: String,
+    score: u32,
+}
+
+// Dynamic (for config-driven / YAML agents)
 let state = DynState::new();
 state.set("user_input", json!("Hello"));
 state.set("score", json!(42));
@@ -153,18 +162,22 @@ state.set("score", json!(42));
 ```rust
 use flowgentra_ai::prelude::*;
 
-async fn transform(state: &DynState) -> Result<DynState> {
-    state.set("output", json!("transformed"));
-    Ok(state.clone())
+#[derive(State, Default, Clone)]
+struct MyState { output: String }
+
+#[node]
+async fn transform(state: &mut MyState) -> Result<()> {
+    state.output = "transformed".into();
+    Ok(())
 }
 
-let graph = StateGraphBuilder::new()
-    .add_node("transform", Box::new(FunctionNode::new(transform)))
-    .set_entry_point("transform")
-    .add_edge("transform", "__end__")
-    .compile()?;
+let graph = StateGraph::<MyState>::builder()
+    .add_node("transform", transform)
+    .set_entry("transform")
+    .build()?;
 
-let result = graph.invoke(DynState::new()).await?;
+let result = graph.invoke(MyState::default()).await?;
+println!("{}", result.output); // "transformed"
 ```
 
 ## 🔗 Integration

@@ -101,22 +101,29 @@ The planner can try the FAQ first, then search the knowledge base, suggest a fix
 You can also implement planning logic directly in a StateGraph using conditional edges:
 
 ```rust
-let graph = StateGraphBuilder::new()
+#[derive(State, Default, Clone)]
+struct TroubleshootState {
+    next_action: String,
+    // ... other fields
+}
+
+let graph = StateGraph::<TroubleshootState>::builder()
     .add_fn("plan", plan_next_step)
     .add_fn("check_power", check_power)
     .add_fn("check_network", check_network)
     .add_fn("fix", apply_fix)
-    .set_entry_point("plan")
-    .add_conditional_edge("plan", |state| {
-        Ok(state.get("next_action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("__end__")
-            .to_string())
+    .set_entry("plan")
+    .conditional_edge("plan", |state: &TroubleshootState| {
+        Ok(if state.next_action.is_empty() {
+            "__end__".to_string()
+        } else {
+            state.next_action.clone()
+        })
     })
     .add_edge("check_power", "plan")   // Loop back to planner
     .add_edge("check_network", "plan")
-    .add_edge("fix", "__end__")
-    .compile()?;
+    .set_finish("fix")
+    .build()?;
 ```
 
 For async planning decisions (e.g., calling an LLM to decide), use `add_async_conditional_edge`.
