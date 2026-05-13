@@ -29,9 +29,9 @@
 //! Use `gcloud auth print-access-token` in local dev, or a service account
 //! JSON key with the `google-cloud-auth` crate for production.
 
+use super::{DbError, Row, SqlDatabase};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use super::{DbError, Row, SqlDatabase};
 
 /// Configuration for [`BigQueryDatabase`].
 #[derive(Debug, Clone)]

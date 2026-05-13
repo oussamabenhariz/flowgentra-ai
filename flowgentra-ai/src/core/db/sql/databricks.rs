@@ -24,9 +24,9 @@
 //! }
 //! ```
 
+use super::{DbError, Row, SqlDatabase};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use super::{DbError, Row, SqlDatabase};
 
 /// Configuration for [`DatabricksDatabase`].
 #[derive(Debug, Clone)]
