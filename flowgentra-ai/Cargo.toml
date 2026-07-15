@@ -162,3 +162,7 @@ path = "src/main.rs"
 
 
 
+
+[[bench]]
+name = "core_benches"
+harness = false
