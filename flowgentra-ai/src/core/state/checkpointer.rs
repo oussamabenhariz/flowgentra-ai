@@ -166,11 +166,17 @@ impl FileCheckpointer {
         }
     }
 
-    fn thread_dir(&self, thread_id: &str) -> PathBuf {
-        self.base_dir.join(thread_id)
+    fn thread_dir(&self, thread_id: &str) -> Result<PathBuf> {
+        if !crate::core::utils::fs::is_safe_path_component(thread_id) {
+            return Err(FlowgentraError::StateError(format!(
+                "Invalid thread_id '{}': must be a single path component (no separators or '..')",
+                thread_id
+            )));
+        }
+        Ok(self.base_dir.join(thread_id))
     }
 
-    fn snapshot_path(&self, thread_id: &str, step_id: &str) -> PathBuf {
+    fn snapshot_path(&self, thread_id: &str, step_id: &str) -> Result<PathBuf> {
         // Replace path-unsafe characters in step_id with '_'
         let safe_step: String = step_id
             .chars()
@@ -182,14 +188,15 @@ impl FileCheckpointer {
                 }
             })
             .collect();
-        self.thread_dir(thread_id)
-            .join(format!("{}.json", safe_step))
+        Ok(self
+            .thread_dir(thread_id)?
+            .join(format!("{}.json", safe_step)))
     }
 }
 
 impl Checkpointer for FileCheckpointer {
     fn save(&self, thread_id: &str, snapshot: &StateSnapshot) -> Result<()> {
-        let dir = self.thread_dir(thread_id);
+        let dir = self.thread_dir(thread_id)?;
         std::fs::create_dir_all(&dir).map_err(|e| {
             FlowgentraError::StateError(format!(
                 "FileCheckpointer: failed to create dir {}: {}",
@@ -198,9 +205,11 @@ impl Checkpointer for FileCheckpointer {
             ))
         })?;
 
-        let path = self.snapshot_path(thread_id, &snapshot.step_id);
+        let path = self.snapshot_path(thread_id, &snapshot.step_id)?;
         let json = serde_json::to_string_pretty(snapshot).map_err(FlowgentraError::from)?;
-        std::fs::write(&path, json).map_err(|e| {
+        // Atomic: temp file + rename, so a crash mid-write never leaves a
+        // truncated snapshot behind.
+        crate::core::utils::fs::atomic_write(&path, json.as_bytes()).map_err(|e| {
             FlowgentraError::StateError(format!(
                 "FileCheckpointer: failed to write {}: {}",
                 path.display(),
@@ -222,13 +231,22 @@ impl Checkpointer for FileCheckpointer {
     }
 
     fn load(&self, thread_id: &str, step_id: &str) -> Option<StateSnapshot> {
-        let path = self.snapshot_path(thread_id, step_id);
+        let path = self.snapshot_path(thread_id, step_id).ok()?;
         let data = std::fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&data).ok()
+        match serde_json::from_str(&data) {
+            Ok(snap) => Some(snap),
+            Err(e) => {
+                tracing::warn!(file = %path.display(), error = %e, "Skipping corrupt snapshot file");
+                None
+            }
+        }
     }
 
     fn list(&self, thread_id: &str) -> Vec<StateSnapshot> {
-        let dir = self.thread_dir(thread_id);
+        let dir = match self.thread_dir(thread_id) {
+            Ok(d) => d,
+            Err(_) => return vec![],
+        };
         let read_dir = match std::fs::read_dir(&dir) {
             Ok(rd) => rd,
             Err(_) => return vec![],
@@ -241,8 +259,11 @@ impl Checkpointer for FileCheckpointer {
                 continue;
             }
             if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(snap) = serde_json::from_str::<StateSnapshot>(&data) {
-                    snaps.push(snap);
+                match serde_json::from_str::<StateSnapshot>(&data) {
+                    Ok(snap) => snaps.push(snap),
+                    Err(e) => {
+                        tracing::warn!(file = %path.display(), error = %e, "Skipping corrupt snapshot file");
+                    }
                 }
             }
         }
@@ -251,7 +272,7 @@ impl Checkpointer for FileCheckpointer {
     }
 
     fn delete_thread(&self, thread_id: &str) -> Result<()> {
-        let dir = self.thread_dir(thread_id);
+        let dir = self.thread_dir(thread_id)?;
         if dir.exists() {
             std::fs::remove_dir_all(&dir).map_err(|e| {
                 FlowgentraError::StateError(format!(

@@ -23,6 +23,9 @@ pub struct FileCheckpointer {
     base_dir: PathBuf,
 }
 
+/// Current checkpoint file schema version. Bump when the on-disk format changes.
+const SCHEMA_VERSION: &str = "1.0";
+
 impl FileCheckpointer {
     /// Create a new file checkpointer rooted at the given directory.
     pub fn new(base_dir: impl AsRef<Path>) -> std::io::Result<Self> {
@@ -31,17 +34,24 @@ impl FileCheckpointer {
         Ok(Self { base_dir })
     }
 
-    fn thread_dir(&self, thread_id: &str) -> PathBuf {
-        self.base_dir.join(thread_id)
+    fn thread_dir(&self, thread_id: &str) -> Result<PathBuf> {
+        if !crate::core::utils::fs::is_safe_path_component(thread_id) {
+            return Err(StateGraphError::CheckpointError(format!(
+                "Invalid thread_id '{}': must be a single path component (no separators or '..')",
+                thread_id
+            )));
+        }
+        Ok(self.base_dir.join(thread_id))
     }
 
-    fn step_file(&self, thread_id: &str, step: usize) -> PathBuf {
-        self.thread_dir(thread_id)
-            .join(format!("step_{:04}.json", step))
+    fn step_file(&self, thread_id: &str, step: usize) -> Result<PathBuf> {
+        Ok(self
+            .thread_dir(thread_id)?
+            .join(format!("step_{:04}.json", step)))
     }
 
     async fn scan_steps(&self, thread_id: &str) -> Result<Vec<usize>> {
-        let dir = self.thread_dir(thread_id);
+        let dir = self.thread_dir(thread_id)?;
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -75,6 +85,10 @@ fn parse_step_filename(name: &str) -> Option<usize> {
 /// Serializable checkpoint representation.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CheckpointFile {
+    /// On-disk format version. Missing in files written before v0.2.7;
+    /// those are treated as "1.0".
+    #[serde(default = "default_schema_version")]
+    schema_version: String,
     thread_id: String,
     step: usize,
     node_name: String,
@@ -83,17 +97,22 @@ struct CheckpointFile {
     metadata: std::collections::HashMap<String, String>,
 }
 
+fn default_schema_version() -> String {
+    SCHEMA_VERSION.to_string()
+}
+
 #[async_trait]
 impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Checkpointer<S>
     for FileCheckpointer
 {
     async fn save(&self, checkpoint: &Checkpoint<S>) -> Result<()> {
-        let dir = self.thread_dir(&checkpoint.thread_id);
+        let dir = self.thread_dir(&checkpoint.thread_id)?;
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|e| StateGraphError::CheckpointError(format!("Create dir: {}", e)))?;
 
         let file = CheckpointFile {
+            schema_version: SCHEMA_VERSION.to_string(),
             thread_id: checkpoint.thread_id.clone(),
             step: checkpoint.step,
             node_name: checkpoint.node_name.clone(),
@@ -106,8 +125,10 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| StateGraphError::CheckpointError(format!("Serialize: {}", e)))?;
 
-        let path = self.step_file(&checkpoint.thread_id, checkpoint.step);
-        tokio::fs::write(&path, json)
+        let path = self.step_file(&checkpoint.thread_id, checkpoint.step)?;
+        // Atomic: temp file + rename, so a crash mid-write never leaves a
+        // truncated checkpoint behind.
+        crate::core::utils::fs::atomic_write_async(&path, json.as_bytes())
             .await
             .map_err(|e| StateGraphError::CheckpointError(format!("Write: {}", e)))?;
 
@@ -116,7 +137,7 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
     }
 
     async fn load(&self, thread_id: &str, step: usize) -> Result<Option<Checkpoint<S>>> {
-        let path = self.step_file(thread_id, step);
+        let path = self.step_file(thread_id, step)?;
         if !path.exists() {
             return Ok(None);
         }
@@ -125,11 +146,31 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
             .await
             .map_err(|e| StateGraphError::CheckpointError(format!("Read: {}", e)))?;
 
-        let file: CheckpointFile = serde_json::from_str(&json)
-            .map_err(|e| StateGraphError::CheckpointError(format!("Deserialize: {}", e)))?;
+        let file: CheckpointFile = serde_json::from_str(&json).map_err(|e| {
+            StateGraphError::CheckpointError(format!(
+                "Checkpoint file '{}' is corrupt or has an incompatible format: {}. \
+                 Delete the file (or the thread directory) to discard it and restart from an earlier step.",
+                path.display(),
+                e
+            ))
+        })?;
 
-        let state: S = serde_json::from_value(file.state)
-            .map_err(|e| StateGraphError::CheckpointError(format!("State deserialize: {}", e)))?;
+        if file.schema_version != SCHEMA_VERSION {
+            tracing::warn!(
+                file = %path.display(),
+                found = %file.schema_version,
+                expected = SCHEMA_VERSION,
+                "Loading checkpoint with a different schema version"
+            );
+        }
+
+        let state: S = serde_json::from_value(file.state).map_err(|e| {
+            StateGraphError::CheckpointError(format!(
+                "State in checkpoint '{}' does not match the graph's state type: {}",
+                path.display(),
+                e
+            ))
+        })?;
 
         Ok(Some(Checkpoint {
             thread_id: file.thread_id,
@@ -138,7 +179,7 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
             state,
             timestamp: file.timestamp,
             metadata: file.metadata,
-            schema_version: "1.0".to_string(),
+            schema_version: file.schema_version,
         }))
     }
 
@@ -162,7 +203,7 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
     }
 
     async fn delete(&self, thread_id: &str, step: usize) -> Result<()> {
-        let path = self.step_file(thread_id, step);
+        let path = self.step_file(thread_id, step)?;
         if path.exists() {
             tokio::fs::remove_file(&path)
                 .await
@@ -172,7 +213,7 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
     }
 
     async fn delete_thread(&self, thread_id: &str) -> Result<()> {
-        let dir = self.thread_dir(thread_id);
+        let dir = self.thread_dir(thread_id)?;
         if dir.exists() {
             tokio::fs::remove_dir_all(&dir)
                 .await
@@ -217,6 +258,40 @@ mod tests {
 
         let latest: Checkpoint<MessageState> = cp.load_latest("thread1").await.unwrap().unwrap();
         assert_eq!(latest.step, 2);
+    }
+
+    #[tokio::test]
+    async fn test_corrupt_checkpoint_reports_actionable_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cp = FileCheckpointer::new(tmp.path()).unwrap();
+
+        let state = MessageState::new(vec![Message::user("hello")]);
+        let checkpoint = Checkpoint::new("t1".to_string(), 0, "n1".to_string(), state);
+        cp.save(&checkpoint).await.unwrap();
+
+        // Truncate the file to simulate a crash mid-write with a non-atomic writer.
+        let path = tmp.path().join("t1").join("step_0000.json");
+        std::fs::write(&path, "{\"thread_id\": \"t1\", \"ste").unwrap();
+
+        let err = <FileCheckpointer as Checkpointer<MessageState>>::load(&cp, "t1", 0)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("corrupt"), "unexpected message: {msg}");
+        assert!(msg.contains("step_0000.json"), "should name the file: {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_thread_id_path_traversal_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cp = FileCheckpointer::new(tmp.path()).unwrap();
+
+        let state = MessageState::empty();
+        let checkpoint = Checkpoint::new("../escape".to_string(), 0, "n1".to_string(), state);
+        assert!(cp.save(&checkpoint).await.is_err());
+
+        let loaded: Result<Option<Checkpoint<MessageState>>> = cp.load("..", 0).await;
+        assert!(loaded.is_err());
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@
 //! Utility modules providing debugging, tracing, and visualization capabilities.
 
 pub mod debug;
+pub mod fs;
 pub mod tracing;
 pub mod visualization;
 
