@@ -37,6 +37,8 @@ pub struct StateGraphBuilder<S: State> {
     entry_point: Option<String>,
     checkpointer: Option<Arc<dyn Checkpointer<S>>>,
     max_steps: usize,
+    max_duration: Option<std::time::Duration>,
+    cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     interrupt_before: HashSet<String>,
     interrupt_after: HashSet<String>,
     middleware: MiddlewarePipeline<S>,
@@ -54,6 +56,8 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             entry_point: None,
             checkpointer: None,
             max_steps: 1000,
+            max_duration: None,
+            cancel_flag: None,
             interrupt_before: HashSet::new(),
             interrupt_after: HashSet::new(),
             middleware: MiddlewarePipeline::new(),
@@ -125,6 +129,22 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
     /// Set maximum number of steps before timeout
     pub fn set_max_steps(mut self, max_steps: usize) -> Self {
         self.max_steps = max_steps;
+        self
+    }
+
+    /// Set a wall-clock budget for a single invocation. Checked between nodes;
+    /// a node that is already running is not interrupted mid-flight.
+    pub fn set_max_duration(mut self, max_duration: std::time::Duration) -> Self {
+        self.max_duration = Some(max_duration);
+        self
+    }
+
+    /// Install a cooperative cancellation flag. When set to `true` (from any
+    /// thread), execution stops before the next node with
+    /// [`StateGraphError::Cancelled`]. State up to the last completed node
+    /// remains checkpointed, so the run can be resumed.
+    pub fn set_cancel_flag(mut self, flag: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.cancel_flag = Some(flag);
         self
     }
 
@@ -277,6 +297,8 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             entry_point,
             checkpointer,
             max_steps: self.max_steps,
+            max_duration: self.max_duration,
+            cancel_flag: self.cancel_flag,
             interrupt_before: self.interrupt_before,
             interrupt_after: self.interrupt_after,
             middleware: self.middleware,
@@ -339,6 +361,8 @@ pub struct StateGraph<S: State> {
     entry_point: String,
     checkpointer: Arc<dyn Checkpointer<S>>,
     max_steps: usize,
+    max_duration: Option<std::time::Duration>,
+    cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     interrupt_before: HashSet<String>,
     interrupt_after: HashSet<String>,
     middleware: MiddlewarePipeline<S>,
@@ -524,6 +548,36 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                     last_node: Some(current_node.clone()),
                 });
                 return Err(err);
+            }
+
+            if let Some(budget) = self.max_duration {
+                let elapsed = graph_start.elapsed();
+                if elapsed > budget {
+                    let err = StateGraphError::WallClockExceeded {
+                        budget_secs: budget.as_secs_f64(),
+                        elapsed_secs: elapsed.as_secs_f64(),
+                        node: current_node.clone(),
+                    };
+                    self.broadcaster.emit(ExecutionEvent::GraphFailed {
+                        error: err.to_string(),
+                        last_node: Some(current_node.clone()),
+                    });
+                    return Err(err);
+                }
+            }
+
+            if let Some(ref flag) = self.cancel_flag {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    let err = StateGraphError::Cancelled {
+                        node: current_node.clone(),
+                        step,
+                    };
+                    self.broadcaster.emit(ExecutionEvent::GraphFailed {
+                        error: err.to_string(),
+                        last_node: Some(current_node.clone()),
+                    });
+                    return Err(err);
+                }
             }
 
             if self.interrupt_before.contains(&current_node) {
@@ -828,5 +882,77 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             "entry_point": self.entry_point,
             "max_steps": self.max_steps,
         })
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::core::llm::Message;
+    use crate::core::state_graph::node::FunctionNode;
+    use crate::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn looping_node() -> Arc<dyn Node<MessageState>> {
+        Arc::new(FunctionNode::new(
+            "spin",
+            |_state: &MessageState, _ctx: &Context| {
+                Box::pin(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    Ok(MessageStateUpdate::default())
+                })
+            },
+        ))
+    }
+
+    fn loop_router() -> RouterFn<MessageState> {
+        Box::new(|_s: &MessageState| Ok("spin".to_string()))
+    }
+
+    #[tokio::test]
+    async fn wall_clock_budget_stops_execution() {
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("spin", looping_node())
+            .set_entry_point("spin")
+            .add_conditional_edge("spin", loop_router())
+            .set_max_duration(std::time::Duration::from_millis(50))
+            .compile()
+            .unwrap();
+
+        let err = graph
+            .invoke(MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, StateGraphError::WallClockExceeded { .. }),
+            "expected WallClockExceeded, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_flag_stops_execution() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("spin", looping_node())
+            .set_entry_point("spin")
+            .add_conditional_edge("spin", loop_router())
+            .set_cancel_flag(Arc::clone(&flag))
+            .compile()
+            .unwrap();
+
+        let canceller = Arc::clone(&flag);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            canceller.store(true, Ordering::Relaxed);
+        });
+
+        let err = graph
+            .invoke(MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, StateGraphError::Cancelled { .. }),
+            "expected Cancelled, got: {err}"
+        );
     }
 }

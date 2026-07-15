@@ -47,6 +47,20 @@ pub enum StateGraphError {
          setting the FLOWGENTRA_MAX_NESTING environment variable."
     )]
     RecursionLimitExceeded { depth: usize, limit: usize },
+
+    #[error(
+        "Graph execution exceeded the wall-clock budget of {budget_secs:.1}s after {elapsed_secs:.1}s \
+         at node '{node}'. Raise the budget with set_max_duration(), or check for a node that \
+         hangs or loops."
+    )]
+    WallClockExceeded {
+        budget_secs: f64,
+        elapsed_secs: f64,
+        node: String,
+    },
+
+    #[error("Graph execution was cancelled at node '{node}' (step {step}). State up to the last completed node is checkpointed under the thread id.")]
+    Cancelled { node: String, step: usize },
 }
 
 /// Result type for state graph operations
