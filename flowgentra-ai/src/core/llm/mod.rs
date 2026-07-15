@@ -134,9 +134,11 @@ mod openai;
 pub mod output_parser;
 pub mod prompt_template;
 mod retry;
+mod secret;
 pub mod token_counter;
 
 pub use adapter::{HttpLLM, ProviderAdapter};
+pub use secret::{Secret, REDACTED};
 pub use anthropic::AnthropicClient;
 pub use azure::AzureOpenAIClient;
 pub use cache::CachedLLM;
@@ -330,7 +332,10 @@ pub struct LLMConfig {
     /// Pass it directly, or leave empty to fall back to the provider's
     /// conventional environment variable (e.g. `OPENAI_API_KEY`).
     /// A `.env` file in the working directory is loaded automatically as a fallback.
-    pub api_key: String,
+    ///
+    /// Stored as a [`Secret`]: `Debug`/`Display`/`Serialize` all redact the
+    /// value, and the buffer is zeroized on drop. Call `.expose()` to read it.
+    pub api_key: Secret,
 
     /// Response format — set to `Json` or `JsonSchema` for structured output
     #[serde(default)]
@@ -381,7 +386,7 @@ impl LLMConfig {
             temperature: None,
             max_tokens: None,
             top_p: None,
-            api_key: resolved_key,
+            api_key: Secret::new(resolved_key),
             response_format: ResponseFormat::default(),
             extra_params: HashMap::new(),
         }
@@ -678,3 +683,32 @@ pub trait LLM: Send + Sync {
 
 // Provider-specific clients are in separate modules
 // Use factory::create_llm() to create the appropriate client
+
+#[cfg(test)]
+mod llm_config_secret_tests {
+    use super::*;
+
+    /// Regression test: an API key must never appear in Debug output or
+    /// serde serialization of an LLMConfig.
+    #[test]
+    fn api_key_never_leaks_from_llm_config() {
+        let key = "sk-test-LEAK-CANARY-12345";
+        let config = LLMConfig::new(
+            LLMProvider::OpenAI,
+            "gpt-4o".to_string(),
+            key.to_string(),
+        );
+
+        let debug = format!("{:?}", config);
+        assert!(!debug.contains(key), "Debug output leaked the API key: {debug}");
+
+        let json = serde_json::to_string(&config).expect("serialize");
+        assert!(!json.contains(key), "JSON serialization leaked the API key: {json}");
+
+        let yaml = serde_yml::to_string(&config).expect("serialize yaml");
+        assert!(!yaml.contains(key), "YAML serialization leaked the API key: {yaml}");
+
+        // The key is still available at the point of use.
+        assert_eq!(config.api_key.expose(), key);
+    }
+}

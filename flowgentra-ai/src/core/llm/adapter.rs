@@ -627,7 +627,7 @@ impl ProviderAdapter for OpenAICompatibleAdapter {
     }
 
     fn auth_headers(&self, config: &LLMConfig) -> Vec<(&'static str, String)> {
-        vec![("Authorization", format!("Bearer {}", config.api_key))]
+        vec![("Authorization", format!("Bearer {}", config.api_key.expose()))]
     }
 
     fn parse_response(&self, body: &Value) -> crate::core::error::Result<String> {
@@ -698,7 +698,7 @@ impl ProviderAdapter for AnthropicAdapter {
 
     fn auth_headers(&self, config: &LLMConfig) -> Vec<(&'static str, String)> {
         vec![
-            ("x-api-key", config.api_key.clone()),
+            ("x-api-key", config.api_key.expose().to_string()),
             ("anthropic-version", "2023-06-01".to_string()),
         ]
     }
@@ -1005,7 +1005,7 @@ impl ProviderAdapter for AzureAdapter {
     }
 
     fn auth_headers(&self, config: &LLMConfig) -> Vec<(&'static str, String)> {
-        vec![("api-key", config.api_key.clone())]
+        vec![("api-key", config.api_key.expose().to_string())]
     }
 
     fn parse_response(&self, body: &Value) -> crate::core::error::Result<String> {
