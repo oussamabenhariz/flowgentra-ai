@@ -35,6 +35,9 @@ async fn run_subprocess(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Ensure a timed-out (or dropped) execution kills the child process
+        // instead of leaking it.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| FlowgentraError::ToolError(format!("Failed to spawn '{}': {}", program, e)))?;
 
@@ -60,7 +63,8 @@ async fn run_subprocess(
             e
         ))),
         Err(_) => {
-            // Timeout — process is still running; it will be cleaned up by the OS.
+            // Timeout — dropping the wait future drops the child handle, and
+            // kill_on_drop(true) terminates the process.
             Ok(ExecOutput {
                 stdout: String::new(),
                 stderr: "Execution timed out".to_string(),
@@ -310,6 +314,70 @@ impl Default for ShellTool {
     }
 }
 
+/// Split a command string into tokens, honoring single quotes, double quotes,
+/// and backslash escapes (shlex-style, no expansions). Errors on unclosed quotes.
+fn tokenize_command(command: &str) -> Result<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut chars = command.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' => {
+                in_token = true;
+                let quote = c;
+                loop {
+                    match chars.next() {
+                        Some(ch) if ch == quote => break,
+                        Some('\\') if quote == '"' => match chars.next() {
+                            // Inside double quotes, backslash escapes the next char
+                            Some(esc) => current.push(esc),
+                            None => {
+                                return Err(FlowgentraError::ToolError(
+                                    "Trailing backslash in command string".to_string(),
+                                ))
+                            }
+                        },
+                        Some(ch) => current.push(ch),
+                        None => {
+                            return Err(FlowgentraError::ToolError(format!(
+                                "Unclosed {} quote in command string",
+                                quote
+                            )))
+                        }
+                    }
+                }
+            }
+            '\\' => {
+                in_token = true;
+                match chars.next() {
+                    Some(esc) => current.push(esc),
+                    None => {
+                        return Err(FlowgentraError::ToolError(
+                            "Trailing backslash in command string".to_string(),
+                        ))
+                    }
+                }
+            }
+            c if c.is_whitespace() => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+            }
+            c => {
+                in_token = true;
+                current.push(c);
+            }
+        }
+    }
+    if in_token {
+        tokens.push(current);
+    }
+    Ok(tokens)
+}
+
 #[async_trait]
 impl Tool for ShellTool {
     async fn call(&self, input: Value) -> Result<Value> {
@@ -326,17 +394,25 @@ impl Tool for ShellTool {
         let out = if self.allowed_commands.is_some() {
             // Restricted mode: parse into [program, args…] and execute without a
             // shell so that metacharacters in args are never interpreted.
-            let tokens: Vec<&str> = command.split_whitespace().collect();
+            // Quote-aware: `grep "a b" file` is three tokens, not four.
+            let tokens = tokenize_command(command)?;
             let program = tokens
                 .first()
-                .copied()
+                .map(String::as_str)
                 .ok_or_else(|| FlowgentraError::ToolError("Empty command string".to_string()))?;
             self.check_allowed(program)?;
-            run_subprocess(program, &tokens[1..], None, Duration::from_secs(timeout)).await?
+            let args: Vec<&str> = tokens[1..].iter().map(String::as_str).collect();
+            run_subprocess(program, &args, None, Duration::from_secs(timeout)).await?
         } else {
-            // Unrestricted mode: delegate to sh -c for full shell features.
-            // Only safe when the command string is entirely under developer control.
-            run_subprocess("sh", &["-c", command], None, Duration::from_secs(timeout)).await?
+            // Unrestricted mode: delegate to the platform shell for full shell
+            // features. Only safe when the command string is entirely under
+            // developer control.
+            let (shell, flag) = if cfg!(windows) {
+                ("cmd", "/C")
+            } else {
+                ("sh", "-c")
+            };
+            run_subprocess(shell, &[flag, command], None, Duration::from_secs(timeout)).await?
         };
 
         Ok(json!({
@@ -392,6 +468,27 @@ mod tests {
         let result = tool.call(json!({"code": "print(1 + 1)"})).await.unwrap();
         assert_eq!(result["output"].as_str().unwrap().trim(), "2");
         assert_eq!(result["exit_code"], 0);
+    }
+
+    #[test]
+    fn test_tokenize_command_quotes() {
+        assert_eq!(
+            tokenize_command("grep \"a b\" file.txt").unwrap(),
+            vec!["grep", "a b", "file.txt"]
+        );
+        assert_eq!(
+            tokenize_command("echo 'single quoted arg'").unwrap(),
+            vec!["echo", "single quoted arg"]
+        );
+        assert_eq!(
+            tokenize_command("printf \"escaped \\\" quote\"").unwrap(),
+            vec!["printf", "escaped \" quote"]
+        );
+        assert_eq!(tokenize_command("cmd a\\ b").unwrap(), vec!["cmd", "a b"]);
+        assert_eq!(tokenize_command("  spaced   out  ").unwrap(), vec!["spaced", "out"]);
+        assert_eq!(tokenize_command("empty ''").unwrap(), vec!["empty", ""]);
+        assert!(tokenize_command("unclosed \"quote").is_err());
+        assert!(tokenize_command("trailing \\").is_err());
     }
 
     #[tokio::test]
