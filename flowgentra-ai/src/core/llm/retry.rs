@@ -146,7 +146,9 @@ impl RetryLLM {
             }
         }
         self.record_failure().await;
-        Err(last_err.unwrap())
+        Err(last_err.unwrap_or_else(|| {
+            FlowgentraError::LLMError("LLM retry loop exhausted without recording an error".into())
+        }))
     }
 }
 

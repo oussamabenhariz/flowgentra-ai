@@ -2034,7 +2034,7 @@ fn create_supervisor_handler_with_llm(
                             async move {
                                 // Acquire semaphore permit — blocks until a slot is free
                                 let _permit = if let Some(ref sem) = sem {
-                                    Some(sem.acquire().await.expect("semaphore closed"))
+                                    sem.acquire().await.ok()
                                 } else {
                                     None
                                 };
@@ -2787,7 +2787,7 @@ fn create_supervisor_handler_with_llm(
                             let handler = handler.clone();
                             async move {
                                 let _permit = if let Some(ref sem) = sem {
-                                    Some(sem.acquire().await.expect("semaphore closed"))
+                                    sem.acquire().await.ok()
                                 } else {
                                     None
                                 };
@@ -2922,7 +2922,7 @@ fn create_supervisor_handler_with_llm(
                             let sem = semaphore.clone();
                             async move {
                                 let _permit = if let Some(ref sem) = sem {
-                                    Some(sem.acquire().await.expect("semaphore closed"))
+                                    sem.acquire().await.ok()
                                 } else {
                                     None
                                 };

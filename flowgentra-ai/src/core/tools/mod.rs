@@ -290,12 +290,11 @@ impl JsonSchema {
                 Ok(())
             }
             "string" => {
-                if !value.is_string() {
+                let Some(s) = value.as_str() else {
                     return Err(FlowgentraError::ValidationError(
                         "Expected string".to_string(),
                     ));
-                }
-                let s = value.as_str().unwrap();
+                };
                 if let Some(min) = self.min_length {
                     if s.len() < min {
                         return Err(FlowgentraError::ValidationError(format!(
@@ -350,13 +349,13 @@ impl JsonSchema {
                 Ok(())
             }
             "array" => {
-                if !value.is_array() {
+                let Some(items) = value.as_array() else {
                     return Err(FlowgentraError::ValidationError(
                         "Expected array".to_string(),
                     ));
-                }
+                };
                 if let Some(items_schema) = &self.items {
-                    for item in value.as_array().unwrap() {
+                    for item in items {
                         items_schema.validate(item)?;
                     }
                 }

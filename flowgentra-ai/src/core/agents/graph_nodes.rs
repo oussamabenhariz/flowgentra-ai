@@ -445,8 +445,7 @@ impl ToolCallingNode {
 
         state.set("llm_response", serde_json::json!(response_text));
 
-        if response.has_tool_calls() {
-            let tc = &response.tool_calls.as_ref().unwrap()[0];
+        if let Some(tc) = response.tool_calls.as_ref().and_then(|calls| calls.first()) {
             info!(tool = %tc.name, id = %tc.id, "Native tool call detected");
 
             state.set("needs_tool", serde_json::json!(true));

@@ -613,12 +613,20 @@ impl PluggableNode<DynState> for EvaluationNode {
 
             all_attempts.push(attempt.clone());
 
-            if best_attempt.is_none() || attempt.score > best_attempt.as_ref().unwrap().score {
+            let is_better = best_attempt
+                .as_ref()
+                .map(|best| attempt.score > best.score)
+                .unwrap_or(true);
+            if is_better {
                 best_attempt = Some(attempt);
             }
 
-            if best_attempt.as_ref().unwrap().score >= config.min_confidence {
-                let best = best_attempt.unwrap();
+            let best_score = best_attempt.as_ref().map(|b| b.score).unwrap_or(f64::MIN);
+            if best_score >= config.min_confidence {
+                let Some(best) = best_attempt else {
+                    // best_attempt was just set above; defensive rather than panicking.
+                    continue;
+                };
 
                 if let Some(ref field) = field_name {
                     state.set(field.clone(), best.output.clone());
