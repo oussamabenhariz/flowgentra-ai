@@ -511,6 +511,21 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     }
 
     async fn invoke_inner(&self, thread_id: String, initial_state: S) -> Result<S> {
+        self.invoke_inner_at(thread_id, initial_state, None).await
+    }
+
+    /// Core execution loop.
+    ///
+    /// `start_override`: `Some((node, step))` continues execution at `node`
+    /// with checkpoint numbering starting at `step`, and bypasses that node's
+    /// `interrupt_before` breakpoint once (otherwise resuming from a
+    /// breakpoint would immediately re-trigger it). Used by `resume()`.
+    async fn invoke_inner_at(
+        &self,
+        thread_id: String,
+        initial_state: S,
+        start_override: Option<(String, usize)>,
+    ) -> Result<S> {
         // Serialize concurrent invocations on the same thread_id to prevent
         // checkpoint read-modify-write races when two callers share a thread.
         let thread_lock = {
@@ -530,15 +545,22 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
 
         let graph_start = Instant::now();
 
-        let state = if let Some(checkpoint) = self.checkpointer.load_latest(&thread_id).await? {
+        let state = if start_override.is_some() {
+            // Resume path: the caller already loaded the checkpointed state.
+            initial_state
+        } else if let Some(checkpoint) = self.checkpointer.load_latest(&thread_id).await? {
             checkpoint.state
         } else {
             initial_state
         };
 
         let mut current_state = state;
-        let mut current_node = self.entry_point.clone();
-        let mut step = 0;
+        let mut current_node = start_override
+            .as_ref()
+            .map(|(node, _)| node.clone())
+            .unwrap_or_else(|| self.entry_point.clone());
+        let mut step = start_override.as_ref().map(|(_, s)| *s).unwrap_or(0);
+        let mut skip_interrupt_once = start_override.is_some();
 
         loop {
             if step >= self.max_steps {
@@ -580,9 +602,10 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                 }
             }
 
-            if self.interrupt_before.contains(&current_node) {
+            if self.interrupt_before.contains(&current_node) && !skip_interrupt_once {
                 return Err(StateGraphError::InterruptedAtBreakpoint { node: current_node });
             }
+            skip_interrupt_once = false;
 
             // Emit NodeStarted event
             self.broadcaster.node_started(&current_node, step);
@@ -727,16 +750,13 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         Ok(END.to_string())
     }
 
-    /// Resume execution from a checkpoint
+    /// Resume execution from a checkpoint.
+    ///
+    /// Continues at the node *after* the last completed (checkpointed) node —
+    /// it does not re-run the graph from the entry point, and a breakpoint
+    /// that paused the run does not immediately re-trigger.
     pub async fn resume(&self, thread_id: &str) -> Result<S> {
-        let checkpoint = self
-            .checkpointer
-            .load_latest(thread_id)
-            .await?
-            .ok_or_else(|| StateGraphError::ResumeFailed("No checkpoint found".to_string()))?;
-
-        self.invoke_with_id(thread_id.to_string(), checkpoint.state)
-            .await
+        self.resume_internal(thread_id, None).await
     }
 
     /// Resume execution from a checkpoint with injected state updates.
@@ -744,6 +764,10 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// Human-in-the-loop: execution pauses at a breakpoint, the user modifies
     /// state via an update, and execution resumes.
     pub async fn resume_with_update(&self, thread_id: &str, state_update: S::Update) -> Result<S> {
+        self.resume_internal(thread_id, Some(state_update)).await
+    }
+
+    async fn resume_internal(&self, thread_id: &str, update: Option<S::Update>) -> Result<S> {
         let checkpoint = self
             .checkpointer
             .load_latest(thread_id)
@@ -751,9 +775,37 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             .ok_or_else(|| StateGraphError::ResumeFailed("No checkpoint found".to_string()))?;
 
         let mut state = checkpoint.state;
-        state.apply_update(state_update);
+        if let Some(u) = update {
+            state.apply_update(u);
+        }
 
-        self.invoke_with_id(thread_id.to_string(), state).await
+        // The checkpoint records the last node that completed; continue with
+        // its successor. Re-running from the entry point would re-execute
+        // completed nodes and re-trigger the same interrupt_before breakpoint
+        // forever.
+        let next = self.get_next_node(&checkpoint.node_name, &state).await?;
+        if next == END {
+            return Ok(state);
+        }
+
+        let current_depth = INVOKE_DEPTH.try_with(|d| d.get()).unwrap_or(0);
+        let limit = max_nesting_depth();
+        if current_depth >= limit {
+            return Err(StateGraphError::RecursionLimitExceeded {
+                depth: current_depth,
+                limit,
+            });
+        }
+        INVOKE_DEPTH
+            .scope(
+                std::cell::Cell::new(current_depth + 1),
+                self.invoke_inner_at(
+                    thread_id.to_string(),
+                    state,
+                    Some((next, checkpoint.step + 1)),
+                ),
+            )
+            .await
     }
 
     /// Get execution history for a thread
@@ -954,5 +1006,60 @@ mod budget_tests {
             matches!(err, StateGraphError::Cancelled { .. }),
             "expected Cancelled, got: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use crate::core::llm::Message;
+    use crate::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
+    use crate::core::state_graph::node::FunctionNode;
+
+    fn append_node(name: &'static str) -> Arc<dyn Node<MessageState>> {
+        Arc::new(FunctionNode::new(
+            name,
+            move |_state: &MessageState, _ctx: &Context| {
+                Box::pin(async move {
+                    let mut update = MessageStateUpdate::default();
+                    update.messages = Some(vec![Message::assistant(name)]);
+                    Ok(update)
+                })
+            },
+        ))
+    }
+
+    /// interrupt_before pauses the run; resume() must continue past the
+    /// breakpoint instead of re-triggering it forever (the old behavior).
+    #[tokio::test]
+    async fn resume_passes_interrupt_before_breakpoint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("draft", append_node("draft"))
+            .add_node("publish", append_node("publish"))
+            .set_entry_point("draft")
+            .add_edge("draft", "publish")
+            .add_edge("publish", END)
+            .interrupt_before("publish")
+            .set_checkpointer(Arc::new(
+                super::super::file_checkpointer::FileCheckpointer::new(tmp.path()).unwrap(),
+            ))
+            .compile()
+            .unwrap();
+
+        let err = graph
+            .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StateGraphError::InterruptedAtBreakpoint { .. }));
+
+        let final_state = graph.resume("t1").await.unwrap();
+        let contents: Vec<&str> = final_state
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        // "draft" ran once (not twice), and "publish" actually ran after resume.
+        assert_eq!(contents, vec!["go", "draft", "publish"], "{contents:?}");
     }
 }
