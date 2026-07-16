@@ -800,16 +800,6 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         }
     }
 
-    /// Get the next node from the current node
-    async fn get_next_node(&self, current_node: &str, state: &S) -> Result<String> {
-        for edge in &self.edges {
-            if edge.from() == current_node {
-                return edge.next_node(state).await;
-            }
-        }
-        Ok(END.to_string())
-    }
-
     /// Get all successors of `current_node`.
     ///
     /// Conditional edges take precedence: if any exists for this node, only
