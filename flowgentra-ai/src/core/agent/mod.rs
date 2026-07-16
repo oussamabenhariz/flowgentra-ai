@@ -160,6 +160,11 @@ pub struct Agent {
     pub state: DynState,
     /// Optional conversation memory (message history per thread). Set via config or with_conversation_memory().
     conversation_memory: Option<Arc<dyn ConversationMemory>>,
+    /// When the config is bridgeable, a compiled `state_graph` equivalent that
+    /// `run*` prefers over the legacy runtime (gains cancellation, budgets,
+    /// atomic/SQLite checkpointing, parallel supersteps). `None` for configs
+    /// using built-in node types / per-node MCPs / RAG / planner.
+    bridge_graph: Option<Arc<crate::core::state_graph::StateGraph<DynState>>>,
 }
 
 impl Agent {
@@ -348,7 +353,18 @@ impl Agent {
             )));
         }
 
-        // Register all conditions
+        // Share each condition behind an Arc so it can be used by both the
+        // legacy runtime and the state_graph bridge.
+        type SharedCondition = std::sync::Arc<dyn Fn(&DynState) -> bool + Send + Sync>;
+        let shared_conditions: HashMap<String, SharedCondition> = conditions
+            .into_iter()
+            .map(|(name, cond)| {
+                let arc: SharedCondition = std::sync::Arc::new(move |s: &DynState| cond(s));
+                (name, arc)
+            })
+            .collect();
+
+        // Register all conditions on the legacy runtime.
         type EdgeConditionFn = std::sync::Arc<
             dyn Fn(
                     &DynState,
@@ -357,10 +373,11 @@ impl Agent {
                 + Send
                 + Sync,
         >;
-        for (condition_name, condition_fn) in conditions {
+        for (condition_name, condition_fn) in &shared_conditions {
             let cond_name_clone = condition_name.clone();
+            let cond = condition_fn.clone();
             let edge_condition: EdgeConditionFn = std::sync::Arc::new(move |state: &DynState| {
-                if condition_fn(state) {
+                if cond(state) {
                     Ok(Some(cond_name_clone.clone()))
                 } else {
                     Ok(None)
@@ -378,11 +395,32 @@ impl Agent {
             for from_node in edges_to_register {
                 runtime.register_edge_condition(
                     &from_node,
-                    &condition_name,
+                    condition_name,
                     edge_condition.clone(),
                 )?;
             }
         }
+
+        // If the config uses only plain handler nodes, also compile it onto the
+        // state_graph executor (cancellation, budgets, atomic/SQLite
+        // checkpointing, parallel supersteps). `run*` prefers this when present.
+        let bridge_graph = if state_graph_bridge::can_bridge(&config) {
+            let bridge_conditions: HashMap<String, state_graph_bridge::ConfigCondition> =
+                shared_conditions
+                    .iter()
+                    .map(|(name, cond)| {
+                        let cond = cond.clone();
+                        let c: state_graph_bridge::ConfigCondition =
+                            std::sync::Arc::new(move |s: &DynState| Ok(cond(s)));
+                        (name.clone(), c)
+                    })
+                    .collect();
+            state_graph_bridge::build_state_graph(&config, arc_handlers.clone(), bridge_conditions)
+                .ok()
+                .map(Arc::new)
+        } else {
+            None
+        };
 
         let initial_state = config.create_initial_state();
         Ok(Agent {
@@ -391,6 +429,7 @@ impl Agent {
             config,
             state: initial_state,
             conversation_memory: None,
+            bridge_graph,
         })
     }
 
@@ -469,6 +508,12 @@ impl Agent {
             self.state.set("_rag_config", rag_config_json);
         }
 
+        if let Some(ref graph) = self.bridge_graph {
+            return graph
+                .invoke(self.state.clone())
+                .await
+                .map_err(|e| crate::core::error::FlowgentraError::ExecutionError(e.to_string()));
+        }
         self.runtime.execute(self.state.clone()).await
     }
 
@@ -498,6 +543,12 @@ impl Agent {
             self.state.set("_rag_config", rag_config_json);
         }
 
+        if let Some(ref graph) = self.bridge_graph {
+            return graph
+                .invoke_with_id(thread_id.to_string(), self.state.clone())
+                .await
+                .map_err(|e| crate::core::error::FlowgentraError::ExecutionError(e.to_string()));
+        }
         self.runtime
             .execute_with_thread(thread_id, self.state.clone())
             .await
@@ -3346,4 +3397,77 @@ fn create_subgraph_handler(
             Ok(result)
         })
     })
+}
+
+#[cfg(test)]
+mod bridge_run_tests {
+    use super::*;
+    use crate::core::state::DynState;
+    use serde_json::json;
+
+    const PLAIN_YAML: &str = r#"
+name: bridged
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ""
+state_schema:
+  input: str
+  a_ran: bool
+  b_ran: bool
+graph:
+  nodes:
+    - name: a
+      handler: a
+    - name: b
+      handler: b
+  edges:
+    - from: START
+      to: a
+    - from: a
+      to: b
+    - from: b
+      to: END
+"#;
+
+    fn handler(key: &'static str) -> Handler<DynState> {
+        Box::new(move |state: DynState| {
+            Box::pin(async move {
+                state.set(key, json!(true));
+                Ok(state)
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn run_uses_bridge_for_plain_config() {
+        let config: AgentConfig = serde_yml::from_str(PLAIN_YAML).unwrap();
+        let mut handlers: HandlerRegistry<DynState> = HashMap::new();
+        handlers.insert("a".into(), handler("a_ran"));
+        handlers.insert("b".into(), handler("b_ran"));
+
+        let mut agent = Agent::from_config_inner(config, handlers, HashMap::new()).unwrap();
+        // The bridge graph must have been built for a plain config.
+        assert!(agent.bridge_graph.is_some(), "expected bridged execution");
+
+        agent.state.set("input", json!("hi"));
+        let result = agent.run().await.unwrap();
+        assert_eq!(result.get("a_ran"), Some(json!(true)));
+        assert_eq!(result.get("b_ran"), Some(json!(true)));
+    }
+
+    #[tokio::test]
+    async fn planner_config_falls_back_to_legacy() {
+        let mut config: AgentConfig = serde_yml::from_str(PLAIN_YAML).unwrap();
+        config.graph.nodes[0].node_type = Some("planner".to_string());
+        let handlers: HandlerRegistry<DynState> = HashMap::new();
+        // planner node needs no user handler; construction may still succeed
+        // for the legacy path. We only assert the bridge is NOT selected.
+        if let Ok(agent) = Agent::from_config_inner(config, handlers, HashMap::new()) {
+            assert!(
+                agent.bridge_graph.is_none(),
+                "planner config must use the legacy runtime"
+            );
+        }
+    }
 }
