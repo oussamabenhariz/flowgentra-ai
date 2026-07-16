@@ -510,12 +510,24 @@ impl DynState {
 
     /// Get the configured LLM stored in the `_llm_config` field.
     pub fn get_llm(&self) -> Result<Arc<dyn crate::core::llm::LLM>> {
-        let config: crate::core::llm::LLMConfig = self.get_typed("_llm_config").map_err(|_| {
-            FlowgentraError::ConfigError(
-                "LLM config not found in state. Make sure LLM is configured in config.yaml"
-                    .to_string(),
-            )
-        })?;
+        let mut config: crate::core::llm::LLMConfig =
+            self.get_typed("_llm_config").map_err(|_| {
+                FlowgentraError::ConfigError(
+                    "LLM config not found in state. Make sure LLM is configured in config.yaml"
+                        .to_string(),
+                )
+            })?;
+        // The API key is redacted whenever an LLMConfig is serialized (state is
+        // checkpointed to disk — the raw key must never land there). Re-resolve
+        // it from the provider's environment variable / .env file.
+        if config.api_key.is_empty() || config.api_key.expose() == crate::core::llm::REDACTED {
+            let resolved = crate::core::llm::LLMConfig::new(
+                config.provider.clone(),
+                config.model.clone(),
+                String::new(),
+            );
+            config.api_key = resolved.api_key;
+        }
         config.create_client()
     }
 
