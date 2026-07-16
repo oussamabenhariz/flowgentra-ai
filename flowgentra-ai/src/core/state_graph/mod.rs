@@ -21,6 +21,7 @@
 
 pub mod cached_node;
 pub mod checkpoint;
+pub mod control_flow;
 pub mod edge;
 pub mod error;
 pub mod executor;
@@ -34,6 +35,7 @@ pub mod tool_node;
 // Re-export public API
 pub use cached_node::CachedNode;
 pub use checkpoint::{Checkpoint, CheckpointMigrator, Checkpointer, InMemoryCheckpointer};
+pub use control_flow::{OnTimeout, RetryNode, TimeoutNode};
 pub use edge::{Edge, FixedEdge, END, START};
 pub use error::{interrupt, Result, StateGraphError};
 pub use executor::{StateGraph, StateGraphBuilder, SubgraphNode};

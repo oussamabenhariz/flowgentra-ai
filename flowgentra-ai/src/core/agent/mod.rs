@@ -404,7 +404,14 @@ impl Agent {
         // If the config uses only plain handler nodes, also compile it onto the
         // state_graph executor (cancellation, budgets, atomic/SQLite
         // checkpointing, parallel supersteps). `run*` prefers this when present.
-        let bridge_graph = if state_graph_bridge::can_bridge(&config) {
+        //
+        // Escape hatch: set FLOWGENTRA_FORCE_LEGACY_RUNTIME=1 to disable bridge
+        // selection and always use the legacy runtime (for one or two releases,
+        // in case a bridged path misbehaves in the wild).
+        let force_legacy = std::env::var("FLOWGENTRA_FORCE_LEGACY_RUNTIME")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let bridge_graph = if !force_legacy && state_graph_bridge::can_bridge(&config) {
             let bridge_conditions: HashMap<String, state_graph_bridge::ConfigCondition> =
                 shared_conditions
                     .iter()
@@ -3411,6 +3418,10 @@ mod bridge_run_tests {
     use crate::core::state::DynState;
     use serde_json::json;
 
+    /// Serializes tests that read/write FLOWGENTRA_FORCE_LEGACY_RUNTIME, since
+    /// env vars are process-global and tests run in parallel.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     const PLAIN_YAML: &str = r#"
 name: bridged
 llm:
@@ -3452,7 +3463,10 @@ graph:
         handlers.insert("a".into(), handler("a_ran"));
         handlers.insert("b".into(), handler("b_ran"));
 
-        let mut agent = Agent::from_config_inner(config, handlers, HashMap::new()).unwrap();
+        let mut agent = {
+            let _guard = ENV_GUARD.lock().unwrap();
+            Agent::from_config_inner(config, handlers, HashMap::new()).unwrap()
+        };
         // The bridge graph must have been built for a plain config.
         assert!(agent.bridge_graph.is_some(), "expected bridged execution");
 
@@ -3460,6 +3474,25 @@ graph:
         let result = agent.run().await.unwrap();
         assert_eq!(result.get("a_ran"), Some(json!(true)));
         assert_eq!(result.get("b_ran"), Some(json!(true)));
+    }
+
+    #[tokio::test]
+    async fn force_legacy_env_disables_bridge() {
+        let config: AgentConfig = serde_yml::from_str(PLAIN_YAML).unwrap();
+        let mut handlers: HandlerRegistry<DynState> = HashMap::new();
+        handlers.insert("a".into(), handler("a_ran"));
+        handlers.insert("b".into(), handler("b_ran"));
+        let agent = {
+            let _guard = ENV_GUARD.lock().unwrap();
+            std::env::set_var("FLOWGENTRA_FORCE_LEGACY_RUNTIME", "1");
+            let agent = Agent::from_config_inner(config, handlers, HashMap::new()).unwrap();
+            std::env::remove_var("FLOWGENTRA_FORCE_LEGACY_RUNTIME");
+            agent
+        };
+        assert!(
+            agent.bridge_graph.is_none(),
+            "FLOWGENTRA_FORCE_LEGACY_RUNTIME must disable the bridge"
+        );
     }
 
     #[tokio::test]

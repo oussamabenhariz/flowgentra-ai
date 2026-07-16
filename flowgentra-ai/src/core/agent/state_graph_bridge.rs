@@ -25,12 +25,12 @@ use crate::core::state_graph::error::StateGraphError;
 use crate::core::state_graph::node::{Node, RouterFn};
 use crate::core::state_graph::{StateGraph, StateGraphBuilder};
 
-/// Built-in node types the legacy runtime special-cases; presence of any of
-/// these means the config cannot yet run on `state_graph`.
+/// Built-in node types the legacy runtime special-cases and that the bridge
+/// does **not** yet handle; presence of any means the config stays on the
+/// legacy runtime. (`retry` and `timeout` are handled — see
+/// [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
 const UNBRIDGEABLE_TYPES: &[&str] = &[
     "evaluation",
-    "retry",
-    "timeout",
     "loop",
     "planner",
     "human_in_the_loop",
@@ -42,9 +42,13 @@ const UNBRIDGEABLE_TYPES: &[&str] = &[
     "agent_or_graph",
 ];
 
-/// `true` if every node in the config is a plain handler node (no special
-/// built-in type, no per-node MCP list). Such configs can run on the
-/// `state_graph` executor via [`build_state_graph`].
+/// Built-in node types the bridge handles by wrapping the node's handler in a
+/// control-flow node ([`RetryNode`]/[`TimeoutNode`]).
+const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &["retry", "timeout"];
+
+/// `true` if every node in the config is either a plain handler node or a
+/// bridgeable control-flow wrapper (retry/timeout), with no per-node MCP list.
+/// Such configs can run on the `state_graph` executor via [`build_state_graph`].
 pub fn can_bridge(config: &AgentConfig) -> bool {
     // RAG/planner graph features route through the legacy runtime.
     if config.graph.rag.is_some() || config.graph.planner.enabled {
@@ -54,7 +58,7 @@ pub fn can_bridge(config: &AgentConfig) -> bool {
         let plain_type = n
             .node_type
             .as_deref()
-            .map(|t| !UNBRIDGEABLE_TYPES.contains(&t))
+            .map(|t| !UNBRIDGEABLE_TYPES.contains(&t) || BRIDGEABLE_WRAPPER_TYPES.contains(&t))
             .unwrap_or(true);
         let no_builtin = !n.handler.starts_with("builtin::");
         let no_mcp = n.mcps.is_empty();
@@ -109,6 +113,64 @@ impl Node<DynState> for HandlerNode {
 pub type ConfigCondition =
     Arc<dyn Fn(&DynState) -> std::result::Result<bool, FlowgentraError> + Send + Sync>;
 
+/// Wrap `base` in a retry/timeout control-flow node when the config node's
+/// `type` and `config` map request it; otherwise return `base` unchanged.
+/// Parameters are read from `node.config` (matching the legacy runtime keys).
+fn wrap_control_flow(
+    name: &str,
+    node: &crate::core::node::NodeConfig,
+    base: Arc<dyn Node<DynState>>,
+) -> Arc<dyn Node<DynState>> {
+    use crate::core::state_graph::{OnTimeout, RetryNode, TimeoutNode};
+
+    let get_u64 = |key: &str| node.config.get(key).and_then(|v| v.as_u64());
+    let get_f32 = |key: &str| {
+        node.config
+            .get(key)
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+    };
+
+    match node.node_type.as_deref() {
+        Some("retry") => {
+            let mut r = RetryNode::new(name.to_string(), base);
+            if let Some(v) = get_u64("max_retries") {
+                r = r.with_max_retries(v as usize);
+            }
+            if let Some(v) = get_u64("backoff_ms") {
+                r = r.with_backoff_ms(v);
+            }
+            if let Some(v) = get_f32("backoff_multiplier") {
+                r = r.with_multiplier(v);
+            }
+            if let Some(v) = get_u64("max_backoff_ms") {
+                r = r.with_max_backoff_ms(v);
+            }
+            Arc::new(r)
+        }
+        Some("timeout") => {
+            // timeout_ms may live on the node itself or in its config map.
+            let timeout_ms = node
+                .timeout_ms
+                .or_else(|| get_u64("timeout_ms"))
+                .unwrap_or(30_000);
+            let on_timeout = match node
+                .config
+                .get("on_timeout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("error")
+            {
+                "skip" => OnTimeout::Skip,
+                _ => OnTimeout::Error,
+            };
+            Arc::new(
+                TimeoutNode::new(name.to_string(), base, timeout_ms).with_on_timeout(on_timeout),
+            )
+        }
+        _ => base,
+    }
+}
+
 /// Build a compiled `StateGraph<DynState>` from an `AgentConfig`.
 ///
 /// - `handlers`: node handlers keyed by node name (already resolved).
@@ -152,13 +214,13 @@ pub fn build_state_graph(
         let handler = handlers.get(&node.name).cloned().ok_or_else(|| {
             FlowgentraError::ConfigError(format!("No handler registered for node '{}'", node.name))
         })?;
-        builder = builder.add_node(
-            node.name.clone(),
-            Arc::new(HandlerNode {
-                name: node.name.clone(),
-                handler,
-            }),
-        );
+        let base: Arc<dyn Node<DynState>> = Arc::new(HandlerNode {
+            name: node.name.clone(),
+            handler,
+        });
+        // Wrap in a control-flow node when the config asks for retry/timeout.
+        let wrapped = wrap_control_flow(&node.name, node, base);
+        builder = builder.add_node(node.name.clone(), wrapped);
     }
 
     // Entry point: the START edge's target(s). A single entry is required by
@@ -266,6 +328,61 @@ graph:
         let mut cfg = plain_config();
         cfg.graph.nodes[0].mcps = vec!["some_mcp".to_string()];
         assert!(!can_bridge(&cfg));
+    }
+
+    #[test]
+    fn can_bridge_retry_and_timeout_types() {
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].node_type = Some("retry".to_string());
+        cfg.graph.nodes[1].node_type = Some("timeout".to_string());
+        assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn bridged_retry_node_retries_flaky_handler() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut cfg = plain_config();
+        // Node "a" is a retry wrapper that allows up to 3 retries with no backoff.
+        cfg.graph.nodes[0].node_type = Some("retry".to_string());
+        cfg.graph.nodes[0]
+            .config
+            .insert("max_retries".into(), serde_json::json!(3));
+        cfg.graph.nodes[0]
+            .config
+            .insert("backoff_ms".into(), serde_json::json!(0));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_a = Arc::clone(&calls);
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert(
+            "a".into(),
+            Arc::new(move |state: DynState| {
+                let calls = Arc::clone(&calls_a);
+                Box::pin(async move {
+                    let attempt = calls.fetch_add(1, Ordering::Relaxed);
+                    if attempt < 2 {
+                        Err(crate::core::error::FlowgentraError::ExecutionError(
+                            "transient".into(),
+                        ))
+                    } else {
+                        state.set("log", serde_json::json!(["a"]));
+                        Ok(state)
+                    }
+                })
+            }),
+        );
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        let state = DynState::new();
+        let result = graph.invoke(state).await.unwrap();
+        assert_eq!(result.get("log"), Some(serde_json::json!(["a"])));
+        assert_eq!(calls.load(Ordering::Relaxed), 3); // 2 failures + 1 success
     }
 
     #[tokio::test]
