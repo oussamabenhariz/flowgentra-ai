@@ -70,16 +70,17 @@ behind with each release.
    ✅ `Agent::run*` now selects the bridge when `can_bridge` and falls back to
    the legacy runtime otherwise. Escape hatch:
    `FLOWGENTRA_FORCE_LEGACY_RUNTIME=1`.
-   ✅ Control-flow types **retry**, **timeout**, **evaluation**, **loop**
+   ✅ Types **retry**, **timeout**, **evaluation**, **loop**, **planner**
    ported and handled by the bridge (retry/timeout via
    `state_graph::{RetryNode, TimeoutNode}`; evaluation/loop reuse the legacy
    `into_wrapping_node_fn` / `create_loop_standalone_handler` /
-   `wrap_handler_with_loop` for bug-for-bug parity).
-   ✅ `MockLLM` (`core::llm::mock`) provides offline scripted responses — the
-   fixture foundation for porting LLM-driven types.
-   **Remaining:** `planner` → router-that-calls-LLM (MockLLM-testable),
-   `memory`, per-node `mcp` → Context injection, `subgraph`, and `supervisor`
-   (biggest).
+   `wrap_handler_with_loop`; planner via an async LLM router reusing
+   `create_planner_handler` — all bug-for-bug parity).
+   ✅ `MockLLM` (`core::llm::mock`) provides offline scripted responses — used
+   to test the planner routing deterministically.
+   **Remaining:** `memory`, per-node `mcp` → Context injection, `subgraph`,
+   and `supervisor` (biggest). The graph-level planner flag
+   (`graph.planner.enabled`) still routes to the legacy runtime.
 3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`
    (rustdoc deprecation-planned notices already in place).
 4. Delete at 1.0.
