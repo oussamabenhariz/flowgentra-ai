@@ -6,12 +6,12 @@
 //! in-node interrupt, and parallel supersteps.
 //!
 //! **Scope:** plain handler nodes; fixed edges (including parallel fan-out via
-//! `to: [a, b]`); named conditional edges; the control-flow built-in types
-//! `retry`, `timeout`, `evaluation`, and `loop`; and `planner` (LLM-driven
-//! routing via an async out-edge over the planner's declared successors, with
-//! re-planning through back-edges). All reuse the legacy implementations for
-//! bug-for-bug parity. Nodes whose `type` is `supervisor`, `subgraph`,
-//! `memory`, `human_in_the_loop`, or that carry per-node MCPs / RAG / the
+//! `to: [a, b]`); named conditional edges; per-node MCPs (injected as
+//! `_node_mcps`); the built-in types `retry`, `timeout`, `evaluation`, `loop`,
+//! `memory`, and `planner` (LLM-driven routing via an async out-edge over the
+//! planner's declared successors, with re-planning through back-edges). All
+//! reuse the legacy implementations for bug-for-bug parity. Nodes whose `type`
+//! is `supervisor`, `subgraph`, `human_in_the_loop`, or that carry RAG / the
 //! graph-level planner, are **not** handled — [`can_bridge`] returns `false`
 //! so the caller keeps using the legacy `AgentRuntime`.
 
@@ -29,11 +29,10 @@ use crate::core::state_graph::{StateGraph, StateGraphBuilder};
 
 /// Built-in node types the legacy runtime special-cases and that the bridge
 /// does **not** yet handle; presence of any means the config stays on the
-/// legacy runtime. (`retry`/`timeout`/`evaluation`/`loop`/`planner` are
-/// handled — see [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
+/// legacy runtime. (`retry`/`timeout`/`evaluation`/`loop`/`planner`/`memory`
+/// are handled — see [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
 const UNBRIDGEABLE_TYPES: &[&str] = &[
     "human_in_the_loop",
-    "memory",
     "supervisor",
     "orchestrator",
     "subgraph",
@@ -42,28 +41,33 @@ const UNBRIDGEABLE_TYPES: &[&str] = &[
 ];
 
 /// Built-in node types the bridge handles: retry/timeout control-flow wrappers,
-/// evaluation refinement loop, loop iteration, and `planner` (LLM-driven
-/// routing via an async out-edge). All reuse the legacy implementations for
-/// bug-for-bug parity.
-const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &["retry", "timeout", "evaluation", "loop", "planner"];
+/// evaluation refinement loop, loop iteration, `planner` (LLM-driven routing),
+/// and `memory` (built-in memory operations). All reuse the legacy
+/// implementations for bug-for-bug parity.
+const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &[
+    "retry",
+    "timeout",
+    "evaluation",
+    "loop",
+    "planner",
+    "memory",
+];
 
 /// `true` if every node in the config is either a plain handler node or a
-/// bridgeable control-flow wrapper (retry/timeout), with no per-node MCP list.
-/// Such configs can run on the `state_graph` executor via [`build_state_graph`].
+/// bridgeable built-in type. Per-node MCPs are supported (injected via
+/// `_node_mcps`). Such configs can run on the `state_graph` executor via
+/// [`build_state_graph`].
 pub fn can_bridge(config: &AgentConfig) -> bool {
-    // RAG/planner graph features route through the legacy runtime.
+    // RAG / graph-level planner features route through the legacy runtime.
     if config.graph.rag.is_some() || config.graph.planner.enabled {
         return false;
     }
     config.graph.nodes.iter().all(|n| {
-        let plain_type = n
-            .node_type
+        n.node_type
             .as_deref()
             .map(|t| !UNBRIDGEABLE_TYPES.contains(&t) || BRIDGEABLE_WRAPPER_TYPES.contains(&t))
-            .unwrap_or(true);
-        let no_builtin = !n.handler.starts_with("builtin::");
-        let no_mcp = n.mcps.is_empty();
-        plain_type && no_builtin && no_mcp
+            .unwrap_or(true)
+            && !n.handler.starts_with("builtin::")
     })
 }
 
@@ -77,6 +81,9 @@ pub fn can_bridge(config: &AgentConfig) -> bool {
 struct HandlerNode {
     name: String,
     handler: ArcHandler<DynState>,
+    /// Per-node MCP names, injected as `_node_mcps` so the handler can call
+    /// `state.get_node_mcp_client()` (matches the legacy runtime).
+    mcps: Vec<String>,
 }
 
 #[async_trait::async_trait]
@@ -87,16 +94,29 @@ impl Node<DynState> for HandlerNode {
         _ctx: &Context,
     ) -> std::result::Result<DynStateUpdate, StateGraphError> {
         let before = state.clone();
-        let after =
-            (self.handler)(state.clone())
-                .await
-                .map_err(|e| StateGraphError::ExecutionError {
-                    node: self.name.clone(),
-                    reason: e.to_string(),
-                })?;
+        // DynState clone shares the underlying Arc, so injecting `_node_mcps`
+        // must go on an independent deep copy or it would mutate the executor's
+        // own state.
+        let input = if self.mcps.is_empty() {
+            state.clone()
+        } else {
+            let deep = state.deep_clone();
+            deep.set("_node_mcps", serde_json::json!(self.mcps));
+            deep
+        };
+        let after = (self.handler)(input)
+            .await
+            .map_err(|e| StateGraphError::ExecutionError {
+                node: self.name.clone(),
+                reason: e.to_string(),
+            })?;
 
         let mut update = DynStateUpdate::new();
         for key in after.keys() {
+            // Don't leak the per-node MCP routing key into merged state.
+            if key == "_node_mcps" {
+                continue;
+            }
             let new_val = after.get(&key).unwrap_or(serde_json::Value::Null);
             if before.get(&key) != Some(new_val.clone()) {
                 update.insert(key, new_val);
@@ -186,8 +206,8 @@ fn build_bridged_node(
             .map(|v| v as f32)
     };
 
-    // Handler-level transforms (evaluation refinement, loop iteration) produce
-    // a new handler that HandlerNode then wraps.
+    // Handler-level transforms (evaluation refinement, loop iteration, memory
+    // operations) produce a new handler that HandlerNode then wraps.
     let effective_handler: ArcHandler<DynState> = match node.node_type.as_deref() {
         Some("evaluation") => {
             let cfg =
@@ -206,12 +226,32 @@ fn build_bridged_node(
                 Arc::from(super::wrap_handler_with_loop(handler, cfg))
             }
         }
+        Some("memory") => {
+            // Built-in memory operation (no user handler); reuse the legacy
+            // memory handlers.
+            let op = node
+                .config
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            super::create_memory_handler(op)
+                .map(Arc::from)
+                .ok_or_else(|| {
+                    FlowgentraError::ConfigError(format!(
+                        "Unknown memory operation '{}' for node '{}'. Valid operations: \
+                         append_message, compress_history, clear_history, get_message_count, \
+                         format_history_for_context",
+                        op, name
+                    ))
+                })?
+        }
         _ => handler,
     };
 
     let base: Arc<dyn Node<DynState>> = Arc::new(HandlerNode {
         name: name.to_string(),
         handler: effective_handler,
+        mcps: node.mcps.clone(),
     });
 
     // Node-level control-flow wrappers (retry/timeout).
@@ -318,12 +358,14 @@ pub fn build_state_graph_with_llm(
         if node.name == "START" || node.name == "END" {
             continue;
         }
-        // Standalone loop nodes and planner nodes are pure control nodes and
-        // take no user handler (the planner's decision lives on its out-edge).
+        // Standalone loop, planner, and memory nodes are control/built-in nodes
+        // that take no user handler (the planner routes on its out-edge; memory
+        // and standalone loop are fully implemented by the library).
         let is_standalone_loop =
             node.node_type.as_deref() == Some("loop") && node.handler.is_empty();
         let is_planner = node.node_type.as_deref() == Some("planner");
-        let handler = if is_standalone_loop || is_planner {
+        let is_memory = node.node_type.as_deref() == Some("memory");
+        let handler = if is_standalone_loop || is_planner || is_memory {
             // Pass-through: HandlerNode construction needs an ArcHandler, but
             // the loop transform ignores it and the planner node does nothing
             // (its routing happens on the async out-edge).
@@ -482,13 +524,6 @@ graph:
     }
 
     #[test]
-    fn cannot_bridge_per_node_mcp() {
-        let mut cfg = plain_config();
-        cfg.graph.nodes[0].mcps = vec!["some_mcp".to_string()];
-        assert!(!can_bridge(&cfg));
-    }
-
-    #[test]
     fn can_bridge_retry_and_timeout_types() {
         let mut cfg = plain_config();
         cfg.graph.nodes[0].node_type = Some("retry".to_string());
@@ -539,6 +574,69 @@ graph:
     fn can_bridge_planner_node() {
         let cfg: AgentConfig = serde_yml::from_str(PLANNER_YAML).unwrap();
         assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn bridged_memory_node_runs_builtin_operation() {
+        let mut cfg = plain_config();
+        // Node "a" is a memory node that counts messages; "b" is a noop.
+        cfg.graph.nodes[0].node_type = Some("memory".to_string());
+        cfg.graph.nodes[0]
+            .config
+            .insert("operation".into(), serde_json::json!("get_message_count"));
+
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        let state = DynState::new();
+        let result = graph.invoke(state).await.unwrap();
+        // The built-in get_message_count operation wrote message_count.
+        assert_eq!(result.get("message_count"), Some(serde_json::json!(0)));
+    }
+
+    #[test]
+    fn can_bridge_node_with_mcps() {
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].mcps = vec!["my_mcp".to_string()];
+        assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn per_node_mcps_injected_for_handler() {
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].mcps = vec!["mcp_x".to_string(), "mcp_y".to_string()];
+
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        // Handler records the MCP names it can see via get_node_mcps().
+        handlers.insert(
+            "a".into(),
+            Arc::new(|state: DynState| {
+                Box::pin(async move {
+                    let seen = state.get_node_mcps();
+                    state.set("seen_mcps", serde_json::json!(seen));
+                    Ok(state)
+                })
+            }),
+        );
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        let result = graph.invoke(DynState::new()).await.unwrap();
+        assert_eq!(
+            result.get("seen_mcps"),
+            Some(serde_json::json!(["mcp_x", "mcp_y"]))
+        );
+        // The routing key must not leak into merged state.
+        assert_eq!(result.get("_node_mcps"), None);
     }
 
     #[tokio::test]
