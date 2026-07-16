@@ -71,6 +71,7 @@ pub use advanced_nodes::{
 };
 pub use context::ExecutionContext;
 pub use db::{DbError, DocumentStore, SqlDatabase};
+#[allow(deprecated)]
 pub use graph::Graph;
 pub use llm::{LLMConfig, LLMProvider, Message, MessageRole};
 pub use mcp::{MCPConfig, MCPConnectionType};
@@ -110,6 +111,7 @@ pub use rag::{PgVectorConfig, PgVectorStore};
 #[cfg(feature = "redis-vector")]
 pub use rag::{RedisVectorConfig, RedisVectorStore};
 pub use routing::{ComparisonOp, Condition, ConditionBuilder, FieldTypeCheck};
+#[allow(deprecated)]
 pub use runtime::AgentRuntime;
 pub use tools::{
     builtin::{CalculatorTool, FilesTool},

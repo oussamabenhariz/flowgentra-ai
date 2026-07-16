@@ -1,3 +1,5 @@
+// Legacy graph engine (deprecated); references the deprecated `Graph` throughout.
+#![allow(deprecated)]
 //! # Graph Data Structure and Operations
 //!
 //! The Graph represents your agent's workflow as a Directed Acyclic Graph (DAG).
@@ -70,6 +72,12 @@ pub type NodeId = String;
 /// completes. Planned removal: 1.0.
 ///
 /// </div>
+#[deprecated(
+    since = "0.3.1",
+    note = "Superseded by core::state_graph::StateGraph, which carries all new \
+            reliability features. Kept only for the legacy AgentRuntime path; \
+            removed at 1.0."
+)]
 pub struct Graph<T: State> {
     /// All nodes in the graph, indexed by name
     pub(crate) nodes: HashMap<NodeId, Node<T>>,

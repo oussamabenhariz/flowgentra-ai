@@ -1,3 +1,4 @@
+#![allow(deprecated)] // visualization helpers for the deprecated core::graph::Graph
 //! # Graph Visualization Module
 //!
 //! Provides serialization and visualization capabilities for agent execution graphs.

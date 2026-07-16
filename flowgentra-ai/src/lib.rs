@@ -68,7 +68,9 @@ pub use core::agent::{
 };
 pub use core::config::AgentConfig;
 pub use core::error::{FlowgentraError, Result};
+#[allow(deprecated)]
 pub use core::graph::Graph;
+#[allow(deprecated)]
 pub use core::AgentRuntime;
 pub use flowgentra_ai_macros as macros;
 pub use flowgentra_ai_macros::{register_handler, State};
@@ -84,6 +86,7 @@ pub mod prelude {
         from_config_path_with_extra_handlers, Agent, ArcHandler, Handler, HandlerEntry,
         HandlerRegistry,
     };
+    #[allow(deprecated)] // prelude re-exports the deprecated AgentRuntime for compatibility
     pub use crate::core::{
         config::{
             AgentConfig, EmbeddingsConfig, PdfSettings, RAGGraphConfig, RetrievalSettings,

@@ -46,6 +46,7 @@ pub(crate) use crate::core::llm::{create_llm, LLM};
 pub(crate) use crate::core::memory::{
     ConversationMemory, InMemoryConversationMemory, MemoryCheckpointer,
 };
+#[allow(deprecated)]
 pub(crate) use crate::core::runtime::AgentRuntime;
 pub(crate) use crate::core::state::DynState;
 use std::collections::HashMap;
@@ -153,7 +154,10 @@ pub type ConditionRegistry<T> = HashMap<String, Condition<T>>;
 /// - Orchestrating node execution
 /// - Optional checkpointer and conversation memory (from config or programmatic)
 pub struct Agent {
-    runtime: AgentRuntime,
+    /// Legacy execution runtime. `None` when the config runs on the
+    /// state_graph bridge (the default); `Some` only as a fallback.
+    #[allow(deprecated)]
+    runtime: Option<AgentRuntime>,
     llm: Arc<dyn LLM>,
     config: AgentConfig,
     /// Current state of the agent (initialized from state_schema)
@@ -215,14 +219,12 @@ impl Agent {
     ///
     /// Use this when you have a config object in hand (e.g. from `from_config_path`
     /// which already loaded the file) to avoid reading the file a second time.
+    #[allow(deprecated)] // references AgentRuntime for the legacy fallback
     pub fn from_config_inner(
         config: AgentConfig,
         handlers: HandlerRegistry<DynState>,
         conditions: ConditionRegistry<DynState>,
     ) -> Result<Self> {
-        // Create runtime
-        let mut runtime = AgentRuntime::from_config(config.clone())?;
-
         // Create LLM
         let llm = create_llm(&config.llm)?;
 
@@ -235,124 +237,6 @@ impl Agent {
             })
             .collect();
 
-        // Register handlers by mapping each node config to its handler function.
-        // Looks up by node.name first (from from_config_path, which pre-resolves by node name),
-        // then by node.handler (from manual Agent::from_config, which uses handler names).
-        let mut missing_handlers = Vec::new();
-
-        // Built-in node types that don't require a user-supplied handler
-        const BUILTIN_TYPES: &[&str] = &[
-            "evaluation",
-            "retry",
-            "timeout",
-            "loop",
-            "planner",
-            "human_in_the_loop",
-            "memory",
-            // supervisor (+ backwards-compat alias)
-            "supervisor",
-            "orchestrator",
-            // subgraph (+ backwards-compat aliases)
-            "subgraph",
-            "agent",
-            "agent_or_graph",
-        ];
-
-        // Supervisor-managed children are not in the runtime graph — skip registration.
-        let supervisor_children: std::collections::HashSet<String> = config
-            .graph
-            .nodes
-            .iter()
-            .filter(|n| {
-                matches!(
-                    n.node_type.as_deref(),
-                    Some("supervisor") | Some("orchestrator")
-                )
-            })
-            .flat_map(|n| {
-                n.config
-                    .get("children")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            })
-            .collect();
-
-        for node in &config.graph.nodes {
-            if node.name == "START" || node.name == "END" {
-                continue;
-            }
-            if supervisor_children.contains(&node.name) {
-                continue;
-            }
-            if node.handler.starts_with("builtin::") {
-                continue;
-            }
-            let arc_handler = arc_handlers
-                .get(&node.name)
-                .or_else(|| arc_handlers.get(&node.handler))
-                .cloned();
-
-            // Standalone built-in type with no user-supplied handler — only skip when
-            // from_config_path did NOT pre-build a handler for this node.
-            // If a handler IS present (e.g. the planner built by from_config_path), always
-            // register it so the placeholder function is replaced.
-            let is_builtin_standalone = node.handler.is_empty()
-                && node
-                    .node_type
-                    .as_deref()
-                    .is_some_and(|t| BUILTIN_TYPES.contains(&t))
-                && arc_handler.is_none();
-            if is_builtin_standalone {
-                continue;
-            }
-
-            match arc_handler {
-                Some(h) => {
-                    runtime
-                        .register_node(&node.name, Box::new(move |state| h(state)))
-                        .map_err(|e| {
-                            if matches!(e, FlowgentraError::NodeNotFound(_)) {
-                                FlowgentraError::NodeNotFound(format!(
-                                    "Node '{}' not found in graph. Check your config.",
-                                    node.name
-                                ))
-                            } else {
-                                e
-                            }
-                        })?;
-                }
-                None => {
-                    missing_handlers.push(node.handler.clone());
-                }
-            }
-        }
-
-        if !missing_handlers.is_empty() {
-            let available_list = if arc_handlers.is_empty() {
-                "(none registered)".to_string()
-            } else {
-                arc_handlers
-                    .keys()
-                    .map(|k| format!("'{}'", k))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-
-            return Err(FlowgentraError::ConfigError(format!(
-                "Configuration references unknown handler(s): {}.\nAvailable handlers: {}\nMake sure to #[register_handler] these functions in your code.",
-                missing_handlers.iter()
-                    .map(|h| format!("'{}'", h))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                available_list
-            )));
-        }
-
         // Share each condition behind an Arc so it can be used by both the
         // legacy runtime and the state_graph bridge.
         type SharedCondition = std::sync::Arc<dyn Fn(&DynState) -> bool + Send + Sync>;
@@ -364,54 +248,20 @@ impl Agent {
             })
             .collect();
 
-        // Register all conditions on the legacy runtime.
-        type EdgeConditionFn = std::sync::Arc<
-            dyn Fn(
-                    &DynState,
-                )
-                    -> std::result::Result<Option<String>, crate::core::error::FlowgentraError>
-                + Send
-                + Sync,
-        >;
-        for (condition_name, condition_fn) in &shared_conditions {
-            let cond_name_clone = condition_name.clone();
-            let cond = condition_fn.clone();
-            let edge_condition: EdgeConditionFn = std::sync::Arc::new(move |state: &DynState| {
-                if cond(state) {
-                    Ok(Some(cond_name_clone.clone()))
-                } else {
-                    Ok(None)
-                }
-            });
-
-            let edges_to_register: Vec<String> = runtime
-                .graph()
-                .edges
-                .iter()
-                .filter(|e| e.condition_name.as_deref() == Some(condition_name.as_str()))
-                .map(|e| e.from.clone())
-                .collect();
-
-            for from_node in edges_to_register {
-                runtime.register_edge_condition(
-                    &from_node,
-                    condition_name,
-                    edge_condition.clone(),
-                )?;
-            }
-        }
-
-        // If the config uses only plain handler nodes, also compile it onto the
-        // state_graph executor (cancellation, budgets, atomic/SQLite
-        // checkpointing, parallel supersteps). `run*` prefers this when present.
+        // Compile the config onto the state_graph executor (cancellation,
+        // budgets, atomic/SQLite checkpointing, parallel supersteps). This is
+        // the default path for every valid config; the legacy AgentRuntime is
+        // built only as a fallback when the bridge cannot compile (e.g. a
+        // missing handler or a supervisor cycle) or when forced.
         //
-        // Escape hatch: set FLOWGENTRA_FORCE_LEGACY_RUNTIME=1 to disable bridge
-        // selection and always use the legacy runtime (for one or two releases,
-        // in case a bridged path misbehaves in the wild).
+        // Escape hatch: FLOWGENTRA_FORCE_LEGACY_RUNTIME=1 forces the legacy
+        // runtime (one/two-release safety net if a bridged path misbehaves).
         let force_legacy = std::env::var("FLOWGENTRA_FORCE_LEGACY_RUNTIME")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let bridge_graph = if !force_legacy && state_graph_bridge::can_bridge(&config) {
+        let bridge_graph = if force_legacy {
+            None
+        } else {
             let bridge_conditions: HashMap<String, state_graph_bridge::ConfigCondition> =
                 shared_conditions
                     .iter()
@@ -430,8 +280,17 @@ impl Agent {
             )
             .ok()
             .map(Arc::new)
-        } else {
+        };
+
+        // Legacy runtime: built only when the bridge is not used.
+        let runtime: Option<AgentRuntime> = if bridge_graph.is_some() {
             None
+        } else {
+            Some(build_legacy_runtime(
+                &config,
+                &arc_handlers,
+                &shared_conditions,
+            )?)
         };
 
         let initial_state = config.create_initial_state();
@@ -453,13 +312,17 @@ impl Agent {
     /// semantics. For durable (file/SQLite) checkpointing, build the graph via
     /// the `StateGraph` API directly.
     pub fn set_checkpointer(&mut self, checkpointer: Arc<MemoryCheckpointer>) -> &mut Self {
-        self.runtime.set_checkpointer(checkpointer);
+        if let Some(rt) = self.runtime.as_mut() {
+            rt.set_checkpointer(checkpointer);
+        }
         self
     }
 
     /// Builder-style: set the checkpointer.
     pub fn with_checkpointer(mut self, checkpointer: Arc<MemoryCheckpointer>) -> Self {
-        self.runtime.set_checkpointer(checkpointer);
+        if let Some(rt) = self.runtime.as_mut() {
+            rt.set_checkpointer(checkpointer);
+        }
         self
     }
 
@@ -532,7 +395,7 @@ impl Agent {
                 .await
                 .map_err(|e| crate::core::error::FlowgentraError::ExecutionError(e.to_string()));
         }
-        self.runtime.execute(self.state.clone()).await
+        self.runtime_or_err()?.execute(self.state.clone()).await
     }
 
     /// Run with a thread id for checkpointing and conversation memory. When a checkpointer is set,
@@ -567,9 +430,21 @@ impl Agent {
                 .await
                 .map_err(|e| crate::core::error::FlowgentraError::ExecutionError(e.to_string()));
         }
-        self.runtime
+        self.runtime_or_err()?
             .execute_with_thread(thread_id, self.state.clone())
             .await
+    }
+
+    /// Access the legacy runtime, erroring if the agent is running on the
+    /// bridge (runtime is `None`). Internal helper for the fallback paths.
+    #[allow(deprecated)]
+    fn runtime_or_err(&self) -> Result<&AgentRuntime> {
+        self.runtime.as_ref().ok_or_else(|| {
+            FlowgentraError::RuntimeError(
+                "legacy runtime is not available (this agent runs on the state_graph engine)"
+                    .to_string(),
+            )
+        })
     }
 
     /// Get the LLM for use in handlers
@@ -594,11 +469,13 @@ impl Agent {
     //     self.runtime.visualize_graph(output_path)
     // }
 
-    /// Get mutable access to the underlying runtime
+    /// Get mutable access to the underlying legacy runtime, if this agent uses
+    /// one. Returns `None` when the agent runs on the state_graph bridge.
     ///
     /// For advanced users who need direct runtime access.
-    pub fn runtime_mut(&mut self) -> &mut AgentRuntime {
-        &mut self.runtime
+    #[allow(deprecated)]
+    pub fn runtime_mut(&mut self) -> Option<&mut AgentRuntime> {
+        self.runtime.as_mut()
     }
 
     // ==============================================
@@ -671,7 +548,9 @@ impl Agent {
             }
         };
 
-        self.runtime.register_node(node_name, handler)?;
+        if let Some(rt) = self.runtime.as_mut() {
+            rt.register_node(node_name, handler)?;
+        }
 
         Ok(())
     }
@@ -1355,7 +1234,11 @@ fn from_config_path_impl(
                 .with_confidence_config(confidence_config)
                 .with_retry_config(retry_config);
 
-            agent.runtime_mut().add_middleware(Arc::new(middleware));
+            // Auto-evaluation middleware applies to the legacy runtime. Bridged
+            // agents get evaluation via `type: evaluation` nodes instead.
+            if let Some(rt) = agent.runtime_mut() {
+                rt.add_middleware(Arc::new(middleware));
+            }
         }
     }
 
@@ -1588,6 +1471,161 @@ fn create_human_in_loop_handler(
 ///     operation: append_message   # or compress_history, clear_history,
 ///                                 #    get_message_count, format_history_for_context
 /// ```
+/// Build the legacy [`AgentRuntime`] and register handlers + conditions on it.
+///
+/// Called only as a fallback when the state_graph bridge cannot compile a
+/// config (or is force-disabled). The bridge is the default execution path for
+/// every valid config.
+/// Map of condition name → boolean predicate over state, shared between the
+/// legacy runtime and the state_graph bridge.
+type SharedConditions = HashMap<String, Arc<dyn Fn(&DynState) -> bool + Send + Sync>>;
+
+#[allow(deprecated)]
+fn build_legacy_runtime(
+    config: &AgentConfig,
+    arc_handlers: &HashMap<String, ArcHandler<DynState>>,
+    shared_conditions: &SharedConditions,
+) -> Result<AgentRuntime> {
+    let mut runtime = AgentRuntime::from_config(config.clone())?;
+
+    let mut missing_handlers = Vec::new();
+
+    // Built-in node types that don't require a user-supplied handler.
+    const BUILTIN_TYPES: &[&str] = &[
+        "evaluation",
+        "retry",
+        "timeout",
+        "loop",
+        "planner",
+        "human_in_the_loop",
+        "memory",
+        "supervisor",
+        "orchestrator",
+        "subgraph",
+        "agent",
+        "agent_or_graph",
+    ];
+
+    // Supervisor-managed children are not in the runtime graph.
+    let supervisor_children: std::collections::HashSet<String> = config
+        .graph
+        .nodes
+        .iter()
+        .filter(|n| {
+            matches!(
+                n.node_type.as_deref(),
+                Some("supervisor") | Some("orchestrator")
+            )
+        })
+        .flat_map(|n| {
+            n.config
+                .get("children")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect();
+
+    for node in &config.graph.nodes {
+        if node.name == "START" || node.name == "END" {
+            continue;
+        }
+        if supervisor_children.contains(&node.name) {
+            continue;
+        }
+        if node.handler.starts_with("builtin::") {
+            continue;
+        }
+        let arc_handler = arc_handlers
+            .get(&node.name)
+            .or_else(|| arc_handlers.get(&node.handler))
+            .cloned();
+
+        let is_builtin_standalone = node.handler.is_empty()
+            && node
+                .node_type
+                .as_deref()
+                .is_some_and(|t| BUILTIN_TYPES.contains(&t))
+            && arc_handler.is_none();
+        if is_builtin_standalone {
+            continue;
+        }
+
+        match arc_handler {
+            Some(h) => {
+                runtime
+                    .register_node(&node.name, Box::new(move |state| h(state)))
+                    .map_err(|e| {
+                        if matches!(e, FlowgentraError::NodeNotFound(_)) {
+                            FlowgentraError::NodeNotFound(format!(
+                                "Node '{}' not found in graph. Check your config.",
+                                node.name
+                            ))
+                        } else {
+                            e
+                        }
+                    })?;
+            }
+            None => {
+                missing_handlers.push(node.handler.clone());
+            }
+        }
+    }
+
+    if !missing_handlers.is_empty() {
+        let available_list = if arc_handlers.is_empty() {
+            "(none registered)".to_string()
+        } else {
+            arc_handlers
+                .keys()
+                .map(|k| format!("'{}'", k))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        return Err(FlowgentraError::ConfigError(format!(
+            "Configuration references unknown handler(s): {}.\nAvailable handlers: {}\nMake sure to #[register_handler] these functions in your code.",
+            missing_handlers.iter().map(|h| format!("'{}'", h)).collect::<Vec<_>>().join(", "),
+            available_list
+        )));
+    }
+
+    type EdgeConditionFn = std::sync::Arc<
+        dyn Fn(
+                &DynState,
+            )
+                -> std::result::Result<Option<String>, crate::core::error::FlowgentraError>
+            + Send
+            + Sync,
+    >;
+    for (condition_name, condition_fn) in shared_conditions {
+        let cond_name_clone = condition_name.clone();
+        let cond = condition_fn.clone();
+        let edge_condition: EdgeConditionFn = std::sync::Arc::new(move |state: &DynState| {
+            if cond(state) {
+                Ok(Some(cond_name_clone.clone()))
+            } else {
+                Ok(None)
+            }
+        });
+        let edges_to_register: Vec<String> = runtime
+            .graph()
+            .edges
+            .iter()
+            .filter(|e| e.condition_name.as_deref() == Some(condition_name.as_str()))
+            .map(|e| e.from.clone())
+            .collect();
+        for from_node in edges_to_register {
+            runtime.register_edge_condition(&from_node, condition_name, edge_condition.clone())?;
+        }
+    }
+
+    Ok(runtime)
+}
+
 fn create_memory_handler(operation: &str) -> Option<Handler<DynState>> {
     use crate::core::node::memory_handlers;
     match operation {

@@ -1,3 +1,4 @@
+#![allow(deprecated)] // visualization helpers for the deprecated core::graph::Graph
 //! # Graph Visualization Module
 //!
 //! Generates clear, professional SVG visualizations of agent workflows with crisp, scalable text.

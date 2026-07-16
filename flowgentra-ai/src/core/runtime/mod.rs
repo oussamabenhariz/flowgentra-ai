@@ -1,3 +1,6 @@
+// This module is the deprecated legacy runtime; it references the deprecated
+// `AgentRuntime` throughout, so the deprecation lint is allowed module-wide.
+#![allow(deprecated)]
 //! ## Advanced Patterns
 //!
 //! - Support custom middleware for logging, metrics, etc.
@@ -88,6 +91,13 @@ pub struct ExecutionContext {
 /// in-node interrupts). Planned removal: 1.0.
 ///
 /// </div>
+#[deprecated(
+    since = "0.3.1",
+    note = "The config-driven agent now runs on core::state_graph via the bridge \
+            (see docs/design/engine-merge.md). AgentRuntime is kept only as a \
+            fallback and will be removed at 1.0. Build graphs with \
+            core::state_graph::StateGraph instead."
+)]
 pub struct AgentRuntime {
     /// Agent configuration
     config: AgentConfig,

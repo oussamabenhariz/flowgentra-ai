@@ -1,3 +1,5 @@
+// Legacy graph engine (deprecated); references the deprecated `Graph` throughout.
+#![allow(deprecated)]
 //! # Graph Analysis for Automatic Parallelization
 //!
 //! Analyzes graph structure to automatically detect independent branches that can run in parallel.
