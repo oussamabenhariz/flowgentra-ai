@@ -7,13 +7,14 @@
 //!
 //! **Scope:** plain handler nodes; fixed edges (including parallel fan-out via
 //! `to: [a, b]`); named conditional edges; per-node MCPs (injected as
-//! `_node_mcps`); the built-in types `retry`, `timeout`, `evaluation`, `loop`,
-//! `memory`, and `planner` (LLM-driven routing via an async out-edge over the
-//! planner's declared successors, with re-planning through back-edges). All
-//! reuse the legacy implementations for bug-for-bug parity. Nodes whose `type`
-//! is `supervisor`, `subgraph`, `human_in_the_loop`, or that carry RAG / the
-//! graph-level planner, are **not** handled — [`can_bridge`] returns `false`
-//! so the caller keeps using the legacy `AgentRuntime`.
+//! `_node_mcps`); and the built-in types `retry`, `timeout`, `evaluation`,
+//! `loop`, `memory`, `human_in_the_loop`, `subgraph`, and `planner` (LLM-driven
+//! routing via an async out-edge over the planner's declared successors, with
+//! re-planning through back-edges). All reuse the legacy implementations for
+//! bug-for-bug parity. Only `supervisor` (and its `orchestrator` alias) and
+//! configs carrying RAG / the graph-level planner are **not** handled —
+//! [`can_bridge`] returns `false` so the caller keeps using the legacy
+//! `AgentRuntime`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -27,22 +28,14 @@ use crate::core::state_graph::error::StateGraphError;
 use crate::core::state_graph::node::{Node, RouterFn};
 use crate::core::state_graph::{StateGraph, StateGraphBuilder};
 
-/// Built-in node types the legacy runtime special-cases and that the bridge
-/// does **not** yet handle; presence of any means the config stays on the
-/// legacy runtime. (`retry`/`timeout`/`evaluation`/`loop`/`planner`/`memory`
-/// are handled — see [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
-const UNBRIDGEABLE_TYPES: &[&str] = &[
-    "human_in_the_loop",
-    "supervisor",
-    "orchestrator",
-    "subgraph",
-    "agent",
-    "agent_or_graph",
-];
+/// Node types that stay on the legacy runtime — only the supervisor (and its
+/// `orchestrator` alias), whose concurrency sub-scheduler is not yet ported.
+const UNBRIDGEABLE_TYPES: &[&str] = &["supervisor", "orchestrator"];
 
 /// Built-in node types the bridge handles: retry/timeout control-flow wrappers,
 /// evaluation refinement loop, loop iteration, `planner` (LLM-driven routing),
-/// and `memory` (built-in memory operations). All reuse the legacy
+/// `memory` (built-in memory ops), `human_in_the_loop` (approval bookkeeping),
+/// and `subgraph` (nested agent from a YAML path). All reuse the legacy
 /// implementations for bug-for-bug parity.
 const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &[
     "retry",
@@ -51,6 +44,10 @@ const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &[
     "loop",
     "planner",
     "memory",
+    "human_in_the_loop",
+    "subgraph",
+    "agent",
+    "agent_or_graph",
 ];
 
 /// `true` if every node in the config is either a plain handler node or a
@@ -245,6 +242,18 @@ fn build_bridged_node(
                     ))
                 })?
         }
+        Some("human_in_the_loop") => {
+            // Approval bookkeeping (auto-approves, sets _human_* flags); reuse
+            // the legacy handler. Pair with conditional edges on _human_approved.
+            let cfg = crate::core::node::nodes_trait::HumanInTheLoopConfig::from_node_config(node)?;
+            Arc::from(super::create_human_in_loop_handler(cfg))
+        }
+        Some("subgraph") | Some("agent") | Some("agent_or_graph") => {
+            // Nested agent loaded from a YAML path; reuse the legacy handler.
+            let cfg =
+                crate::core::node::agent_or_graph_node::SubgraphNodeConfig::from_node_config(node)?;
+            Arc::from(super::create_subgraph_handler(cfg))
+        }
         _ => handler,
     };
 
@@ -358,14 +367,21 @@ pub fn build_state_graph_with_llm(
         if node.name == "START" || node.name == "END" {
             continue;
         }
-        // Standalone loop, planner, and memory nodes are control/built-in nodes
-        // that take no user handler (the planner routes on its out-edge; memory
-        // and standalone loop are fully implemented by the library).
+        // Control/built-in nodes that take no user handler (planner routes on
+        // its out-edge; memory / HITL / subgraph / standalone loop are fully
+        // implemented by the library).
+        let no_handler_type = matches!(
+            node.node_type.as_deref(),
+            Some("planner")
+                | Some("memory")
+                | Some("human_in_the_loop")
+                | Some("subgraph")
+                | Some("agent")
+                | Some("agent_or_graph")
+        );
         let is_standalone_loop =
             node.node_type.as_deref() == Some("loop") && node.handler.is_empty();
-        let is_planner = node.node_type.as_deref() == Some("planner");
-        let is_memory = node.node_type.as_deref() == Some("memory");
-        let handler = if is_standalone_loop || is_planner || is_memory {
+        let handler = if is_standalone_loop || no_handler_type {
             // Pass-through: HandlerNode construction needs an ArcHandler, but
             // the loop transform ignores it and the planner node does nothing
             // (its routing happens on the async out-edge).
@@ -597,6 +613,83 @@ graph:
         let result = graph.invoke(state).await.unwrap();
         // The built-in get_message_count operation wrote message_count.
         assert_eq!(result.get("message_count"), Some(serde_json::json!(0)));
+    }
+
+    #[test]
+    fn can_bridge_hitl_and_subgraph_types() {
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].node_type = Some("human_in_the_loop".to_string());
+        cfg.graph.nodes[1].node_type = Some("subgraph".to_string());
+        assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn bridged_subgraph_node_runs_nested_agent() {
+        // Sub-config: a single memory node that writes message_count.
+        let sub_yaml = r#"
+name: sub
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ""
+state_schema:
+  message_count: int
+graph:
+  nodes:
+    - name: count
+      type: memory
+      config:
+        operation: get_message_count
+  edges:
+    - from: START
+      to: count
+    - from: count
+      to: END
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let sub_path = dir.path().join("sub.yaml");
+        std::fs::write(&sub_path, sub_yaml).unwrap();
+
+        let mut cfg = plain_config();
+        // Node "a" is a subgraph pointing at the sub-config; "b" is a noop.
+        cfg.graph.nodes[0].node_type = Some("subgraph".to_string());
+        cfg.graph.nodes[0].handler = String::new();
+        cfg.graph.nodes[0]
+            .config
+            .insert("path".into(), serde_json::json!(sub_path.to_string_lossy()));
+
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        let result = graph.invoke(DynState::new()).await.unwrap();
+        // The nested agent's memory node ran and its result merged up.
+        assert_eq!(result.get("message_count"), Some(serde_json::json!(0)));
+    }
+
+    #[tokio::test]
+    async fn bridged_hitl_node_sets_approval_flags() {
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].node_type = Some("human_in_the_loop".to_string());
+        cfg.graph.nodes[0]
+            .config
+            .insert("prompt".into(), serde_json::json!("Approve?"));
+
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        let result = graph.invoke(DynState::new()).await.unwrap();
+        assert_eq!(result.get("_human_approved"), Some(serde_json::json!(true)));
+        assert_eq!(result.get("_human_node"), Some(serde_json::json!("a")));
     }
 
     #[test]
