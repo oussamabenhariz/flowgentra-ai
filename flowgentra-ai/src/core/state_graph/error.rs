@@ -63,6 +63,17 @@ pub enum StateGraphError {
     Cancelled { node: String, step: usize },
 
     #[error(
+        "Graph execution exceeded the token budget of {budget} tokens ({used} used) \
+         after node '{node}'. Raise the budget with set_max_tokens(), or reduce prompt/\
+         context size. Requires nodes to record usage in the '_token_usage' state field."
+    )]
+    TokenBudgetExceeded {
+        budget: u64,
+        used: u64,
+        node: String,
+    },
+
+    #[error(
         "Node '{node}' requested an interrupt (human input needed): {payload}. \
          Inspect the payload, then call resume_with_state(thread_id, {{...}}) to \
          inject the answer — the node re-runs with the injected state."

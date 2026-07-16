@@ -30,6 +30,22 @@ use crate::core::observability::events::{EventBroadcaster, ExecutionEvent};
 use crate::core::plugins::PluginRegistry;
 use crate::core::state::{Context, State};
 
+/// Read cumulative `total_tokens` from a state's `_token_usage` field.
+///
+/// Generic over any `State`: serializes to JSON and looks up the conventional
+/// key that LLM nodes populate. Returns 0 when absent, so the token budget is
+/// a no-op for graphs that don't track usage.
+fn total_tokens_used<S: State>(state: &S) -> u64 {
+    serde_json::to_value(state)
+        .ok()
+        .and_then(|v| {
+            v.get("_token_usage")
+                .and_then(|u| u.get("total_tokens"))
+                .and_then(|t| t.as_u64())
+        })
+        .unwrap_or(0)
+}
+
 /// State graph builder - fluent API for constructing graphs
 pub struct StateGraphBuilder<S: State> {
     nodes: HashMap<String, Arc<dyn Node<S>>>,
@@ -38,6 +54,7 @@ pub struct StateGraphBuilder<S: State> {
     checkpointer: Option<Arc<dyn Checkpointer<S>>>,
     max_steps: usize,
     max_duration: Option<std::time::Duration>,
+    max_tokens: Option<u64>,
     cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     interrupt_before: HashSet<String>,
     interrupt_after: HashSet<String>,
@@ -57,6 +74,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             checkpointer: None,
             max_steps: 1000,
             max_duration: None,
+            max_tokens: None,
             cancel_flag: None,
             interrupt_before: HashSet::new(),
             interrupt_after: HashSet::new(),
@@ -136,6 +154,15 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
     /// a node that is already running is not interrupted mid-flight.
     pub fn set_max_duration(mut self, max_duration: std::time::Duration) -> Self {
         self.max_duration = Some(max_duration);
+        self
+    }
+
+    /// Set a total-token budget for a single invocation. Checked between nodes
+    /// against the cumulative `total_tokens` in the `_token_usage` state field,
+    /// which LLM nodes populate. Breach returns
+    /// [`StateGraphError::TokenBudgetExceeded`].
+    pub fn set_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = Some(max_tokens);
         self
     }
 
@@ -298,6 +325,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             checkpointer,
             max_steps: self.max_steps,
             max_duration: self.max_duration,
+            max_tokens: self.max_tokens,
             cancel_flag: self.cancel_flag,
             interrupt_before: self.interrupt_before,
             interrupt_after: self.interrupt_after,
@@ -362,6 +390,7 @@ pub struct StateGraph<S: State> {
     checkpointer: Arc<dyn Checkpointer<S>>,
     max_steps: usize,
     max_duration: Option<std::time::Duration>,
+    max_tokens: Option<u64>,
     cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     interrupt_before: HashSet<String>,
     interrupt_after: HashSet<String>,
@@ -718,6 +747,22 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                     self.broadcaster
                         .node_completed(&current_node, step, duration_ms, None);
 
+                    if let Some(budget) = self.max_tokens {
+                        let used = total_tokens_used(&current_state);
+                        if used > budget {
+                            let err = StateGraphError::TokenBudgetExceeded {
+                                budget,
+                                used,
+                                node: current_node.clone(),
+                            };
+                            self.broadcaster.emit(ExecutionEvent::GraphFailed {
+                                error: err.to_string(),
+                                last_node: Some(current_node.clone()),
+                            });
+                            return Err(err);
+                        }
+                    }
+
                     if self.interrupt_after.contains(&current_node) {
                         return Err(StateGraphError::InterruptedAtBreakpoint {
                             node: current_node,
@@ -917,6 +962,17 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             Checkpoint::new(thread_id.to_string(), step, wave.join("+"), state.clone())
                 .with_metadata("wave", wave_json);
         self.checkpointer.save(&checkpoint).await?;
+
+        if let Some(budget) = self.max_tokens {
+            let used = total_tokens_used(&state);
+            if used > budget {
+                return Err(StateGraphError::TokenBudgetExceeded {
+                    budget,
+                    used,
+                    node: wave.join("+"),
+                });
+            }
+        }
 
         if let Some(node) = wave.iter().find(|n| self.interrupt_after.contains(*n)) {
             return Err(StateGraphError::InterruptedAtBreakpoint { node: node.clone() });
@@ -1334,6 +1390,46 @@ mod budget_tests {
             matches!(err, StateGraphError::WallClockExceeded { .. }),
             "expected WallClockExceeded, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn token_budget_stops_execution() {
+        use crate::core::state::{DynState, DynStateUpdate};
+
+        // Each step adds 100 to _token_usage.total_tokens and loops forever.
+        let burn: Arc<dyn Node<DynState>> = Arc::new(FunctionNode::new(
+            "burn",
+            |state: &DynState, _ctx: &Context| {
+                let prior = state
+                    .get("_token_usage")
+                    .and_then(|v| v.get("total_tokens").and_then(|t| t.as_u64()))
+                    .unwrap_or(0);
+                Box::pin(async move {
+                    let mut update = DynStateUpdate::new();
+                    update.insert(
+                        "_token_usage".to_string(),
+                        serde_json::json!({"total_tokens": prior + 100}),
+                    );
+                    Ok(update)
+                })
+            },
+        ));
+        let graph = StateGraph::<DynState>::builder()
+            .add_node("burn", burn)
+            .set_entry_point("burn")
+            .add_conditional_edge("burn", Box::new(|_s: &DynState| Ok("burn".to_string())))
+            .set_max_tokens(250)
+            .compile()
+            .unwrap();
+
+        let err = graph.invoke(DynState::new()).await.unwrap_err();
+        match err {
+            StateGraphError::TokenBudgetExceeded { budget, used, .. } => {
+                assert_eq!(budget, 250);
+                assert!(used > 250, "used={used}");
+            }
+            other => panic!("expected TokenBudgetExceeded, got {other}"),
+        }
     }
 
     #[tokio::test]
