@@ -58,6 +58,18 @@ pub type NodeId = String;
 /// - **Adjacency List Cache**: Maintains HashMap<NodeId, Vec<usize>> for O(1) edge lookups
 /// - **Lazy Evaluation**: Validation deferred until explicitly called
 /// - **Memory Efficient**: Single edge vec with indexed access
+///
+/// <div class="warning">
+///
+/// **Deprecation planned**: this engine is being merged into
+/// [`core::state_graph`](crate::core::state_graph), which carries all new
+/// reliability features (cancellation, wall-clock budgets, atomic/SQLite
+/// checkpointing, in-node interrupts). New code should build on
+/// `state_graph::StateGraph`; this type remains only for the config-driven
+/// `core::agent` path until the migration in `docs/design/engine-merge.md`
+/// completes. Planned removal: 1.0.
+///
+/// </div>
 pub struct Graph<T: State> {
     /// All nodes in the graph, indexed by name
     pub(crate) nodes: HashMap<NodeId, Node<T>>,

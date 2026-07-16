@@ -78,6 +78,16 @@ pub struct ExecutionContext {
 /// - Applying edge conditions
 /// - Maintaining service clients
 /// - Executing middleware hooks
+///
+/// <div class="warning">
+///
+/// **Deprecation planned**: this runtime is being merged into
+/// [`core::state_graph`](crate::core::state_graph)'s executor (see
+/// `docs/design/engine-merge.md`). It does not receive new reliability
+/// features (cancellation, wall-clock budgets, atomic/SQLite checkpointing,
+/// in-node interrupts). Planned removal: 1.0.
+///
+/// </div>
 pub struct AgentRuntime {
     /// Agent configuration
     config: AgentConfig,
