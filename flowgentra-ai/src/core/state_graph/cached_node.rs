@@ -65,14 +65,44 @@ impl<S: State> CachedNode<S> {
     }
 
     fn state_key(state: &S) -> Result<u64> {
-        let json = serde_json::to_string(state).map_err(|e| {
+        let value = serde_json::to_value(state).map_err(|e| {
             super::error::StateGraphError::SerializationError(format!(
                 "CachedNode: cannot hash state: {e}"
             ))
         })?;
         let mut hasher = DefaultHasher::new();
-        json.hash(&mut hasher);
+        // Canonical (key-sorted) hash: DynState serializes an inner HashMap,
+        // whose iteration order is nondeterministic — a plain string hash
+        // would randomly miss the cache for identical states.
+        hash_value_canonical(&value, &mut hasher);
         Ok(hasher.finish())
+    }
+}
+
+/// Hash a JSON value with object keys visited in sorted order, so logically
+/// equal values always hash equally regardless of map iteration order.
+fn hash_value_canonical(value: &serde_json::Value, hasher: &mut DefaultHasher) {
+    use serde_json::Value;
+    match value {
+        Value::Null => 0u8.hash(hasher),
+        Value::Bool(b) => (1u8, b).hash(hasher),
+        Value::Number(n) => (2u8, n.to_string()).hash(hasher),
+        Value::String(s) => (3u8, s).hash(hasher),
+        Value::Array(items) => {
+            (4u8, items.len()).hash(hasher);
+            for item in items {
+                hash_value_canonical(item, hasher);
+            }
+        }
+        Value::Object(map) => {
+            (5u8, map.len()).hash(hasher);
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for key in keys {
+                key.hash(hasher);
+                hash_value_canonical(&map[key], hasher);
+            }
+        }
     }
 }
 
@@ -201,6 +231,45 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(40)).await;
         cached.execute(&state, &ctx).await.unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn dyn_state_key_is_order_independent() {
+        use crate::core::state::{DynState, DynStateUpdate};
+
+        let calls = Arc::new(AtomicU64::new(0));
+        let calls2 = Arc::clone(&calls);
+        let node: Arc<dyn Node<DynState>> = Arc::new(FunctionNode::new(
+            "n",
+            move |_state: &DynState, _ctx: &Context| {
+                let calls = Arc::clone(&calls2);
+                Box::pin(async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    Ok(DynStateUpdate::new())
+                })
+            },
+        ));
+        let cached = CachedNode::new(node, 16, None);
+        let ctx = Context::new();
+
+        // Same logical content, keys inserted in opposite orders — the two
+        // underlying HashMaps may iterate differently.
+        let s1 = DynState::new();
+        for k in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            s1.set_raw(k, serde_json::json!(k));
+        }
+        let s2 = DynState::new();
+        for k in ["h", "g", "f", "e", "d", "c", "b", "a"] {
+            s2.set_raw(k, serde_json::json!(k));
+        }
+
+        cached.execute(&s1, &ctx).await.unwrap();
+        cached.execute(&s2, &ctx).await.unwrap();
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "logically identical states must share a cache key"
+        );
     }
 
     #[tokio::test]
