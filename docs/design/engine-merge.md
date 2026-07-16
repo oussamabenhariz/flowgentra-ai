@@ -82,15 +82,20 @@ behind with each release.
    `supervisor`/`orchestrator` ported (supervisor wrapped as one node reusing
    `create_supervisor_handler[_with_llm]`; children resolved from the handlers
    map, not added to the graph).
-   **Node coverage complete.** Only three things still route to the legacy
-   runtime: configs with RAG, the graph-level planner flag
-   (`graph.planner.enabled`), and supervisors nested inside supervisors (build
-   error → fallback). Next up in the sequence: step 3 (`#[deprecated]` on
-   `Graph`/`AgentRuntime`) once the RAG / graph-planner / nested-supervisor
-   gaps are closed or accepted.
-3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`
-   (rustdoc deprecation-planned notices already in place).
-4. Delete at 1.0.
+   **Coverage complete.** All three former fallback gaps are closed: RAG
+   (the runtime never did anything with it beyond the `_rag_config` injection
+   `Agent::run` already does), the graph-planner flag (a dead no-op flag), and
+   nested supervisors (now built recursively). `can_bridge` returns `true` for
+   every valid config; only a supervisor *cycle* is a build-time rejection.
+3. ✅ `#[deprecated(since=0.3.1)]` on `core::runtime::AgentRuntime` and
+   `core::graph::Graph`. The `Agent` builds the runtime only as a fallback
+   (`Agent.runtime: Option<AgentRuntime>`, built by `build_legacy_runtime`
+   only when the bridge fails or is forced). Internal legacy modules carry
+   `#![allow(deprecated)]`; external Rust users get a compiler warning.
+4. Delete at 1.0 (remove `core::graph`, `core::runtime`, the
+   `build_legacy_runtime` fallback, and the `FLOWGENTRA_FORCE_LEGACY_RUNTIME`
+   escape hatch). Also fold `state::MemoryCheckpointer` into the
+   `state_graph` Checkpointer family then.
 
 ## Risks
 
