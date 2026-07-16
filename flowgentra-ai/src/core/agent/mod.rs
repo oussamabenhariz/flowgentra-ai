@@ -422,9 +422,14 @@ impl Agent {
                         (name.clone(), c)
                     })
                     .collect();
-            state_graph_bridge::build_state_graph(&config, arc_handlers.clone(), bridge_conditions)
-                .ok()
-                .map(Arc::new)
+            state_graph_bridge::build_state_graph_with_llm(
+                &config,
+                arc_handlers.clone(),
+                bridge_conditions,
+                Some(Arc::clone(&llm)),
+            )
+            .ok()
+            .map(Arc::new)
         } else {
             None
         };

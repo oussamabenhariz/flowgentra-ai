@@ -6,12 +6,14 @@
 //! in-node interrupt, and parallel supersteps.
 //!
 //! **Scope:** plain handler nodes; fixed edges (including parallel fan-out via
-//! `to: [a, b]`); named conditional edges; and the control-flow built-in types
-//! `retry`, `timeout`, `evaluation`, and `loop` (the latter two reuse the
-//! legacy implementations for bug-for-bug parity). Nodes whose `type` is
-//! `planner`, `supervisor`, `subgraph`, `memory`, `human_in_the_loop`, or that
-//! carry per-node MCPs / RAG, are **not** handled — [`can_bridge`] returns
-//! `false` so the caller keeps using the legacy `AgentRuntime`.
+//! `to: [a, b]`); named conditional edges; the control-flow built-in types
+//! `retry`, `timeout`, `evaluation`, and `loop`; and `planner` (LLM-driven
+//! routing via an async out-edge over the planner's declared successors, with
+//! re-planning through back-edges). All reuse the legacy implementations for
+//! bug-for-bug parity. Nodes whose `type` is `supervisor`, `subgraph`,
+//! `memory`, `human_in_the_loop`, or that carry per-node MCPs / RAG / the
+//! graph-level planner, are **not** handled — [`can_bridge`] returns `false`
+//! so the caller keeps using the legacy `AgentRuntime`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -27,10 +29,9 @@ use crate::core::state_graph::{StateGraph, StateGraphBuilder};
 
 /// Built-in node types the legacy runtime special-cases and that the bridge
 /// does **not** yet handle; presence of any means the config stays on the
-/// legacy runtime. (`retry`/`timeout`/`evaluation`/`loop` are handled — see
-/// [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
+/// legacy runtime. (`retry`/`timeout`/`evaluation`/`loop`/`planner` are
+/// handled — see [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
 const UNBRIDGEABLE_TYPES: &[&str] = &[
-    "planner",
     "human_in_the_loop",
     "memory",
     "supervisor",
@@ -40,10 +41,11 @@ const UNBRIDGEABLE_TYPES: &[&str] = &[
     "agent_or_graph",
 ];
 
-/// Built-in node types the bridge handles by transforming the node's handler
-/// (retry/timeout control-flow wrappers, evaluation refinement loop, loop
-/// iteration). All reuse the legacy implementations for bug-for-bug parity.
-const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &["retry", "timeout", "evaluation", "loop"];
+/// Built-in node types the bridge handles: retry/timeout control-flow wrappers,
+/// evaluation refinement loop, loop iteration, and `planner` (LLM-driven
+/// routing via an async out-edge). All reuse the legacy implementations for
+/// bug-for-bug parity.
+const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &["retry", "timeout", "evaluation", "loop", "planner"];
 
 /// `true` if every node in the config is either a plain handler node or a
 /// bridgeable control-flow wrapper (retry/timeout), with no per-node MCP list.
@@ -111,6 +113,58 @@ impl Node<DynState> for HandlerNode {
 /// A config condition: `Fn(&DynState) -> bool` deciding whether its edge fires.
 pub type ConfigCondition =
     Arc<dyn Fn(&DynState) -> std::result::Result<bool, FlowgentraError> + Send + Sync>;
+
+/// Build an async router that asks the LLM to choose the next node from
+/// `reachable`, reusing the legacy planner handler (bug-for-bug parity for the
+/// prompt, parsing, and fallback). The chosen name is normalised to the END
+/// sentinel when the planner picks "END".
+fn make_planner_router(
+    llm: Arc<dyn crate::core::llm::LLM>,
+    prompt: Option<String>,
+    planner_name: String,
+    reachable: Vec<String>,
+) -> crate::core::state_graph::edge::AsyncRouterFn<DynState> {
+    // The legacy handler is Box<dyn Fn>; wrap in Arc so the router can call it
+    // on every re-plan.
+    let handler: Arc<crate::core::node::NodeFunction<DynState>> = Arc::new(
+        crate::core::node::planner::create_planner_handler(llm, prompt),
+    );
+    // The planner expects config-style names ("END", not the sentinel) in
+    // _reachable_nodes; map the sentinel back for the prompt, then map the
+    // decision forward to the sentinel.
+    let reachable_cfg: Vec<String> = reachable
+        .iter()
+        .map(|n| {
+            if n == END {
+                "END".to_string()
+            } else {
+                n.clone()
+            }
+        })
+        .collect();
+
+    Box::new(move |state: &DynState| {
+        let handler = handler.clone();
+        let reachable_cfg = reachable_cfg.clone();
+        let planner_name = planner_name.clone();
+        let state = state.clone();
+        Box::pin(async move {
+            state.set("_current_node", serde_json::json!(planner_name));
+            state.set("_reachable_nodes", serde_json::json!(reachable_cfg));
+            let after = handler(state).await.map_err(|e| {
+                crate::core::state_graph::StateGraphError::RouterError(e.to_string())
+            })?;
+            let chosen = after
+                .get_str("_next_node")
+                .unwrap_or_else(|| "END".to_string());
+            Ok(if chosen == "END" {
+                END.to_string()
+            } else {
+                chosen
+            })
+        })
+    })
+}
 
 /// Build the `state_graph` node for a config node, applying any built-in
 /// behavior its `type` requests. Plain nodes become a [`HandlerNode`] over the
@@ -216,14 +270,36 @@ pub fn build_state_graph(
     handlers: std::collections::HashMap<String, ArcHandler<DynState>>,
     conditions: std::collections::HashMap<String, ConfigCondition>,
 ) -> Result<StateGraph<DynState>> {
+    build_state_graph_with_llm(config, handlers, conditions, None)
+}
+
+/// Like [`build_state_graph`], but with an optional LLM used by `type: planner`
+/// nodes (LLM-driven routing). A config containing a planner node requires
+/// `llm` to be `Some`.
+pub fn build_state_graph_with_llm(
+    config: &AgentConfig,
+    handlers: std::collections::HashMap<String, ArcHandler<DynState>>,
+    conditions: std::collections::HashMap<String, ConfigCondition>,
+    llm: Option<Arc<dyn crate::core::llm::LLM>>,
+) -> Result<StateGraph<DynState>> {
     if !can_bridge(config) {
         return Err(FlowgentraError::ConfigError(
-            "This config uses built-in node types (planner/supervisor/subgraph/etc.) \
-             or per-node MCPs that are not yet supported on the state_graph engine. \
-             It will run on the legacy runtime."
+            "This config uses built-in node types (supervisor/subgraph/memory/etc.), \
+             per-node MCPs, or the graph-level planner, which are not yet supported on \
+             the state_graph engine. It will run on the legacy runtime."
                 .to_string(),
         ));
     }
+
+    // Planner out-edges route via an LLM, not fixed edges; collect the planner
+    // node names so the edge loop treats their out-edges specially.
+    let planner_nodes: HashSet<&str> = config
+        .graph
+        .nodes
+        .iter()
+        .filter(|n| n.node_type.as_deref() == Some("planner"))
+        .map(|n| n.name.as_str())
+        .collect();
 
     // Config files use the literal names "START"/"END"; the executor uses the
     // sentinel constants. Normalise config names to the executor's.
@@ -242,12 +318,15 @@ pub fn build_state_graph(
         if node.name == "START" || node.name == "END" {
             continue;
         }
-        // Standalone loop nodes are pure bookkeeping and take no user handler.
+        // Standalone loop nodes and planner nodes are pure control nodes and
+        // take no user handler (the planner's decision lives on its out-edge).
         let is_standalone_loop =
             node.node_type.as_deref() == Some("loop") && node.handler.is_empty();
-        let handler = if is_standalone_loop {
-            // Never invoked (the loop transform ignores it), but HandlerNode
-            // construction needs an ArcHandler.
+        let is_planner = node.node_type.as_deref() == Some("planner");
+        let handler = if is_standalone_loop || is_planner {
+            // Pass-through: HandlerNode construction needs an ArcHandler, but
+            // the loop transform ignores it and the planner node does nothing
+            // (its routing happens on the async out-edge).
             let noop: ArcHandler<DynState> = Arc::new(|s: DynState| Box::pin(async move { Ok(s) }));
             noop
         } else {
@@ -278,9 +357,49 @@ pub fn build_state_graph(
         })?;
     builder = builder.set_entry_point(entry);
 
+    // Planner out-edges: one async LLM router per planner node, over the union
+    // of its declared successors (the reachable set). Added once per planner.
+    for planner in &planner_nodes {
+        let reachable: Vec<String> = config
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.from == *planner)
+            .flat_map(|e| e.to.iter())
+            .map(|t| norm(t))
+            .collect();
+        if reachable.is_empty() {
+            return Err(FlowgentraError::ConfigError(format!(
+                "Planner node '{planner}' has no outgoing edges (no reachable nodes to route to)"
+            )));
+        }
+        let client = llm.clone().ok_or_else(|| {
+            FlowgentraError::ConfigError(format!(
+                "Planner node '{planner}' requires an LLM; none was provided to the bridge"
+            ))
+        })?;
+        let planner_node = config
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.name == *planner)
+            .expect("planner name came from the node list");
+        let prompt = planner_node
+            .config
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let router = make_planner_router(client, prompt, planner.to_string(), reachable);
+        builder = builder.add_async_conditional_edge(norm(planner), router);
+    }
+
     for edge in &config.graph.edges {
         if edge.from == "START" {
             continue; // entry handled above
+        }
+        // Planner out-edges are handled by the async router above.
+        if planner_nodes.contains(edge.from.as_str()) {
+            continue;
         }
         // Group edges by whether they carry a condition.
         if let Some(cond_name) = &edge.condition {
@@ -356,9 +475,9 @@ graph:
     }
 
     #[test]
-    fn cannot_bridge_planner_node() {
+    fn cannot_bridge_supervisor_node() {
         let mut cfg = plain_config();
-        cfg.graph.nodes[0].node_type = Some("planner".to_string());
+        cfg.graph.nodes[0].node_type = Some("supervisor".to_string());
         assert!(!can_bridge(&cfg));
     }
 
@@ -383,6 +502,96 @@ graph:
         cfg.graph.nodes[0].node_type = Some("evaluation".to_string());
         cfg.graph.nodes[1].node_type = Some("loop".to_string());
         assert!(can_bridge(&cfg));
+    }
+
+    const PLANNER_YAML: &str = r#"
+name: planner-agent
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ""
+state_schema:
+  log: list
+graph:
+  nodes:
+    - name: plan
+      type: planner
+    - name: step_a
+      handler: step_a
+    - name: step_b
+      handler: step_b
+  edges:
+    - from: START
+      to: plan
+    - from: plan
+      to: step_a
+    - from: plan
+      to: step_b
+    - from: plan
+      to: END
+    - from: step_a
+      to: plan
+    - from: step_b
+      to: plan
+"#;
+
+    #[test]
+    fn can_bridge_planner_node() {
+        let cfg: AgentConfig = serde_yml::from_str(PLANNER_YAML).unwrap();
+        assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn bridged_planner_routes_via_llm() {
+        use crate::core::llm::MockLLM;
+
+        let cfg: AgentConfig = serde_yml::from_str(PLANNER_YAML).unwrap();
+
+        fn logging_handler(tag: &'static str) -> ArcHandler<DynState> {
+            Arc::new(move |state: DynState| {
+                Box::pin(async move {
+                    let mut log = state
+                        .get("log")
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default();
+                    log.push(serde_json::json!(tag));
+                    state.set("log", serde_json::json!(log));
+                    Ok(state)
+                })
+            })
+        }
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert("step_a".into(), logging_handler("a"));
+        handlers.insert("step_b".into(), logging_handler("b"));
+
+        // Planner picks: step_a, then step_b, then END. The planner node's LLM
+        // is consulted once per re-plan (3 times).
+        let llm = Arc::new(MockLLM::sequence(vec!["step_a", "step_b", "END"]));
+
+        let graph =
+            build_state_graph_with_llm(&cfg, handlers, Default::default(), Some(llm.clone()))
+                .unwrap();
+        let state = DynState::new();
+        state.set("log", serde_json::json!([]));
+        let result = graph.invoke(state).await.unwrap();
+
+        assert_eq!(result.get("log"), Some(serde_json::json!(["a", "b"])));
+        assert_eq!(llm.call_count(), 3); // step_a, step_b, END
+    }
+
+    #[test]
+    fn planner_without_llm_errors() {
+        let cfg: AgentConfig = serde_yml::from_str(PLANNER_YAML).unwrap();
+        let noop: ArcHandler<DynState> = Arc::new(|s: DynState| Box::pin(async move { Ok(s) }));
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert("step_a".into(), noop.clone());
+        handlers.insert("step_b".into(), noop);
+        match build_state_graph_with_llm(&cfg, handlers, Default::default(), None) {
+            Err(e) => assert!(e.to_string().contains("requires an LLM"), "{e}"),
+            Ok(_) => panic!("expected an error when a planner node has no LLM"),
+        }
     }
 
     #[tokio::test]
