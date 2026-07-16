@@ -708,6 +708,28 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
 
                     current_node = next_node;
                 }
+                Err(StateGraphError::InterruptedByNode { payload, .. }) => {
+                    // In-node human-in-the-loop interrupt: checkpoint the state
+                    // at node entry so resume_with_state() re-runs this node
+                    // with the injected answer.
+                    let checkpoint = Checkpoint::new(
+                        thread_id.clone(),
+                        step,
+                        current_node.clone(),
+                        current_state.clone(),
+                    )
+                    .with_metadata("interrupted_at", current_node.clone());
+                    self.checkpointer.save(&checkpoint).await?;
+
+                    self.broadcaster.emit(ExecutionEvent::GraphFailed {
+                        error: format!("interrupted by node '{}'", current_node),
+                        last_node: Some(current_node.clone()),
+                    });
+                    return Err(StateGraphError::InterruptedByNode {
+                        node: current_node,
+                        payload,
+                    });
+                }
                 Err(e) => {
                     tracing::error!(node = %current_node, error = %e, "Node execution failed");
 
@@ -783,10 +805,19 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         // its successor. Re-running from the entry point would re-execute
         // completed nodes and re-trigger the same interrupt_before breakpoint
         // forever.
-        let next = self.get_next_node(&checkpoint.node_name, &state).await?;
-        if next == END {
-            return Ok(state);
-        }
+        //
+        // Exception: a checkpoint written by an in-node interrupt() marks the
+        // node that did NOT complete — resume re-runs that node itself so it
+        // can read the injected answer from state.
+        let next = if checkpoint.metadata.contains_key("interrupted_at") {
+            checkpoint.node_name.clone()
+        } else {
+            let successor = self.get_next_node(&checkpoint.node_name, &state).await?;
+            if successor == END {
+                return Ok(state);
+            }
+            successor
+        };
 
         let current_depth = INVOKE_DEPTH.try_with(|d| d.get()).unwrap_or(0);
         let limit = max_nesting_depth();
@@ -1027,6 +1058,64 @@ mod resume_tests {
                 })
             },
         ))
+    }
+
+    /// A node calling interrupt() pauses the run with its payload; resume
+    /// re-runs THAT node, which reads the injected answer from state.
+    #[tokio::test]
+    async fn in_node_interrupt_and_resume_with_answer() {
+        use crate::core::state_graph::error::interrupt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let gate: Arc<dyn Node<MessageState>> = Arc::new(FunctionNode::new(
+            "gate",
+            |state: &MessageState, _ctx: &Context| {
+                let answered = state.messages.iter().any(|m| m.content == "approved");
+                Box::pin(async move {
+                    if answered {
+                        Ok(MessageStateUpdate {
+                            messages: Some(vec![Message::assistant("done")]),
+                        })
+                    } else {
+                        Err(interrupt(serde_json::json!({"question": "approve?"})))
+                    }
+                })
+            },
+        ));
+
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("gate", gate)
+            .set_entry_point("gate")
+            .add_edge("gate", END)
+            .set_checkpointer(Arc::new(
+                super::super::file_checkpointer::FileCheckpointer::new(tmp.path()).unwrap(),
+            ))
+            .compile()
+            .unwrap();
+
+        let err = graph
+            .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+        match &err {
+            StateGraphError::InterruptedByNode { node, payload } => {
+                assert_eq!(node, "gate");
+                assert_eq!(payload["question"], "approve?");
+            }
+            other => panic!("expected InterruptedByNode, got {other}"),
+        }
+
+        // Inject the human answer and resume — the gate node re-runs and completes.
+        let update = MessageStateUpdate {
+            messages: Some(vec![Message::user("approved")]),
+        };
+        let final_state = graph.resume_with_update("t1", update).await.unwrap();
+        let contents: Vec<&str> = final_state
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(contents.contains(&"done"), "{contents:?}");
     }
 
     /// interrupt_before pauses the run; resume() must continue past the

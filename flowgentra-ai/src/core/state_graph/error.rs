@@ -61,6 +61,40 @@ pub enum StateGraphError {
 
     #[error("Graph execution was cancelled at node '{node}' (step {step}). State up to the last completed node is checkpointed under the thread id.")]
     Cancelled { node: String, step: usize },
+
+    #[error(
+        "Node '{node}' requested an interrupt (human input needed): {payload}. \
+         Inspect the payload, then call resume_with_state(thread_id, {{...}}) to \
+         inject the answer — the node re-runs with the injected state."
+    )]
+    InterruptedByNode {
+        node: String,
+        payload: serde_json::Value,
+    },
+}
+
+/// Request a human-in-the-loop interrupt from inside a node.
+///
+/// Return this as the node's error to pause the run at this node. The state
+/// at node entry is checkpointed; resuming re-runs this node, so read the
+/// injected answer from state:
+///
+/// ```ignore
+/// async fn approve(state: &MyState, _ctx: &Context) -> Result<MyStateUpdate> {
+///     match &state.approval {
+///         Some(answer) => Ok(update! { approved: answer == "yes" }),
+///         None => Err(interrupt(serde_json::json!({
+///             "question": "Approve the draft?", "options": ["yes", "no"],
+///         }))),
+///     }
+/// }
+/// ```
+pub fn interrupt(payload: serde_json::Value) -> StateGraphError {
+    StateGraphError::InterruptedByNode {
+        // Filled in by the executor with the actual node name.
+        node: String::new(),
+        payload,
+    }
 }
 
 /// Result type for state graph operations
