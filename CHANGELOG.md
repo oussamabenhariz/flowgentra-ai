@@ -18,6 +18,14 @@ All notable changes to the `flowgentra-ai` crate. Format follows
 - New `SECURITY.md` and `docs/threat-model.md`.
 
 ### Added
+- Parallel supersteps: multiple fixed edges from a node run concurrently and
+  merge by per-field reducer in sorted node order (`execute_superstep`).
+- `set_max_tokens` — total-token budget (`TokenBudgetExceeded`).
+- In-node `interrupt()` for human-in-the-loop.
+- `build_state_graph`/`can_bridge` — compile an AgentConfig onto the
+  state_graph executor (engine-merge step 2).
+- RAG/embeddings config API keys redacted on serialize + re-resolved from env
+  (checkpoint leak fixed, matching the LLM key).
 - `StateGraphBuilder::set_max_duration` — wall-clock budget
   (`StateGraphError::WallClockExceeded`).
 - `StateGraphBuilder::set_cancel_flag` — cooperative cancellation
