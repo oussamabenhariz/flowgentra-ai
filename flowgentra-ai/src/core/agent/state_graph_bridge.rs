@@ -7,14 +7,14 @@
 //!
 //! **Scope:** plain handler nodes; fixed edges (including parallel fan-out via
 //! `to: [a, b]`); named conditional edges; per-node MCPs (injected as
-//! `_node_mcps`); and the built-in types `retry`, `timeout`, `evaluation`,
-//! `loop`, `memory`, `human_in_the_loop`, `subgraph`, and `planner` (LLM-driven
-//! routing via an async out-edge over the planner's declared successors, with
-//! re-planning through back-edges). All reuse the legacy implementations for
-//! bug-for-bug parity. Only `supervisor` (and its `orchestrator` alias) and
-//! configs carrying RAG / the graph-level planner are **not** handled —
-//! [`can_bridge`] returns `false` so the caller keeps using the legacy
-//! `AgentRuntime`.
+//! `_node_mcps`); and every built-in node type — `retry`, `timeout`,
+//! `evaluation`, `loop`, `memory`, `human_in_the_loop`, `subgraph`, `planner`
+//! (LLM-driven routing via an async out-edge), and `supervisor`/`orchestrator`
+//! (child orchestration wrapped as one node). All reuse the legacy
+//! implementations for bug-for-bug parity. Configs carrying RAG or the
+//! graph-level planner flag, and supervisors nested inside supervisors, are
+//! **not** handled — those produce `can_bridge() == false` or a build error so
+//! the caller keeps using the legacy `AgentRuntime`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -28,14 +28,15 @@ use crate::core::state_graph::error::StateGraphError;
 use crate::core::state_graph::node::{Node, RouterFn};
 use crate::core::state_graph::{StateGraph, StateGraphBuilder};
 
-/// Node types that stay on the legacy runtime — only the supervisor (and its
-/// `orchestrator` alias), whose concurrency sub-scheduler is not yet ported.
-const UNBRIDGEABLE_TYPES: &[&str] = &["supervisor", "orchestrator"];
+/// Node types that stay on the legacy runtime. Empty: every built-in type is
+/// handled (nested supervisors error at build time and fall back to legacy).
+const UNBRIDGEABLE_TYPES: &[&str] = &[];
 
 /// Built-in node types the bridge handles: retry/timeout control-flow wrappers,
 /// evaluation refinement loop, loop iteration, `planner` (LLM-driven routing),
 /// `memory` (built-in memory ops), `human_in_the_loop` (approval bookkeeping),
-/// and `subgraph` (nested agent from a YAML path). All reuse the legacy
+/// `subgraph` (nested agent from a YAML path), and `supervisor`/`orchestrator`
+/// (child orchestration wrapped as one node). All reuse the legacy
 /// implementations for bug-for-bug parity.
 const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &[
     "retry",
@@ -48,7 +49,36 @@ const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &[
     "subgraph",
     "agent",
     "agent_or_graph",
+    "supervisor",
+    "orchestrator",
 ];
+
+/// `true` if `node_type` is a supervisor/orchestrator.
+fn is_supervisor_type(node_type: Option<&str>) -> bool {
+    matches!(node_type, Some("supervisor") | Some("orchestrator"))
+}
+
+/// Collect the names of all nodes that are children of any supervisor node.
+/// These are executed by their supervisor, not added to the graph directly.
+fn supervisor_child_names(config: &AgentConfig) -> HashSet<String> {
+    config
+        .graph
+        .nodes
+        .iter()
+        .filter(|n| is_supervisor_type(n.node_type.as_deref()))
+        .flat_map(|n| {
+            n.config
+                .get("children")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect()
+}
 
 /// `true` if every node in the config is either a plain handler node or a
 /// bridgeable built-in type. Per-node MCPs are supported (injected via
@@ -181,6 +211,82 @@ fn make_planner_router(
             })
         })
     })
+}
+
+/// Build a supervisor node's handler (Option B: wrap the legacy supervisor as
+/// one node). Resolves child handlers from the config handlers map — plus
+/// inline subgraph handlers for subgraph children — and calls the legacy
+/// `create_supervisor_handler[_with_llm]`. Nested supervisors (a child that is
+/// itself a supervisor node) are not resolvable here and produce an error, so
+/// the caller falls back to the legacy runtime.
+fn build_supervisor_handler(
+    config: &AgentConfig,
+    node: &crate::core::node::NodeConfig,
+    handlers: &std::collections::HashMap<String, ArcHandler<DynState>>,
+    sup_children: &HashSet<String>,
+    llm: &Option<Arc<dyn crate::core::llm::LLM>>,
+) -> Result<ArcHandler<DynState>> {
+    use crate::core::node::orchestrator_node::{OrchestrationStrategy, SupervisorNodeConfig};
+
+    let cfg = SupervisorNodeConfig::from_node_config(node)?;
+
+    let mut child_arcs: Vec<(String, ArcHandler<DynState>)> = Vec::new();
+    for child_name in &cfg.children {
+        // A supervisor whose child is another supervisor needs the legacy
+        // multi-pass build; bail so the agent uses the legacy runtime.
+        let child_node = config.graph.nodes.iter().find(|n| &n.name == child_name);
+        if child_node
+            .map(|n| is_supervisor_type(n.node_type.as_deref()))
+            .unwrap_or(false)
+        {
+            return Err(FlowgentraError::ConfigError(format!(
+                "Supervisor '{}' has a supervisor child '{}'; nested supervisors are not yet \
+                 supported on the state_graph engine (falls back to the legacy runtime).",
+                node.name, child_name
+            )));
+        }
+        // Subgraph child: build its handler inline.
+        if let Some(cn) = child_node {
+            if matches!(
+                cn.node_type.as_deref(),
+                Some("subgraph") | Some("agent") | Some("agent_or_graph")
+            ) {
+                let sub_cfg =
+                    crate::core::node::agent_or_graph_node::SubgraphNodeConfig::from_node_config(
+                        cn,
+                    )?;
+                let h = super::create_subgraph_handler(sub_cfg);
+                child_arcs.push((child_name.clone(), Arc::from(h)));
+                continue;
+            }
+        }
+        // Plain handler child.
+        let arc = handlers.get(child_name).cloned().ok_or_else(|| {
+            FlowgentraError::ConfigError(format!(
+                "Supervisor '{}' child '{}' has no registered handler",
+                node.name, child_name
+            ))
+        })?;
+        child_arcs.push((child_name.clone(), arc));
+    }
+
+    // Per-child MCP map from the child node configs.
+    let child_mcps: std::collections::HashMap<String, Vec<String>> = cfg
+        .children
+        .iter()
+        .filter_map(|name| {
+            let cn = config.graph.nodes.iter().find(|n| &n.name == name)?;
+            (!cn.mcps.is_empty()).then(|| (name.clone(), cn.mcps.clone()))
+        })
+        .collect();
+    let _ = sup_children; // reserved for future validation
+
+    let handler = if matches!(cfg.strategy, OrchestrationStrategy::Dynamic) {
+        super::create_supervisor_handler_with_llm(cfg, child_arcs, llm.clone(), child_mcps)
+    } else {
+        super::create_supervisor_handler(cfg, child_arcs, child_mcps)
+    };
+    Ok(Arc::from(handler))
 }
 
 /// Build the `state_graph` node for a config node, applying any built-in
@@ -350,6 +456,10 @@ pub fn build_state_graph_with_llm(
         .map(|n| n.name.as_str())
         .collect();
 
+    // Supervisor children are executed by their supervisor, not added to the
+    // graph, and their edges are ignored.
+    let sup_children = supervisor_child_names(config);
+
     // Config files use the literal names "START"/"END"; the executor uses the
     // sentinel constants. Normalise config names to the executor's.
     let norm = |name: &str| -> String {
@@ -367,9 +477,13 @@ pub fn build_state_graph_with_llm(
         if node.name == "START" || node.name == "END" {
             continue;
         }
+        // Supervisor children are invoked by their supervisor, not the graph.
+        if sup_children.contains(&node.name) {
+            continue;
+        }
         // Control/built-in nodes that take no user handler (planner routes on
-        // its out-edge; memory / HITL / subgraph / standalone loop are fully
-        // implemented by the library).
+        // its out-edge; memory / HITL / subgraph / supervisor / standalone loop
+        // are fully implemented by the library).
         let no_handler_type = matches!(
             node.node_type.as_deref(),
             Some("planner")
@@ -378,10 +492,12 @@ pub fn build_state_graph_with_llm(
                 | Some("subgraph")
                 | Some("agent")
                 | Some("agent_or_graph")
-        );
+        ) || is_supervisor_type(node.node_type.as_deref());
         let is_standalone_loop =
             node.node_type.as_deref() == Some("loop") && node.handler.is_empty();
-        let handler = if is_standalone_loop || no_handler_type {
+        let handler = if is_supervisor_type(node.node_type.as_deref()) {
+            build_supervisor_handler(config, node, &handlers, &sup_children, &llm)?
+        } else if is_standalone_loop || no_handler_type {
             // Pass-through: HandlerNode construction needs an ArcHandler, but
             // the loop transform ignores it and the planner node does nothing
             // (its routing happens on the async out-edge).
@@ -459,6 +575,10 @@ pub fn build_state_graph_with_llm(
         if planner_nodes.contains(edge.from.as_str()) {
             continue;
         }
+        // Edges touching supervisor children are internal to the supervisor.
+        if sup_children.contains(&edge.from) || edge.to.iter().any(|t| sup_children.contains(t)) {
+            continue;
+        }
         // Group edges by whether they carry a condition.
         if let Some(cond_name) = &edge.condition {
             let cond = conditions.get(cond_name).cloned().ok_or_else(|| {
@@ -530,13 +650,6 @@ graph:
     #[test]
     fn can_bridge_plain_config() {
         assert!(can_bridge(&plain_config()));
-    }
-
-    #[test]
-    fn cannot_bridge_supervisor_node() {
-        let mut cfg = plain_config();
-        cfg.graph.nodes[0].node_type = Some("supervisor".to_string());
-        assert!(!can_bridge(&cfg));
     }
 
     #[test]
@@ -621,6 +734,111 @@ graph:
         cfg.graph.nodes[0].node_type = Some("human_in_the_loop".to_string());
         cfg.graph.nodes[1].node_type = Some("subgraph".to_string());
         assert!(can_bridge(&cfg));
+    }
+
+    const SUPERVISOR_YAML: &str = r#"
+name: sup-agent
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ""
+state_schema:
+  trail: list
+graph:
+  nodes:
+    - name: boss
+      type: supervisor
+      config:
+        strategy: sequential
+        children: [c1, c2]
+    - name: c1
+      handler: c1
+    - name: c2
+      handler: c2
+  edges:
+    - from: START
+      to: boss
+    - from: boss
+      to: END
+"#;
+
+    #[test]
+    fn can_bridge_supervisor_node() {
+        let cfg: AgentConfig = serde_yml::from_str(SUPERVISOR_YAML).unwrap();
+        assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn bridged_supervisor_runs_children_sequentially() {
+        let cfg: AgentConfig = serde_yml::from_str(SUPERVISOR_YAML).unwrap();
+
+        fn child(tag: &'static str) -> ArcHandler<DynState> {
+            Arc::new(move |state: DynState| {
+                Box::pin(async move {
+                    let mut trail = state
+                        .get("trail")
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default();
+                    trail.push(serde_json::json!(tag));
+                    state.set("trail", serde_json::json!(trail));
+                    Ok(state)
+                })
+            })
+        }
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert("c1".into(), child("c1"));
+        handlers.insert("c2".into(), child("c2"));
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        let state = DynState::new();
+        state.set("trail", serde_json::json!([]));
+        let result = graph.invoke(state).await.unwrap();
+        // Supervisor ran both children in declaration order as a single node.
+        assert_eq!(result.get("trail"), Some(serde_json::json!(["c1", "c2"])));
+    }
+
+    #[test]
+    fn nested_supervisor_falls_back() {
+        // A supervisor whose child is another supervisor must error at build
+        // (so the agent uses the legacy runtime).
+        let yaml = r#"
+name: nested
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ""
+state_schema:
+  x: int
+graph:
+  nodes:
+    - name: outer
+      type: supervisor
+      config:
+        strategy: sequential
+        children: [inner]
+    - name: inner
+      type: supervisor
+      config:
+        strategy: sequential
+        children: [leaf]
+    - name: leaf
+      handler: leaf
+  edges:
+    - from: START
+      to: outer
+    - from: outer
+      to: END
+"#;
+        let cfg: AgentConfig = serde_yml::from_str(yaml).unwrap();
+        let noop: ArcHandler<DynState> = Arc::new(|s: DynState| Box::pin(async move { Ok(s) }));
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert("leaf".into(), noop);
+        match build_state_graph(&cfg, handlers, Default::default()) {
+            Err(e) => assert!(e.to_string().contains("nested supervisors"), "{e}"),
+            Ok(_) => panic!("expected nested-supervisor build error"),
+        }
     }
 
     #[tokio::test]
