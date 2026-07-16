@@ -70,14 +70,16 @@ behind with each release.
    ✅ `Agent::run*` now selects the bridge when `can_bridge` and falls back to
    the legacy runtime otherwise. Escape hatch:
    `FLOWGENTRA_FORCE_LEGACY_RUNTIME=1`.
-   ✅ Control-flow types **retry** and **timeout** ported
-   (`state_graph::{RetryNode, TimeoutNode}`, bug-for-bug parity), handled by
-   the bridge.
+   ✅ Control-flow types **retry**, **timeout**, **evaluation**, **loop**
+   ported and handled by the bridge (retry/timeout via
+   `state_graph::{RetryNode, TimeoutNode}`; evaluation/loop reuse the legacy
+   `into_wrapping_node_fn` / `create_loop_standalone_handler` /
+   `wrap_handler_with_loop` for bug-for-bug parity).
    ✅ `MockLLM` (`core::llm::mock`) provides offline scripted responses — the
    fixture foundation for porting LLM-driven types.
-   **Remaining:** port `evaluation` and `loop` (control-flow, testable with
-   MockLLM now), then `planner` → router-that-calls-LLM, `memory`, per-node
-   `mcp` → Context injection, `subgraph`, and `supervisor` (biggest).
+   **Remaining:** `planner` → router-that-calls-LLM (MockLLM-testable),
+   `memory`, per-node `mcp` → Context injection, `subgraph`, and `supervisor`
+   (biggest).
 3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`
    (rustdoc deprecation-planned notices already in place).
 4. Delete at 1.0.
