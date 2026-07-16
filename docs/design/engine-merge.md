@@ -67,10 +67,17 @@ behind with each release.
    returns false for planner/supervisor/subgraph/eval/retry/timeout/loop/
    memory/human-in-the-loop node types, per-node MCPs, and RAG/planner graph
    features. Tested (bridge runs handlers in order + conditional routing).
-   **Remaining:** wire `Agent::run*` to select the bridge when `can_bridge`
-   and fall back to the legacy runtime otherwise; then port the unbridgeable
-   node types (needs recorded planner/supervisor/MCP fixtures — the risk
-   flagged below).
+   ✅ `Agent::run*` now selects the bridge when `can_bridge` and falls back to
+   the legacy runtime otherwise. Escape hatch:
+   `FLOWGENTRA_FORCE_LEGACY_RUNTIME=1`.
+   ✅ Control-flow types **retry** and **timeout** ported
+   (`state_graph::{RetryNode, TimeoutNode}`, bug-for-bug parity), handled by
+   the bridge.
+   ✅ `MockLLM` (`core::llm::mock`) provides offline scripted responses — the
+   fixture foundation for porting LLM-driven types.
+   **Remaining:** port `evaluation` and `loop` (control-flow, testable with
+   MockLLM now), then `planner` → router-that-calls-LLM, `memory`, per-node
+   `mcp` → Context injection, `subgraph`, and `supervisor` (biggest).
 3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`
    (rustdoc deprecation-planned notices already in place).
 4. Delete at 1.0.
