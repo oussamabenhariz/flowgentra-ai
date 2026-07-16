@@ -516,15 +516,15 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
 
     /// Core execution loop.
     ///
-    /// `start_override`: `Some((node, step))` continues execution at `node`
-    /// with checkpoint numbering starting at `step`, and bypasses that node's
-    /// `interrupt_before` breakpoint once (otherwise resuming from a
+    /// `start_override`: `Some((nodes, step))` continues execution at `nodes`
+    /// with checkpoint numbering starting at `step`, and bypasses those nodes'
+    /// `interrupt_before` breakpoints once (otherwise resuming from a
     /// breakpoint would immediately re-trigger it). Used by `resume()`.
     async fn invoke_inner_at(
         &self,
         thread_id: String,
         initial_state: S,
-        start_override: Option<(String, usize)>,
+        start_override: Option<(Vec<String>, usize)>,
     ) -> Result<S> {
         // Serialize concurrent invocations on the same thread_id to prevent
         // checkpoint read-modify-write races when two callers share a thread.
@@ -555,19 +555,21 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         };
 
         let mut current_state = state;
-        let mut current_node = start_override
+        let mut frontier: Vec<String> = start_override
             .as_ref()
-            .map(|(node, _)| node.clone())
-            .unwrap_or_else(|| self.entry_point.clone());
+            .map(|(nodes, _)| nodes.clone())
+            .unwrap_or_else(|| vec![self.entry_point.clone()]);
         let mut step = start_override.as_ref().map(|(_, s)| *s).unwrap_or(0);
         let mut skip_interrupt_once = start_override.is_some();
 
         loop {
+            let frontier_label = frontier.join("+");
+
             if step >= self.max_steps {
                 let err = StateGraphError::Timeout("Max steps exceeded".to_string());
                 self.broadcaster.emit(ExecutionEvent::GraphFailed {
                     error: err.to_string(),
-                    last_node: Some(current_node.clone()),
+                    last_node: Some(frontier_label.clone()),
                 });
                 return Err(err);
             }
@@ -578,11 +580,11 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                     let err = StateGraphError::WallClockExceeded {
                         budget_secs: budget.as_secs_f64(),
                         elapsed_secs: elapsed.as_secs_f64(),
-                        node: current_node.clone(),
+                        node: frontier_label.clone(),
                     };
                     self.broadcaster.emit(ExecutionEvent::GraphFailed {
                         error: err.to_string(),
-                        last_node: Some(current_node.clone()),
+                        last_node: Some(frontier_label.clone()),
                     });
                     return Err(err);
                 }
@@ -591,16 +593,51 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             if let Some(ref flag) = self.cancel_flag {
                 if flag.load(std::sync::atomic::Ordering::Relaxed) {
                     let err = StateGraphError::Cancelled {
-                        node: current_node.clone(),
+                        node: frontier_label.clone(),
                         step,
                     };
                     self.broadcaster.emit(ExecutionEvent::GraphFailed {
                         error: err.to_string(),
-                        last_node: Some(current_node.clone()),
+                        last_node: Some(frontier_label),
                     });
                     return Err(err);
                 }
             }
+
+            // ── Parallel superstep: >1 node in the frontier ──────────────────
+            if frontier.len() > 1 {
+                if !skip_interrupt_once {
+                    if let Some(node) = frontier
+                        .iter()
+                        .find(|n| self.interrupt_before.contains(*n))
+                    {
+                        return Err(StateGraphError::InterruptedAtBreakpoint {
+                            node: node.clone(),
+                        });
+                    }
+                }
+                skip_interrupt_once = false;
+
+                let (new_state, next) = self
+                    .execute_superstep(&thread_id, step, &frontier, current_state)
+                    .await?;
+                current_state = new_state;
+                step += 1;
+
+                if next.is_empty() {
+                    self.middleware.execute_on_complete(&current_state).await;
+                    let total_duration_ms = graph_start.elapsed().as_millis() as u64;
+                    self.broadcaster.emit(ExecutionEvent::GraphCompleted {
+                        total_steps: step,
+                        total_duration_ms,
+                    });
+                    return Ok(current_state);
+                }
+                frontier = next;
+                continue;
+            }
+
+            let current_node = frontier[0].clone();
 
             if self.interrupt_before.contains(&current_node) && !skip_interrupt_once {
                 return Err(StateGraphError::InterruptedAtBreakpoint { node: current_node });
@@ -689,14 +726,15 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                         });
                     }
 
-                    // Determine next node
-                    let next_node = self.get_next_node(&current_node, &current_state).await?;
+                    // Determine successors (may fan out into a parallel superstep)
+                    let next_nodes = self.get_next_nodes(&current_node, &current_state).await?;
+                    for target in &next_nodes {
+                        self.broadcaster.edge_traversed(&current_node, target, None);
+                    }
 
-                    // Emit EdgeTraversed event
-                    self.broadcaster
-                        .edge_traversed(&current_node, &next_node, None);
-
-                    if next_node == END {
+                    let non_end: Vec<String> =
+                        next_nodes.into_iter().filter(|n| n != END).collect();
+                    if non_end.is_empty() {
                         self.middleware.execute_on_complete(&current_state).await;
                         let total_duration_ms = graph_start.elapsed().as_millis() as u64;
                         self.broadcaster.emit(ExecutionEvent::GraphCompleted {
@@ -706,7 +744,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                         return Ok(current_state);
                     }
 
-                    current_node = next_node;
+                    frontier = non_end;
                 }
                 Err(StateGraphError::InterruptedByNode { payload, .. }) => {
                     // In-node human-in-the-loop interrupt: checkpoint the state
@@ -772,6 +810,152 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         Ok(END.to_string())
     }
 
+    /// Get all successors of `current_node`.
+    ///
+    /// Conditional edges take precedence: if any exists for this node, only
+    /// the first one's routing decision is used (a router is the explicit
+    /// fan-in of the decision). Otherwise every fixed edge contributes a
+    /// target — more than one means a parallel superstep.
+    async fn get_next_nodes(&self, current_node: &str, state: &S) -> Result<Vec<String>> {
+        // Router first.
+        for edge in &self.edges {
+            if edge.from() == current_node && !matches!(edge, Edge::Fixed(_)) {
+                return Ok(vec![edge.next_node(state).await?]);
+            }
+        }
+        let mut targets: Vec<String> = Vec::new();
+        for edge in &self.edges {
+            if edge.from() == current_node {
+                let t = edge.next_node(state).await?;
+                if !targets.contains(&t) {
+                    targets.push(t);
+                }
+            }
+        }
+        if targets.is_empty() {
+            targets.push(END.to_string());
+        }
+        Ok(targets)
+    }
+
+    /// Execute one parallel superstep: run every node in `wave` concurrently
+    /// against the same pre-step state, then merge their updates with
+    /// `apply_update` in sorted node order (deterministic; per-field reducers
+    /// decide accumulate-vs-overwrite). Returns the merged state and the
+    /// deduplicated union of successors (excluding END).
+    async fn execute_superstep(
+        &self,
+        thread_id: &str,
+        step: usize,
+        wave: &[String],
+        mut state: S,
+    ) -> Result<(S, Vec<String>)> {
+        let mut wave: Vec<String> = wave.to_vec();
+        wave.sort();
+
+        let mut join_set: tokio::task::JoinSet<(usize, Result<S::Update>)> =
+            tokio::task::JoinSet::new();
+
+        for (idx, name) in wave.iter().enumerate() {
+            let node = Arc::clone(
+                self.nodes
+                    .get(name)
+                    .ok_or_else(|| StateGraphError::NodeNotFound(name.clone()))?,
+            );
+            let mut node_ctx = self.context.clone();
+            node_ctx.set_node_name(name);
+            node_ctx.set_event_broadcaster(Arc::clone(&self.broadcaster));
+            let branch_state = state.clone();
+            self.broadcaster.node_started(name, step);
+            join_set
+                .spawn(async move { (idx, node.execute(&branch_state, &node_ctx).await) });
+        }
+
+        // Collect results indexed by wave position so the merge order is the
+        // sorted node order, independent of completion order.
+        let mut results: Vec<Option<Result<S::Update>>> = (0..wave.len()).map(|_| None).collect();
+        while let Some(joined) = join_set.join_next().await {
+            let (idx, result) = joined.map_err(|e| StateGraphError::ExecutionError {
+                node: wave[0].clone(),
+                reason: format!("Superstep task join error: {}", e),
+            })?;
+            results[idx] = Some(result);
+        }
+
+        let step_start = Instant::now();
+        for (idx, result) in results.into_iter().enumerate() {
+            let name = &wave[idx];
+            match result {
+                Some(Ok(update)) => {
+                    state.apply_update(update);
+                    self.broadcaster.node_completed(
+                        name,
+                        step,
+                        step_start.elapsed().as_millis() as u64,
+                        None,
+                    );
+                }
+                Some(Err(StateGraphError::InterruptedByNode { payload, .. })) => {
+                    // Checkpoint the pre-merge state so resume re-runs this node.
+                    let checkpoint = Checkpoint::new(
+                        thread_id.to_string(),
+                        step,
+                        name.clone(),
+                        state.clone(),
+                    )
+                    .with_metadata("interrupted_at", name.clone());
+                    self.checkpointer.save(&checkpoint).await?;
+                    return Err(StateGraphError::InterruptedByNode {
+                        node: name.clone(),
+                        payload,
+                    });
+                }
+                Some(Err(e)) => {
+                    self.broadcaster.node_failed(name, step, e.to_string());
+                    self.broadcaster.emit(ExecutionEvent::GraphFailed {
+                        error: e.to_string(),
+                        last_node: Some(name.clone()),
+                    });
+                    return Err(e);
+                }
+                None => {
+                    return Err(StateGraphError::ExecutionError {
+                        node: name.clone(),
+                        reason: "Superstep branch produced no result".to_string(),
+                    })
+                }
+            }
+        }
+
+        // One checkpoint per superstep; the wave is recorded so resume can
+        // recompute the union of successors.
+        let wave_json = serde_json::to_string(&wave).unwrap_or_else(|_| "[]".to_string());
+        let checkpoint = Checkpoint::new(
+            thread_id.to_string(),
+            step,
+            wave.join("+"),
+            state.clone(),
+        )
+        .with_metadata("wave", wave_json);
+        self.checkpointer.save(&checkpoint).await?;
+
+        if let Some(node) = wave.iter().find(|n| self.interrupt_after.contains(*n)) {
+            return Err(StateGraphError::InterruptedAtBreakpoint { node: node.clone() });
+        }
+
+        // Union of successors across the wave, deduplicated, END filtered.
+        let mut next: Vec<String> = Vec::new();
+        for name in &wave {
+            for target in self.get_next_nodes(name, &state).await? {
+                self.broadcaster.edge_traversed(name, &target, None);
+                if target != END && !next.contains(&target) {
+                    next.push(target);
+                }
+            }
+        }
+        Ok((state, next))
+    }
+
     /// Resume execution from a checkpoint.
     ///
     /// Continues at the node *after* the last completed (checkpointed) node —
@@ -801,22 +985,34 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             state.apply_update(u);
         }
 
-        // The checkpoint records the last node that completed; continue with
-        // its successor. Re-running from the entry point would re-execute
-        // completed nodes and re-trigger the same interrupt_before breakpoint
-        // forever.
+        // The checkpoint records the last node (or wave) that completed;
+        // continue with its successors. Re-running from the entry point would
+        // re-execute completed nodes and re-trigger the same interrupt_before
+        // breakpoint forever.
         //
         // Exception: a checkpoint written by an in-node interrupt() marks the
         // node that did NOT complete — resume re-runs that node itself so it
         // can read the injected answer from state.
-        let next = if checkpoint.metadata.contains_key("interrupted_at") {
-            checkpoint.node_name.clone()
+        let next: Vec<String> = if checkpoint.metadata.contains_key("interrupted_at") {
+            vec![checkpoint.node_name.clone()]
         } else {
-            let successor = self.get_next_node(&checkpoint.node_name, &state).await?;
-            if successor == END {
+            let completed: Vec<String> = match checkpoint.metadata.get("wave") {
+                Some(wave_json) => serde_json::from_str(wave_json)
+                    .unwrap_or_else(|_| vec![checkpoint.node_name.clone()]),
+                None => vec![checkpoint.node_name.clone()],
+            };
+            let mut successors: Vec<String> = Vec::new();
+            for name in &completed {
+                for target in self.get_next_nodes(name, &state).await? {
+                    if target != END && !successors.contains(&target) {
+                        successors.push(target);
+                    }
+                }
+            }
+            if successors.is_empty() {
                 return Ok(state);
             }
-            successor
+            successors
         };
 
         let current_depth = INVOKE_DEPTH.try_with(|d| d.get()).unwrap_or(0);
@@ -965,6 +1161,144 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             "entry_point": self.entry_point,
             "max_steps": self.max_steps,
         })
+    }
+}
+
+#[cfg(test)]
+mod superstep_tests {
+    use super::*;
+    use crate::core::llm::Message;
+    use crate::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
+    use crate::core::state_graph::node::FunctionNode;
+
+    fn tagger(name: &'static str, delay_ms: u64) -> Arc<dyn Node<MessageState>> {
+        Arc::new(FunctionNode::new(
+            name,
+            move |_state: &MessageState, _ctx: &Context| {
+                Box::pin(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    Ok(MessageStateUpdate {
+                        messages: Some(vec![Message::assistant(name)]),
+                    })
+                })
+            },
+        ))
+    }
+
+    fn fan_graph(delay_ms: u64) -> StateGraph<MessageState> {
+        // start → {b1, b2, b3} → join → END
+        StateGraph::<MessageState>::builder()
+            .add_node("start", tagger("start", 0))
+            .add_node("b1", tagger("b1", delay_ms))
+            .add_node("b2", tagger("b2", delay_ms))
+            .add_node("b3", tagger("b3", delay_ms))
+            .add_node("join", tagger("join", 0))
+            .set_entry_point("start")
+            .add_edge("start", "b1")
+            .add_edge("start", "b2")
+            .add_edge("start", "b3")
+            .add_edge("b1", "join")
+            .add_edge("b2", "join")
+            .add_edge("b3", "join")
+            .add_edge("join", END)
+            .compile()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fan_out_runs_all_branches_and_joins_once() {
+        let graph = fan_graph(0);
+        let result = graph
+            .invoke(MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap();
+        let contents: Vec<&str> = result.messages.iter().map(|m| m.content.as_str()).collect();
+        // All three branches ran (Append reducer accumulated all), sorted merge order.
+        assert_eq!(contents, vec!["go", "start", "b1", "b2", "b3", "join"], "{contents:?}");
+    }
+
+    #[tokio::test]
+    async fn branches_actually_run_concurrently() {
+        let graph = fan_graph(60);
+        let t0 = Instant::now();
+        graph
+            .invoke(MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap();
+        let elapsed = t0.elapsed();
+        // 3 × 60ms sequential would be ≥180ms; concurrent should be well under.
+        assert!(
+            elapsed < std::time::Duration::from_millis(150),
+            "superstep serialized: {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_failure_fails_the_superstep() {
+        let boom: Arc<dyn Node<MessageState>> = Arc::new(FunctionNode::new(
+            "boom",
+            |_s: &MessageState, _c: &Context| {
+                Box::pin(async {
+                    Err(StateGraphError::ExecutionError {
+                        node: "boom".into(),
+                        reason: "branch exploded".into(),
+                    })
+                })
+            },
+        ));
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("start", tagger("start", 0))
+            .add_node("ok", tagger("ok", 0))
+            .add_node("boom", boom)
+            .set_entry_point("start")
+            .add_edge("start", "ok")
+            .add_edge("start", "boom")
+            .add_edge("ok", END)
+            .add_edge("boom", END)
+            .compile()
+            .unwrap();
+        let err = graph
+            .invoke(MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("branch exploded"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn resume_after_superstep_continues_at_join() {
+        let tmp = tempfile::tempdir().unwrap();
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("start", tagger("start", 0))
+            .add_node("b1", tagger("b1", 0))
+            .add_node("b2", tagger("b2", 0))
+            .add_node("join", tagger("join", 0))
+            .set_entry_point("start")
+            .add_edge("start", "b1")
+            .add_edge("start", "b2")
+            .add_edge("b1", "join")
+            .add_edge("b2", "join")
+            .add_edge("join", END)
+            .interrupt_before("join")
+            .set_checkpointer(Arc::new(
+                super::super::file_checkpointer::FileCheckpointer::new(tmp.path()).unwrap(),
+            ))
+            .compile()
+            .unwrap();
+
+        let err = graph
+            .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StateGraphError::InterruptedAtBreakpoint { .. }));
+
+        let final_state = graph.resume("t1").await.unwrap();
+        let contents: Vec<&str> = final_state
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        // Branches ran exactly once; join ran after resume.
+        assert_eq!(contents, vec!["go", "start", "b1", "b2", "join"], "{contents:?}");
     }
 }
 
