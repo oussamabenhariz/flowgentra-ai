@@ -623,9 +623,18 @@ impl DynState {
     }
 
     /// Get RAG config stored in `_rag_config`.
+    ///
+    /// API keys are redacted when the config is serialized into state (so they
+    /// never land in checkpoints); this re-resolves them from the provider's
+    /// environment variable before returning.
     pub fn get_rag_config(&self) -> Result<crate::core::config::RAGGraphConfig> {
-        self.get_typed("_rag_config")
-            .map_err(|_| FlowgentraError::ConfigError("RAG config not found in state".to_string()))
+        let mut config: crate::core::config::RAGGraphConfig =
+            self.get_typed("_rag_config").map_err(|_| {
+                FlowgentraError::ConfigError("RAG config not found in state".to_string())
+            })?;
+        config.embeddings.resolve_api_key_from_env();
+        config.vector_store.resolve_api_key_from_env();
+        Ok(config)
     }
 
     /// Get embeddings provider from RAG config.

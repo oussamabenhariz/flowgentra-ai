@@ -529,7 +529,11 @@ pub struct VectorStoreConfig {
     pub collection: String,
 
     /// API key or bearer token.  Supports `${ENV_VAR}` substitution.
-    #[serde(default)]
+    ///
+    /// Redacted on serialization (see [`redact_optional_key`]) so it is never
+    /// written into checkpointed state; re-resolve it from the environment via
+    /// [`VectorStoreConfig::resolve_api_key_from_env`] before use.
+    #[serde(default, serialize_with = "redact_optional_key")]
     pub api_key: Option<String>,
 
     /// Logical namespace within an index (Pinecone namespaces, etc.).
@@ -588,12 +592,86 @@ pub struct EmbeddingsConfig {
     pub model: Option<String>,
 
     /// API key (supports ${ENV_VAR} substitution)
-    #[serde(default)]
+    ///
+    /// Redacted on serialization so it is never written into checkpointed
+    /// state; re-resolve it from the environment via
+    /// [`EmbeddingsConfig::resolve_api_key_from_env`] before use.
+    #[serde(default, serialize_with = "redact_optional_key")]
     pub api_key: Option<String>,
 
     /// Embedding dimension override
     #[serde(default)]
     pub dimension: Option<usize>,
+}
+
+/// Redact an optional secret on serialization: `Some(_)` → `Some("***REDACTED***")`,
+/// `None` → `None`. Keeps secrets out of serialized config / checkpointed state.
+fn redact_optional_key<S: serde::Serializer>(
+    value: &Option<String>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match value {
+        Some(_) => serializer.serialize_some(crate::core::llm::REDACTED),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Conventional environment variable for a RAG provider's API key.
+fn provider_env_var(provider: &str) -> Option<&'static str> {
+    match provider.to_lowercase().as_str() {
+        "openai" => Some("OPENAI_API_KEY"),
+        "mistral" => Some("MISTRAL_API_KEY"),
+        "cohere" => Some("COHERE_API_KEY"),
+        "huggingface" | "hf" => Some("HF_API_TOKEN"),
+        "voyage" | "voyageai" => Some("VOYAGE_API_KEY"),
+        _ => None,
+    }
+}
+
+impl EmbeddingsConfig {
+    /// If the API key is missing or redacted (e.g. after a serialize/load
+    /// round-trip through checkpointed state), re-resolve it from the
+    /// provider's conventional environment variable.
+    pub fn resolve_api_key_from_env(&mut self) {
+        let needs = self
+            .api_key
+            .as_deref()
+            .map(|k| k.is_empty() || k == crate::core::llm::REDACTED)
+            .unwrap_or(true);
+        if needs {
+            if let Some(var) = provider_env_var(&self.provider) {
+                if let Ok(val) = std::env::var(var) {
+                    self.api_key = Some(val);
+                }
+            }
+        }
+    }
+}
+
+impl VectorStoreConfig {
+    /// Re-resolve a missing/redacted API key from the environment.
+    /// The vector-store provider name comes from `store_type`.
+    pub fn resolve_api_key_from_env(&mut self) {
+        let needs = self
+            .api_key
+            .as_deref()
+            .map(|k| k.is_empty() || k == crate::core::llm::REDACTED)
+            .unwrap_or(true);
+        if needs {
+            let provider = format!("{:?}", self.store_type).to_lowercase();
+            let var = match provider.as_str() {
+                p if p.contains("pinecone") => Some("PINECONE_API_KEY"),
+                p if p.contains("weaviate") => Some("WEAVIATE_API_KEY"),
+                p if p.contains("qdrant") => Some("QDRANT_API_KEY"),
+                _ => None,
+            };
+            if let Some(var) = var {
+                if let Ok(val) = std::env::var(var) {
+                    self.api_key = Some(val);
+                }
+            }
+        }
+    }
 }
 
 /// Retrieval settings
@@ -941,6 +1019,43 @@ impl RawAgentConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rag_api_keys_never_leak_on_serialize() {
+        let canary = "sk-rag-LEAK-CANARY-999";
+        let embeddings = EmbeddingsConfig {
+            provider: "openai".into(),
+            model: Some("text-embedding-3-small".into()),
+            api_key: Some(canary.to_string()),
+            dimension: None,
+        };
+        let store = VectorStoreConfig {
+            store_type: VectorStoreType::Chroma,
+            endpoint: None,
+            collection: "docs".into(),
+            api_key: Some(canary.to_string()),
+            namespace: None,
+            embedding_dim: None,
+        };
+        let ej = serde_json::to_string(&embeddings).unwrap();
+        let sj = serde_json::to_string(&store).unwrap();
+        assert!(!ej.contains(canary), "embeddings leaked key: {ej}");
+        assert!(!sj.contains(canary), "vector store leaked key: {sj}");
+    }
+
+    #[test]
+    fn embeddings_reresolves_redacted_key_from_env() {
+        std::env::set_var("OPENAI_API_KEY", "sk-live-from-env");
+        let mut cfg = EmbeddingsConfig {
+            provider: "openai".into(),
+            model: None,
+            api_key: Some(crate::core::llm::REDACTED.to_string()),
+            dimension: None,
+        };
+        cfg.resolve_api_key_from_env();
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-live-from-env"));
+        std::env::remove_var("OPENAI_API_KEY");
+    }
 
     #[test]
     fn test_config_parsing() {
