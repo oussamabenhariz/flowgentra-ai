@@ -145,14 +145,13 @@ impl<S: State + Send + Sync + serde::Serialize + serde::de::DeserializeOwned> Ch
     }
 
     async fn load(&self, thread_id: &str, step: usize) -> Result<Option<Checkpoint<S>>> {
-        let row = sqlx::query(
-            "SELECT * FROM flowgentra_checkpoints WHERE thread_id = ? AND step = ?",
-        )
-        .bind(thread_id)
-        .bind(step as i64)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| db_err("load", e))?;
+        let row =
+            sqlx::query("SELECT * FROM flowgentra_checkpoints WHERE thread_id = ? AND step = ?")
+                .bind(thread_id)
+                .bind(step as i64)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| db_err("load", e))?;
 
         row.as_ref().map(Self::row_to_checkpoint).transpose()
     }
@@ -213,7 +212,9 @@ mod tests {
     use crate::core::state_graph::message_graph::MessageState;
 
     async fn mem_cp() -> SqliteCheckpointer {
-        SqliteCheckpointer::connect("sqlite::memory:").await.unwrap()
+        SqliteCheckpointer::connect("sqlite::memory:")
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -234,17 +235,21 @@ mod tests {
         let cp = mem_cp().await;
         for step in 0..3 {
             let state = MessageState::new(vec![Message::user(format!("s{step}"))]);
-            cp.save(&Checkpoint::new("t1".into(), step, format!("n{step}"), state))
-                .await
-                .unwrap();
+            cp.save(&Checkpoint::new(
+                "t1".into(),
+                step,
+                format!("n{step}"),
+                state,
+            ))
+            .await
+            .unwrap();
         }
         let latest: Checkpoint<MessageState> = cp.load_latest("t1").await.unwrap().unwrap();
         assert_eq!(latest.step, 2);
-        let listed = <SqliteCheckpointer as Checkpointer<MessageState>>::list_checkpoints(
-            &cp, "t1",
-        )
-        .await
-        .unwrap();
+        let listed =
+            <SqliteCheckpointer as Checkpointer<MessageState>>::list_checkpoints(&cp, "t1")
+                .await
+                .unwrap();
         assert_eq!(listed.len(), 3);
     }
 

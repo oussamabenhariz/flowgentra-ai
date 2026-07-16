@@ -59,11 +59,20 @@ behind with each release.
 
 ## Sequencing
 
-1. Executor superstep support + per-key reducer merge (core, tested).
-2. `AgentConfig → StateGraphBuilder<DynState>` builder fn behind a feature
-   flag; `Agent::run*` switches over; legacy path kept for one minor release
-   behind `legacy-runtime` feature.
-3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`.
+1. ✅ Executor superstep support + per-key reducer merge (core, tested).
+2. ✅ `AgentConfig → StateGraph<DynState>` builder fn:
+   `core::agent::build_state_graph` + `can_bridge`
+   (`agent/state_graph_bridge.rs`). Handles plain handler nodes, fixed edges
+   (incl. parallel fan-out), and named conditional edges; `can_bridge`
+   returns false for planner/supervisor/subgraph/eval/retry/timeout/loop/
+   memory/human-in-the-loop node types, per-node MCPs, and RAG/planner graph
+   features. Tested (bridge runs handlers in order + conditional routing).
+   **Remaining:** wire `Agent::run*` to select the bridge when `can_bridge`
+   and fall back to the legacy runtime otherwise; then port the unbridgeable
+   node types (needs recorded planner/supervisor/MCP fixtures — the risk
+   flagged below).
+3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`
+   (rustdoc deprecation-planned notices already in place).
 4. Delete at 1.0.
 
 ## Risks

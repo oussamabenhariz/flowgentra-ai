@@ -38,9 +38,9 @@ pub use edge::{Edge, FixedEdge, END, START};
 pub use error::{interrupt, Result, StateGraphError};
 pub use executor::{StateGraph, StateGraphBuilder, SubgraphNode};
 pub use file_checkpointer::FileCheckpointer;
+pub use message_graph::{MessageGraphBuilder, MessageState, MessageStateUpdate};
 #[cfg(feature = "sqlite")]
 pub use sqlite_checkpointer::SqliteCheckpointer;
-pub use message_graph::{MessageGraphBuilder, MessageState, MessageStateUpdate};
 /// Compiled message-centric graph. Returned by [`MessageGraphBuilder::compile`].
 pub type MessageGraph = StateGraph<MessageState>;
 pub use node::{FunctionNode, Node};

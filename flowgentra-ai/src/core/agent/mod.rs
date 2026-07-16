@@ -1297,6 +1297,9 @@ fn from_config_path_impl(
 mod memory_aware;
 pub use memory_aware::{MemoryAwareAgent, MemoryStats};
 
+pub mod state_graph_bridge;
+pub use state_graph_bridge::{build_state_graph, can_bridge, ConfigCondition};
+
 // =============================================================================
 // Built-in Node Handler Wrappers
 //

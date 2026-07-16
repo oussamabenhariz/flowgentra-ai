@@ -607,9 +607,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             // ── Parallel superstep: >1 node in the frontier ──────────────────
             if frontier.len() > 1 {
                 if !skip_interrupt_once {
-                    if let Some(node) = frontier
-                        .iter()
-                        .find(|n| self.interrupt_before.contains(*n))
+                    if let Some(node) = frontier.iter().find(|n| self.interrupt_before.contains(*n))
                     {
                         return Err(StateGraphError::InterruptedAtBreakpoint {
                             node: node.clone(),
@@ -857,8 +855,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             node_ctx.set_event_broadcaster(Arc::clone(&self.broadcaster));
             let branch_state = state.clone();
             self.broadcaster.node_started(name, step);
-            join_set
-                .spawn(async move { (idx, node.execute(&branch_state, &node_ctx).await) });
+            join_set.spawn(async move { (idx, node.execute(&branch_state, &node_ctx).await) });
         }
 
         // Collect results indexed by wave position so the merge order is the
@@ -887,13 +884,9 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                 }
                 Some(Err(StateGraphError::InterruptedByNode { payload, .. })) => {
                     // Checkpoint the pre-merge state so resume re-runs this node.
-                    let checkpoint = Checkpoint::new(
-                        thread_id.to_string(),
-                        step,
-                        name.clone(),
-                        state.clone(),
-                    )
-                    .with_metadata("interrupted_at", name.clone());
+                    let checkpoint =
+                        Checkpoint::new(thread_id.to_string(), step, name.clone(), state.clone())
+                            .with_metadata("interrupted_at", name.clone());
                     self.checkpointer.save(&checkpoint).await?;
                     return Err(StateGraphError::InterruptedByNode {
                         node: name.clone(),
@@ -920,13 +913,9 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         // One checkpoint per superstep; the wave is recorded so resume can
         // recompute the union of successors.
         let wave_json = serde_json::to_string(&wave).unwrap_or_else(|_| "[]".to_string());
-        let checkpoint = Checkpoint::new(
-            thread_id.to_string(),
-            step,
-            wave.join("+"),
-            state.clone(),
-        )
-        .with_metadata("wave", wave_json);
+        let checkpoint =
+            Checkpoint::new(thread_id.to_string(), step, wave.join("+"), state.clone())
+                .with_metadata("wave", wave_json);
         self.checkpointer.save(&checkpoint).await?;
 
         if let Some(node) = wave.iter().find(|n| self.interrupt_after.contains(*n)) {
@@ -1204,7 +1193,11 @@ mod superstep_tests {
             .unwrap();
         let contents: Vec<&str> = result.messages.iter().map(|m| m.content.as_str()).collect();
         // All three branches ran (Append reducer accumulated all), sorted merge order.
-        assert_eq!(contents, vec!["go", "start", "b1", "b2", "b3", "join"], "{contents:?}");
+        assert_eq!(
+            contents,
+            vec!["go", "start", "b1", "b2", "b3", "join"],
+            "{contents:?}"
+        );
     }
 
     #[tokio::test]
@@ -1279,7 +1272,10 @@ mod superstep_tests {
             .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
             .await
             .unwrap_err();
-        assert!(matches!(err, StateGraphError::InterruptedAtBreakpoint { .. }));
+        assert!(matches!(
+            err,
+            StateGraphError::InterruptedAtBreakpoint { .. }
+        ));
 
         let final_state = graph.resume("t1").await.unwrap();
         let contents: Vec<&str> = final_state
@@ -1288,7 +1284,11 @@ mod superstep_tests {
             .map(|m| m.content.as_str())
             .collect();
         // Branches ran exactly once; join ran after resume.
-        assert_eq!(contents, vec!["go", "start", "b1", "b2", "join"], "{contents:?}");
+        assert_eq!(
+            contents,
+            vec!["go", "start", "b1", "b2", "join"],
+            "{contents:?}"
+        );
     }
 }
 

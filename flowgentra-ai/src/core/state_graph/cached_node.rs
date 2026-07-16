@@ -134,11 +134,7 @@ impl<S: State + Send + Sync + 'static> Node<S> for CachedNode<S> {
         let mut cache = self.cache.lock().await;
         if cache.len() >= self.max_entries {
             // Evict the oldest entry (simple O(n) scan — caches are small).
-            if let Some(&oldest) = cache
-                .iter()
-                .min_by_key(|(_, e)| e.inserted)
-                .map(|(k, _)| k)
-            {
+            if let Some(&oldest) = cache.iter().min_by_key(|(_, e)| e.inserted).map(|(k, _)| k) {
                 cache.remove(&oldest);
             }
         }
