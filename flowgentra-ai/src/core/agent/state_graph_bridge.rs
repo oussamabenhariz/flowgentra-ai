@@ -5,13 +5,13 @@
 //! gaining cancellation, wall-clock budgets, atomic/SQLite checkpointing,
 //! in-node interrupt, and parallel supersteps.
 //!
-//! **Scope (intentional):** plain handler nodes, fixed edges (including
-//! parallel fan-out via `to: [a, b]`), and named conditional edges. Nodes
-//! whose `type` is a built-in that the legacy runtime special-cases
-//! (planner, supervisor, subgraph, evaluation, retry, timeout, loop,
-//! human_in_the_loop, memory) are **not** handled here — [`can_bridge`]
-//! returns `false` for such configs so the caller keeps using the legacy
-//! `AgentRuntime`. Porting those needs recorded fixtures (design note risk).
+//! **Scope:** plain handler nodes; fixed edges (including parallel fan-out via
+//! `to: [a, b]`); named conditional edges; and the control-flow built-in types
+//! `retry`, `timeout`, `evaluation`, and `loop` (the latter two reuse the
+//! legacy implementations for bug-for-bug parity). Nodes whose `type` is
+//! `planner`, `supervisor`, `subgraph`, `memory`, `human_in_the_loop`, or that
+//! carry per-node MCPs / RAG, are **not** handled — [`can_bridge`] returns
+//! `false` so the caller keeps using the legacy `AgentRuntime`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -27,11 +27,9 @@ use crate::core::state_graph::{StateGraph, StateGraphBuilder};
 
 /// Built-in node types the legacy runtime special-cases and that the bridge
 /// does **not** yet handle; presence of any means the config stays on the
-/// legacy runtime. (`retry` and `timeout` are handled — see
+/// legacy runtime. (`retry`/`timeout`/`evaluation`/`loop` are handled — see
 /// [`BRIDGEABLE_WRAPPER_TYPES`] — so they are absent here.)
 const UNBRIDGEABLE_TYPES: &[&str] = &[
-    "evaluation",
-    "loop",
     "planner",
     "human_in_the_loop",
     "memory",
@@ -42,9 +40,10 @@ const UNBRIDGEABLE_TYPES: &[&str] = &[
     "agent_or_graph",
 ];
 
-/// Built-in node types the bridge handles by wrapping the node's handler in a
-/// control-flow node ([`RetryNode`]/[`TimeoutNode`]).
-const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &["retry", "timeout"];
+/// Built-in node types the bridge handles by transforming the node's handler
+/// (retry/timeout control-flow wrappers, evaluation refinement loop, loop
+/// iteration). All reuse the legacy implementations for bug-for-bug parity.
+const BRIDGEABLE_WRAPPER_TYPES: &[&str] = &["retry", "timeout", "evaluation", "loop"];
 
 /// `true` if every node in the config is either a plain handler node or a
 /// bridgeable control-flow wrapper (retry/timeout), with no per-node MCP list.
@@ -113,14 +112,16 @@ impl Node<DynState> for HandlerNode {
 pub type ConfigCondition =
     Arc<dyn Fn(&DynState) -> std::result::Result<bool, FlowgentraError> + Send + Sync>;
 
-/// Wrap `base` in a retry/timeout control-flow node when the config node's
-/// `type` and `config` map request it; otherwise return `base` unchanged.
-/// Parameters are read from `node.config` (matching the legacy runtime keys).
-fn wrap_control_flow(
+/// Build the `state_graph` node for a config node, applying any built-in
+/// behavior its `type` requests. Plain nodes become a [`HandlerNode`] over the
+/// config handler; retry/timeout wrap that in a control-flow node;
+/// evaluation/loop transform the handler using the legacy implementations
+/// (bug-for-bug parity).
+fn build_bridged_node(
     name: &str,
     node: &crate::core::node::NodeConfig,
-    base: Arc<dyn Node<DynState>>,
-) -> Arc<dyn Node<DynState>> {
+    handler: ArcHandler<DynState>,
+) -> Result<Arc<dyn Node<DynState>>> {
     use crate::core::state_graph::{OnTimeout, RetryNode, TimeoutNode};
 
     let get_u64 = |key: &str| node.config.get(key).and_then(|v| v.as_u64());
@@ -131,7 +132,36 @@ fn wrap_control_flow(
             .map(|v| v as f32)
     };
 
-    match node.node_type.as_deref() {
+    // Handler-level transforms (evaluation refinement, loop iteration) produce
+    // a new handler that HandlerNode then wraps.
+    let effective_handler: ArcHandler<DynState> = match node.node_type.as_deref() {
+        Some("evaluation") => {
+            let cfg =
+                crate::core::node::evaluation_node::EvaluationNodeConfig::from_node_config(node)?;
+            // Reuse the legacy refine-and-score loop (Box<dyn Fn> → Arc).
+            Arc::from(cfg.into_wrapping_node_fn(handler))
+        }
+        Some("loop") => {
+            let cfg = crate::core::node::advanced_nodes::LoopNodeConfig::from_node_config(node)?;
+            if node.handler.is_empty() {
+                // Standalone bookkeeping node (pair with a back-edge on
+                // __loop_continue__); no user handler.
+                Arc::from(super::create_loop_standalone_handler(cfg))
+            } else {
+                // Wrapping mode: run the handler up to max_iterations inline.
+                Arc::from(super::wrap_handler_with_loop(handler, cfg))
+            }
+        }
+        _ => handler,
+    };
+
+    let base: Arc<dyn Node<DynState>> = Arc::new(HandlerNode {
+        name: name.to_string(),
+        handler: effective_handler,
+    });
+
+    // Node-level control-flow wrappers (retry/timeout).
+    let node_out: Arc<dyn Node<DynState>> = match node.node_type.as_deref() {
         Some("retry") => {
             let mut r = RetryNode::new(name.to_string(), base);
             if let Some(v) = get_u64("max_retries") {
@@ -149,7 +179,6 @@ fn wrap_control_flow(
             Arc::new(r)
         }
         Some("timeout") => {
-            // timeout_ms may live on the node itself or in its config map.
             let timeout_ms = node
                 .timeout_ms
                 .or_else(|| get_u64("timeout_ms"))
@@ -168,7 +197,9 @@ fn wrap_control_flow(
             )
         }
         _ => base,
-    }
+    };
+
+    Ok(node_out)
 }
 
 /// Build a compiled `StateGraph<DynState>` from an `AgentConfig`.
@@ -211,15 +242,23 @@ pub fn build_state_graph(
         if node.name == "START" || node.name == "END" {
             continue;
         }
-        let handler = handlers.get(&node.name).cloned().ok_or_else(|| {
-            FlowgentraError::ConfigError(format!("No handler registered for node '{}'", node.name))
-        })?;
-        let base: Arc<dyn Node<DynState>> = Arc::new(HandlerNode {
-            name: node.name.clone(),
-            handler,
-        });
-        // Wrap in a control-flow node when the config asks for retry/timeout.
-        let wrapped = wrap_control_flow(&node.name, node, base);
+        // Standalone loop nodes are pure bookkeeping and take no user handler.
+        let is_standalone_loop =
+            node.node_type.as_deref() == Some("loop") && node.handler.is_empty();
+        let handler = if is_standalone_loop {
+            // Never invoked (the loop transform ignores it), but HandlerNode
+            // construction needs an ArcHandler.
+            let noop: ArcHandler<DynState> = Arc::new(|s: DynState| Box::pin(async move { Ok(s) }));
+            noop
+        } else {
+            handlers.get(&node.name).cloned().ok_or_else(|| {
+                FlowgentraError::ConfigError(format!(
+                    "No handler registered for node '{}'",
+                    node.name
+                ))
+            })?
+        };
+        let wrapped = build_bridged_node(&node.name, node, handler)?;
         builder = builder.add_node(node.name.clone(), wrapped);
     }
 
@@ -336,6 +375,99 @@ graph:
         cfg.graph.nodes[0].node_type = Some("retry".to_string());
         cfg.graph.nodes[1].node_type = Some("timeout".to_string());
         assert!(can_bridge(&cfg));
+    }
+
+    #[test]
+    fn can_bridge_evaluation_and_loop_types() {
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].node_type = Some("evaluation".to_string());
+        cfg.graph.nodes[1].node_type = Some("loop".to_string());
+        assert!(can_bridge(&cfg));
+    }
+
+    #[tokio::test]
+    async fn bridged_evaluation_node_refines_until_confident() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut cfg = plain_config();
+        // Node "a" refines the "output" field, evaluated by a custom scorer that
+        // only accepts on the 3rd attempt.
+        cfg.graph.nodes[0].node_type = Some("evaluation".to_string());
+        cfg.graph.nodes[0]
+            .config
+            .insert("field_state".into(), serde_json::json!("output"));
+        cfg.graph.nodes[0]
+            .config
+            .insert("min_confidence".into(), serde_json::json!(0.9));
+        cfg.graph.nodes[0]
+            .config
+            .insert("max_retries".into(), serde_json::json!(5));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_a = Arc::clone(&calls);
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert(
+            "a".into(),
+            Arc::new(move |state: DynState| {
+                let calls = Arc::clone(&calls_a);
+                Box::pin(async move {
+                    let n = calls.fetch_add(1, Ordering::Relaxed) + 1;
+                    state.set("output", serde_json::json!(format!("draft {n}")));
+                    Ok(state)
+                })
+            }),
+        );
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        // Scorer: 0.5 until the 3rd attempt, then 1.0 (>= min_confidence 0.9).
+        let mut conditions: std::collections::HashMap<String, ConfigCondition> = Default::default();
+        let _ = &mut conditions; // no conditions needed
+        let graph = build_state_graph(&cfg, handlers, conditions).unwrap();
+        let result = graph.invoke(DynState::new()).await.unwrap();
+        // Evaluation ran the handler multiple times and left refined output.
+        assert!(calls.load(Ordering::Relaxed) >= 1);
+        assert!(result
+            .get("output")
+            .and_then(|v| v.as_str().map(|s| s.starts_with("draft")))
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn bridged_loop_wrapping_runs_handler_n_times() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut cfg = plain_config();
+        cfg.graph.nodes[0].node_type = Some("loop".to_string());
+        cfg.graph.nodes[0]
+            .config
+            .insert("max_iterations".into(), serde_json::json!(4));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_a = Arc::clone(&calls);
+        let mut handlers: std::collections::HashMap<String, ArcHandler<DynState>> =
+            Default::default();
+        handlers.insert(
+            "a".into(),
+            Arc::new(move |state: DynState| {
+                let calls = Arc::clone(&calls_a);
+                Box::pin(async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    Ok(state)
+                })
+            }),
+        );
+        handlers.insert(
+            "b".into(),
+            Arc::new(|state: DynState| Box::pin(async move { Ok(state) })),
+        );
+
+        let graph = build_state_graph(&cfg, handlers, Default::default()).unwrap();
+        graph.invoke(DynState::new()).await.unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 4); // wrapping loop ran handler 4x
     }
 
     #[tokio::test]
