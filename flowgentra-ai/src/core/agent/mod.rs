@@ -434,6 +434,12 @@ impl Agent {
     }
 
     /// Set the checkpointer (e.g. for thread-scoped state persistence). Can also be set via config.yaml `memory.checkpointer`.
+    ///
+    /// Note: this affects the legacy runtime. When the config is bridged onto
+    /// the state_graph engine (plain-handler configs), `run_with_thread` uses
+    /// the executor's own in-memory checkpointer — equivalent in-session
+    /// semantics. For durable (file/SQLite) checkpointing, build the graph via
+    /// the `StateGraph` API directly.
     pub fn set_checkpointer(&mut self, checkpointer: Arc<MemoryCheckpointer>) -> &mut Self {
         self.runtime.set_checkpointer(checkpointer);
         self
