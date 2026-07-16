@@ -78,11 +78,11 @@ behind with each release.
    `create_planner_handler` — all bug-for-bug parity).
    ✅ `MockLLM` (`core::llm::mock`) provides offline scripted responses — used
    to test the planner routing deterministically.
-   ✅ `memory` nodes (built-in operations via `create_memory_handler`) and
-   per-node MCPs (`_node_mcps` injection in HandlerNode) ported.
-   **Remaining:** `subgraph` and `supervisor` (biggest), plus
-   `human_in_the_loop`. The graph-level planner flag (`graph.planner.enabled`)
-   still routes to the legacy runtime.
+   ✅ `memory`, per-node MCPs, `human_in_the_loop`, and `subgraph` ported (all
+   reuse the legacy handlers).
+   **Remaining:** only `supervisor` (its concurrency sub-scheduler) and the
+   graph-level planner flag (`graph.planner.enabled`) still route to the legacy
+   runtime.
 3. `#[deprecated]` on `Graph`, `AgentRuntime`, `state::MemoryCheckpointer`
    (rustdoc deprecation-planned notices already in place).
 4. Delete at 1.0.
