@@ -316,8 +316,10 @@ mod tests {
 
     #[test]
     fn test_circuit_breaker() {
-        let mut config = RetryConfig::default();
-        config.circuit_breaker_threshold = 3;
+        let config = RetryConfig {
+            circuit_breaker_threshold: 3,
+            ..Default::default()
+        };
 
         assert!(RetryPolicy::check_circuit_breaker(0, &config));
         assert!(RetryPolicy::check_circuit_breaker(2, &config));

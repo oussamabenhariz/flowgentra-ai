@@ -230,7 +230,10 @@ impl LLM for HuggingFaceClient {
 
         // Add authentication for cloud API
         if !self.config.api_key.is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", self.config.api_key.expose()));
+            request = request.header(
+                "Authorization",
+                format!("Bearer {}", self.config.api_key.expose()),
+            );
         }
 
         let response =
@@ -279,7 +282,10 @@ impl LLM for HuggingFaceClient {
 
         // Add authentication for cloud API
         if !self.config.api_key.is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", self.config.api_key.expose()));
+            request = request.header(
+                "Authorization",
+                format!("Bearer {}", self.config.api_key.expose()),
+            );
         }
 
         let response =
@@ -360,8 +366,10 @@ impl LLM for HuggingFaceClient {
                 .header("Content-Type", "application/json");
 
             if !client.config.api_key.is_empty() {
-                request =
-                    request.header("Authorization", format!("Bearer {}", client.config.api_key.expose()));
+                request = request.header(
+                    "Authorization",
+                    format!("Bearer {}", client.config.api_key.expose()),
+                );
             }
 
             let response = match request.json(&payload).send().await {

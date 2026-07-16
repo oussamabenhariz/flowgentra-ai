@@ -1827,46 +1827,6 @@ impl MCPClient for RetryMCPClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn connection_type_methods() {
-        assert_eq!(MCPConnectionType::Sse.as_str(), "sse");
-        assert!(MCPConnectionType::Sse.is_remote());
-        assert!(!MCPConnectionType::Sse.is_local());
-
-        assert!(MCPConnectionType::Stdio.is_local());
-        assert!(!MCPConnectionType::Stdio.is_remote());
-    }
-
-    #[test]
-    fn config_builder_success() {
-        let result = MCPConfig::builder()
-            .name("test_mcp")
-            .sse("http://localhost:8000")
-            .timeout_secs(30)
-            .build();
-
-        assert!(result.is_ok());
-        let config = result.unwrap();
-        assert_eq!(config.name, "test_mcp");
-        assert_eq!(config.connection_type, MCPConnectionType::Sse);
-        assert_eq!(config.connection_settings.timeout, Some(30));
-    }
-
-    #[test]
-    fn config_builder_validation() {
-        let result = MCPConfig::builder()
-            .name("")
-            .sse("http://localhost:8000")
-            .build();
-
-        assert!(result.is_err());
-    }
-}
-
 // =============================================================================
 // Reconnecting MCP Client
 // =============================================================================
@@ -1961,5 +1921,45 @@ impl<F: Fn() -> Arc<dyn MCPClient> + Send + Sync> MCPClient for ReconnectingMCPC
             async move { c.call_tool(&n, a).await }
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_type_methods() {
+        assert_eq!(MCPConnectionType::Sse.as_str(), "sse");
+        assert!(MCPConnectionType::Sse.is_remote());
+        assert!(!MCPConnectionType::Sse.is_local());
+
+        assert!(MCPConnectionType::Stdio.is_local());
+        assert!(!MCPConnectionType::Stdio.is_remote());
+    }
+
+    #[test]
+    fn config_builder_success() {
+        let result = MCPConfig::builder()
+            .name("test_mcp")
+            .sse("http://localhost:8000")
+            .timeout_secs(30)
+            .build();
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.name, "test_mcp");
+        assert_eq!(config.connection_type, MCPConnectionType::Sse);
+        assert_eq!(config.connection_settings.timeout, Some(30));
+    }
+
+    #[test]
+    fn config_builder_validation() {
+        let result = MCPConfig::builder()
+            .name("")
+            .sse("http://localhost:8000")
+            .build();
+
+        assert!(result.is_err());
     }
 }

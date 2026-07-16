@@ -91,10 +91,7 @@ impl EmbeddingsProvider for CachedEmbeddings {
 
         // Every slot was filled either from the cache or the batch above;
         // fall back to an empty embedding rather than panicking if not.
-        Ok(results
-            .into_iter()
-            .map(|r| r.unwrap_or_default())
-            .collect())
+        Ok(results.into_iter().map(|r| r.unwrap_or_default()).collect())
     }
 
     fn get_dimension(&self) -> usize {

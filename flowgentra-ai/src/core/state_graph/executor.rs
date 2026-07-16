@@ -941,8 +941,8 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
 mod budget_tests {
     use super::*;
     use crate::core::llm::Message;
-    use crate::core::state_graph::node::FunctionNode;
     use crate::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
+    use crate::core::state_graph::node::FunctionNode;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     fn looping_node() -> Arc<dyn Node<MessageState>> {
@@ -1021,9 +1021,9 @@ mod resume_tests {
             name,
             move |_state: &MessageState, _ctx: &Context| {
                 Box::pin(async move {
-                    let mut update = MessageStateUpdate::default();
-                    update.messages = Some(vec![Message::assistant(name)]);
-                    Ok(update)
+                    Ok(MessageStateUpdate {
+                        messages: Some(vec![Message::assistant(name)]),
+                    })
                 })
             },
         ))
@@ -1051,7 +1051,10 @@ mod resume_tests {
             .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
             .await
             .unwrap_err();
-        assert!(matches!(err, StateGraphError::InterruptedAtBreakpoint { .. }));
+        assert!(matches!(
+            err,
+            StateGraphError::InterruptedAtBreakpoint { .. }
+        ));
 
         let final_state = graph.resume("t1").await.unwrap();
         let contents: Vec<&str> = final_state

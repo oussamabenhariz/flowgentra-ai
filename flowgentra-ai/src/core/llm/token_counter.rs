@@ -162,7 +162,7 @@ mod tests {
     fn test_estimate_tokens() {
         // "hello world" = 11 chars → ~4 tokens
         let count = estimate_tokens("hello world");
-        assert!(count >= 3 && count <= 5);
+        assert!((3..=5).contains(&count));
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod tests {
         let cw = ContextWindow::new(80).with_reserve(20);
         let messages = vec![
             Message::system("You are helpful."),
-            Message::user(&"Very long message that takes many tokens and should probably be dropped if needed ".repeat(5)),
+            Message::user("Very long message that takes many tokens and should probably be dropped if needed ".repeat(5)),
             Message::assistant("Short reply."),
             Message::user("Latest question."),
         ];

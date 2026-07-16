@@ -485,7 +485,10 @@ mod tests {
             vec!["printf", "escaped \" quote"]
         );
         assert_eq!(tokenize_command("cmd a\\ b").unwrap(), vec!["cmd", "a b"]);
-        assert_eq!(tokenize_command("  spaced   out  ").unwrap(), vec!["spaced", "out"]);
+        assert_eq!(
+            tokenize_command("  spaced   out  ").unwrap(),
+            vec!["spaced", "out"]
+        );
         assert_eq!(tokenize_command("empty ''").unwrap(), vec!["empty", ""]);
         assert!(tokenize_command("unclosed \"quote").is_err());
         assert!(tokenize_command("trailing \\").is_err());

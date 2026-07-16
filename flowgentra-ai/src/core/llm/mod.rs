@@ -138,7 +138,6 @@ mod secret;
 pub mod token_counter;
 
 pub use adapter::{HttpLLM, ProviderAdapter};
-pub use secret::{Secret, REDACTED};
 pub use anthropic::AnthropicClient;
 pub use azure::AzureOpenAIClient;
 pub use cache::CachedLLM;
@@ -150,6 +149,7 @@ pub use mistral::MistralClient;
 pub use ollama::OllamaClient;
 pub use openai::OpenAIClient;
 pub use retry::RetryLLM;
+pub use secret::{Secret, REDACTED};
 
 // =============================================================================
 // LLM Provider
@@ -693,20 +693,25 @@ mod llm_config_secret_tests {
     #[test]
     fn api_key_never_leaks_from_llm_config() {
         let key = "sk-test-LEAK-CANARY-12345";
-        let config = LLMConfig::new(
-            LLMProvider::OpenAI,
-            "gpt-4o".to_string(),
-            key.to_string(),
-        );
+        let config = LLMConfig::new(LLMProvider::OpenAI, "gpt-4o".to_string(), key.to_string());
 
         let debug = format!("{:?}", config);
-        assert!(!debug.contains(key), "Debug output leaked the API key: {debug}");
+        assert!(
+            !debug.contains(key),
+            "Debug output leaked the API key: {debug}"
+        );
 
         let json = serde_json::to_string(&config).expect("serialize");
-        assert!(!json.contains(key), "JSON serialization leaked the API key: {json}");
+        assert!(
+            !json.contains(key),
+            "JSON serialization leaked the API key: {json}"
+        );
 
         let yaml = serde_yml::to_string(&config).expect("serialize yaml");
-        assert!(!yaml.contains(key), "YAML serialization leaked the API key: {yaml}");
+        assert!(
+            !yaml.contains(key),
+            "YAML serialization leaked the API key: {yaml}"
+        );
 
         // The key is still available at the point of use.
         assert_eq!(config.api_key.expose(), key);

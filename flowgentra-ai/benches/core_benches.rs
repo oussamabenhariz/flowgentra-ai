@@ -10,7 +10,7 @@ use std::sync::Arc;
 use flowgentra_ai::core::llm::Message;
 use flowgentra_ai::core::state::{Context, DynState};
 use flowgentra_ai::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
-use flowgentra_ai::core::state_graph::node::{FunctionNode, Node, RouterFn};
+use flowgentra_ai::core::state_graph::node::{FunctionNode, Node};
 use flowgentra_ai::core::state_graph::StateGraph;
 
 fn noop_node(name: &str) -> Arc<dyn Node<MessageState>> {
@@ -58,7 +58,8 @@ fn bench_node_dispatch(c: &mut Criterion) {
     c.bench_function("invoke_10_noop_nodes", |b| {
         b.iter(|| {
             let state = MessageState::new(vec![Message::user("bench")]);
-            rt.block_on(std::hint::black_box(&graph).invoke(state)).unwrap()
+            rt.block_on(std::hint::black_box(&graph).invoke(state))
+                .unwrap()
         })
     });
 }

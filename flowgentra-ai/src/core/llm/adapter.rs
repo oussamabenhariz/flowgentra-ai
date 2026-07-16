@@ -627,7 +627,10 @@ impl ProviderAdapter for OpenAICompatibleAdapter {
     }
 
     fn auth_headers(&self, config: &LLMConfig) -> Vec<(&'static str, String)> {
-        vec![("Authorization", format!("Bearer {}", config.api_key.expose()))]
+        vec![(
+            "Authorization",
+            format!("Bearer {}", config.api_key.expose()),
+        )]
     }
 
     fn parse_response(&self, body: &Value) -> crate::core::error::Result<String> {

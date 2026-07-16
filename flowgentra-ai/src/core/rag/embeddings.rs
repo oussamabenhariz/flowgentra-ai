@@ -232,7 +232,7 @@ mod tests {
         let embedding = embeddings.embed("test text").await.unwrap();
 
         assert_eq!(embedding.len(), 128);
-        assert!(embedding.iter().all(|&v| v >= -1.0 && v <= 1.0));
+        assert!(embedding.iter().all(|&v| (-1.0..=1.0).contains(&v)));
     }
 
     #[tokio::test]

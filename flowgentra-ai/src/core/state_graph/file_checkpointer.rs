@@ -278,7 +278,10 @@ mod tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("corrupt"), "unexpected message: {msg}");
-        assert!(msg.contains("step_0000.json"), "should name the file: {msg}");
+        assert!(
+            msg.contains("step_0000.json"),
+            "should name the file: {msg}"
+        );
     }
 
     #[tokio::test]

@@ -494,7 +494,7 @@ mod tests {
             "<div><p>Paragraph 1.</p><p>Paragraph 2.</p></div><div><p>Paragraph 3.</p></div>";
         let splitter = HTMLTextSplitter::new(40, 0);
         let chunks = splitter.split_text(html);
-        assert!(chunks.len() >= 1);
+        assert!(!chunks.is_empty());
     }
 
     #[test]
