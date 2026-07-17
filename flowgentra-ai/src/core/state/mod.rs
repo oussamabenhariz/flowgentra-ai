@@ -62,9 +62,6 @@ pub use checkpointer::{Checkpointer, FileCheckpointer, MemoryCheckpointer};
 pub mod dyn_state;
 pub use dyn_state::{DynState, DynStateUpdate};
 
-// Legacy dynamic module — kept for compile compatibility, re-exports DynState
-pub mod dynamic;
-
 // State validation (schema-based)
 pub mod state_validation;
 pub(crate) use state_validation::*;
@@ -72,9 +69,3 @@ pub(crate) use state_validation::*;
 // Memory management helpers
 pub mod state_management;
 pub use state_management::{CompressionManager, CustomState, MessageHistory};
-
-// Removed modules (kept as empty files for compilation)
-pub mod scoped;
-pub mod shared;
-pub mod state_ext;
-pub mod typed;
