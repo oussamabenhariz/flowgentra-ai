@@ -4,6 +4,53 @@ All notable changes to the `flowgentra-ai` crate. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning follows SemVer
 (0.x: minor bumps may break).
 
+## [0.3.1] - 2026-07-17
+
+The config-driven `Agent` now runs on the `state_graph` executor for every
+valid config. The legacy `Graph`/`AgentRuntime` engine is deprecated and built
+only as a fallback.
+
+### Changed
+- **BREAKING**: `Agent::runtime_mut()` returns `Option<&mut AgentRuntime>`.
+  The runtime is now built only when the state_graph bridge cannot compile the
+  config (an unresolvable handler, or a supervisor cycle) or when the legacy
+  engine is forced, so it is `None` for essentially every real config. Callers
+  that unconditionally used the returned reference must handle `None`.
+  `set_checkpointer`, `with_checkpointer`, `register_memory_node`, and the
+  auto-evaluation middleware are no-ops on the bridged path.
+- `flowgentra-ai-macros` is now resolved from the workspace via `path`. The
+  dependency previously pinned `0.2.5` with no path, so the crate compiled
+  against the published macros crate and local edits to the workspace member
+  had no effect.
+
+### Deprecated
+- `core::runtime::AgentRuntime` and `core::graph::Graph` — use
+  `core::state_graph::StateGraph`. Both are removed at 1.0 along with the
+  `FLOWGENTRA_FORCE_LEGACY_RUNTIME` escape hatch.
+
+### Added
+- The bridge covers every built-in node type: `retry`, `timeout`,
+  `evaluation`, `loop`, `planner`, `memory`, `human_in_the_loop`, `subgraph`,
+  and `supervisor`/`orchestrator`, plus per-node MCP lists and RAG configs.
+  Supervisors nest recursively (cycles are rejected at build time). Wrapped
+  node types reuse the legacy handler builders, so behavior matches the old
+  engine bug-for-bug.
+- `core::llm::mock::MockLLM` — scripted offline LLM (`always`, `sequence`,
+  `when_contains`, `when`, `otherwise`, usage, streaming, `call_count`) for
+  deterministic tests of LLM-driven paths such as planner routing.
+
+### Removed
+- Dead tombstone modules under `core::state`: `dynamic`, `scoped`, `shared`,
+  `state_ext`, `typed`. Each was an empty file exporting nothing.
+
+### Fixed
+- `CachedNode` hashed serialized state with nondeterministic map ordering, so
+  equivalent states could miss the cache. Hashing is now canonical (sorted
+  keys).
+- Per-node MCP injection mutated the executor's live state, because cloning a
+  `DynState` shares the inner `Arc<RwLock>`. The bridge now deep-clones the
+  node input and keeps `_node_mcps` out of the emitted update.
+
 ## [0.3.0] - 2026-07-16
 
 ### Security
