@@ -3558,4 +3558,55 @@ graph:
             );
         }
     }
+
+    /// F-22 / GIL audit: the Parallel supervisor drives its children on the
+    /// async runtime with `join_all`, so their awaits overlap. This proves the
+    /// wall-clock is ~one child, not the sum — i.e. it actually parallelizes
+    /// I/O-bound work rather than running children back to back.
+    #[tokio::test]
+    async fn parallel_supervisor_runs_children_concurrently() {
+        use crate::core::node::orchestrator_node::{OrchestrationStrategy, SupervisorNodeConfig};
+        use std::time::{Duration, Instant};
+
+        const N: u64 = 4;
+        const CHILD_MS: u64 = 150;
+
+        let children: Vec<(String, ArcHandler<DynState>)> = (0..N)
+            .map(|i| {
+                let name = format!("child{i}");
+                let key = name.clone();
+                let arc: ArcHandler<DynState> = Arc::new(move |state: DynState| {
+                    let key = key.clone();
+                    Box::pin(async move {
+                        tokio::time::sleep(Duration::from_millis(CHILD_MS)).await;
+                        state.set(key, json!(true));
+                        Ok(state)
+                    })
+                });
+                (name, arc)
+            })
+            .collect();
+
+        let cfg = SupervisorNodeConfig::new("sup", (0..N).map(|i| format!("child{i}")))
+            .strategy(OrchestrationStrategy::Parallel);
+        let handler = create_supervisor_handler(cfg, children, HashMap::new());
+
+        let start = Instant::now();
+        handler(DynState::new()).await.expect("supervisor runs");
+        let elapsed = start.elapsed();
+
+        // Concurrent ≈ CHILD_MS; sequential would be N * CHILD_MS. The midpoint
+        // (N/2 children) is a generous, non-flaky separator between the two.
+        assert!(
+            elapsed < Duration::from_millis(CHILD_MS * N / 2),
+            "parallel supervisor took {elapsed:?}; children did not overlap \
+             (sequential would be ~{}ms)",
+            CHILD_MS * N
+        );
+        // Sanity floor: it still awaited at least one full child.
+        assert!(
+            elapsed >= Duration::from_millis(CHILD_MS - 30),
+            "elapsed {elapsed:?} is implausibly short"
+        );
+    }
 }
