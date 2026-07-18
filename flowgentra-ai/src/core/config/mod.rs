@@ -110,6 +110,7 @@ use std::path::Path;
 /// Cached regex for environment variable substitution (${ VAR_NAME })
 /// Compiled once at first use, reused for all subsequent config loads
 static ENV_VAR_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    // PANIC-OK: compile-time-constant regex literal; validated by tests.
     Regex::new(r"\$\{([^}]+)\}").expect("Environment variable substitution regex is valid")
 });
 

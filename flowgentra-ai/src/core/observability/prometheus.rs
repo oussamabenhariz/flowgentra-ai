@@ -61,6 +61,7 @@ impl PrometheusExporter {
         let addr: SocketAddr = addr
             .to_string()
             .parse()
+            // PANIC-OK: the fallback `"0.0.0.0:9090"` is a valid socket-address literal.
             .unwrap_or_else(|_| "0.0.0.0:9090".parse().unwrap());
         Self { addr }
     }

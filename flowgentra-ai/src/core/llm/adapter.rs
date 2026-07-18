@@ -122,6 +122,8 @@ impl HttpLLM {
     /// - Connect timeout: 10 s
     /// - Total request timeout: 120 s
     pub fn new(config: LLMConfig, adapter: impl ProviderAdapter + 'static) -> Self {
+        // PANIC-OK: reqwest client build fails only on TLS backend init failure (broken system
+        // environment), not on these constant timeouts; `new` is infallible by contract.
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(120))
@@ -145,6 +147,8 @@ impl HttpLLM {
         connect_timeout: std::time::Duration,
         request_timeout: std::time::Duration,
     ) -> Self {
+        // PANIC-OK: reqwest client build fails only on TLS backend init failure (broken system
+        // environment), not on caller-supplied timeouts; `with_timeouts` is infallible by contract.
         let client = reqwest::Client::builder()
             .connect_timeout(connect_timeout)
             .timeout(request_timeout)

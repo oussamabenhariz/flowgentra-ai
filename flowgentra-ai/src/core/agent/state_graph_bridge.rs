@@ -570,6 +570,7 @@ pub fn build_state_graph_with_llm(
             .nodes
             .iter()
             .find(|n| n.name == *planner)
+            // PANIC-OK: `planner` was taken from `config.graph.nodes` earlier in this fn.
             .expect("planner name came from the node list");
         let prompt = planner_node
             .config

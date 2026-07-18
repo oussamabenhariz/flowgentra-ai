@@ -41,12 +41,14 @@ impl CachedLLM {
     pub fn new(inner: std::sync::Arc<dyn LLM>) -> Self {
         Self {
             inner,
+            // PANIC-OK: 1000 is a nonzero constant.
             cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
         }
     }
 
     /// Set the maximum number of cached entries.
     pub fn with_max_entries(self, max: usize) -> Self {
+        // PANIC-OK: the fallback `NonZeroUsize::new(1)` uses a nonzero constant.
         let cap = NonZeroUsize::new(max).unwrap_or(NonZeroUsize::new(1).unwrap());
         // Drain existing entries into a new cache with the new capacity.
         let old = self.cache.into_inner().unwrap_or_else(|p| p.into_inner());
@@ -86,6 +88,7 @@ impl CachedLLM {
         }
         let hash = hasher.finalize();
         // Truncate to u64 — still 64 bits of collision resistance
+        // PANIC-OK: a blake3 digest is 32 bytes, so `[..8]` is exactly 8 bytes.
         u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
     }
 

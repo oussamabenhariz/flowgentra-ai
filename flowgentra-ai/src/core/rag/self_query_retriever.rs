@@ -192,6 +192,7 @@ pub fn filter_from_json_object(
 
     match exprs.len() {
         0 => None,
+        // PANIC-OK: this arm matches `len() == 1`, so `next()` yields the element.
         1 => Some(exprs.into_iter().next().unwrap()),
         _ => Some(FilterExpr::and(exprs)),
     }

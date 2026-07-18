@@ -562,6 +562,7 @@ impl GraphCompiler {
 
             if let Some(neighbors) = self.adjacency.get(&node) {
                 for neighbor in neighbors {
+                    // PANIC-OK: in_degree is built from every node; adjacency only references known nodes.
                     let degree = in_degree
                         .get_mut(neighbor)
                         .expect("Neighbor must exist in in_degree map (invalid graph structure)");

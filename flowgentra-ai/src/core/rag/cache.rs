@@ -16,6 +16,7 @@ use super::embeddings::{EmbeddingError, EmbeddingsProvider};
 /// cross-version stability.
 fn content_hash(text: &str) -> u64 {
     let hash = blake3::hash(text.as_bytes());
+    // PANIC-OK: a blake3 digest is 32 bytes, so `[..8]` is exactly 8 bytes.
     u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
 }
 

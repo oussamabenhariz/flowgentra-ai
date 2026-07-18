@@ -527,6 +527,7 @@ impl ConditionBuilder {
         if self.conditions.is_empty() {
             Condition::and(vec![]) // No conditions = always true for AND
         } else if self.conditions.len() == 1 {
+            // PANIC-OK: guarded by the `len() == 1` branch above.
             self.conditions
                 .into_iter()
                 .next()

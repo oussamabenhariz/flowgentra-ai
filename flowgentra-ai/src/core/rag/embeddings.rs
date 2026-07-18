@@ -115,6 +115,7 @@ impl MockEmbeddings {
         hasher.update(&seed.to_le_bytes());
         hasher.update(s.as_bytes());
         let hash = hasher.finalize();
+        // PANIC-OK: a blake3 digest is 32 bytes, so `[..8]` is exactly 8 bytes.
         let raw = u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap());
         (raw % 10000) as f32 / 10000.0
     }
