@@ -513,77 +513,52 @@ impl ToolRegistry {
     /// NewsApi, AlphaVantage, Gmail, Slack) must be registered manually.
     /// Code-execution tools (PythonRepl, NodeJsRepl, Shell) must also be registered manually.
     pub fn with_builtins() -> Self {
-        let mut registry = Self::new();
-
-        // Core utilities
-        registry
-            .register("calculator", Arc::new(builtin::CalculatorTool::new()))
-            .expect("calculator");
-        registry
-            .register("file", Arc::new(builtin::FilesTool::default()))
-            .expect("file");
-
-        // Real HTTP tools
-        registry
-            .register("http_get", Arc::new(web::FetchTool))
-            .expect("http_get");
-        registry
-            .register("web_request", Arc::new(web_extended::WebRequestTool::new()))
-            .expect("web_request");
-
-        // Keyless search and knowledge
-        registry
-            .register(
+        let builtins: Vec<(&str, Arc<dyn Tool>)> = vec![
+            // Core utilities
+            ("calculator", Arc::new(builtin::CalculatorTool::new())),
+            ("file", Arc::new(builtin::FilesTool::default())),
+            // Real HTTP tools
+            ("http_get", Arc::new(web::FetchTool)),
+            ("web_request", Arc::new(web_extended::WebRequestTool::new())),
+            // Keyless search and knowledge
+            (
                 "duckduckgo_search",
                 Arc::new(search::DuckDuckGoSearchTool::default()),
-            )
-            .expect("duckduckgo_search");
-        registry
-            .register("wikipedia", Arc::new(knowledge::WikipediaTool::new()))
-            .expect("wikipedia");
-
-        // Extended file operations
-        registry
-            .register(
+            ),
+            ("wikipedia", Arc::new(knowledge::WikipediaTool::new())),
+            // Extended file operations
+            (
                 "copy_file",
                 Arc::new(files_extended::CopyFileTool::default()),
-            )
-            .expect("copy_file");
-        registry
-            .register(
+            ),
+            (
                 "delete_file",
                 Arc::new(files_extended::DeleteFileTool::default()),
-            )
-            .expect("delete_file");
-        registry
-            .register(
+            ),
+            (
                 "move_file",
                 Arc::new(files_extended::MoveFileTool::default()),
-            )
-            .expect("move_file");
-        registry
-            .register(
+            ),
+            (
                 "file_search",
                 Arc::new(files_extended::FileSearchTool::default()),
-            )
-            .expect("file_search");
+            ),
+            // Data utilities
+            ("json_get", Arc::new(data::JsonGetValueTool)),
+            ("json_keys", Arc::new(data::JsonListKeysTool)),
+            ("csv_query", Arc::new(data::CsvQueryTool)),
+            // Human-in-the-loop
+            ("human_input", Arc::new(human::HumanInputTool)),
+        ];
 
-        // Data utilities
-        registry
-            .register("json_get", Arc::new(data::JsonGetValueTool))
-            .expect("json_get");
-        registry
-            .register("json_keys", Arc::new(data::JsonListKeysTool))
-            .expect("json_keys");
-        registry
-            .register("csv_query", Arc::new(data::CsvQueryTool))
-            .expect("csv_query");
-
-        // Human-in-the-loop
-        registry
-            .register("human_input", Arc::new(human::HumanInputTool))
-            .expect("human_input");
-
+        let mut registry = Self::new();
+        for (name, tool) in builtins {
+            // `register` only rejects duplicate names and these are distinct
+            // literals, so this cannot fail. The assert catches a duplicate
+            // introduced later, which would otherwise drop a tool silently.
+            let registered = registry.register(name, tool);
+            debug_assert!(registered.is_ok(), "duplicate built-in tool: {}", name);
+        }
         registry
     }
 
@@ -759,5 +734,37 @@ mod tests {
         // Try to call non-existent tool
         let result: Result<Value> = registry.call_tool("nonexistent", json!({})).await;
         assert!(result.is_err());
+    }
+
+    /// `with_builtins` ignores the `register` result because duplicate names are
+    /// impossible for its literal table. If a duplicate is ever introduced, the
+    /// tool would be dropped silently — assert the full set is present.
+    #[test]
+    fn with_builtins_registers_every_tool() {
+        let registry = ToolRegistry::with_builtins();
+        let expected = [
+            "calculator",
+            "file",
+            "http_get",
+            "web_request",
+            "duckduckgo_search",
+            "wikipedia",
+            "copy_file",
+            "delete_file",
+            "move_file",
+            "file_search",
+            "json_get",
+            "json_keys",
+            "csv_query",
+            "human_input",
+        ];
+        for name in expected {
+            assert!(
+                registry.has(name),
+                "built-in tool '{}' is missing — likely a duplicate name in the table",
+                name
+            );
+        }
+        assert_eq!(registry.len(), expected.len());
     }
 }

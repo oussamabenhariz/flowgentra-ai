@@ -3,6 +3,8 @@
 use super::{JsonSchema, Tool, ToolDefinition};
 use crate::prelude::*;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
+use scraper::{Html, Selector};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -37,17 +39,20 @@ impl Default for DuckDuckGoSearchTool {
     }
 }
 
+/// DDG Lite result links are `<a class="result-link">`.
+// PANIC-OK: compile-time-constant CSS selector literal.
+static DDG_LINK_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("a.result-link").expect("literal selector is valid"));
+
+/// Snippets appear in the same table row as `<td class="result-snippet">`.
+// PANIC-OK: compile-time-constant CSS selector literal.
+static DDG_SNIPPET_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("td.result-snippet").expect("literal selector is valid"));
+
 fn parse_ddg_lite_html(html: &str, max: usize) -> Vec<Value> {
-    use scraper::{Html, Selector};
-
     let doc = Html::parse_document(html);
-    // DDG Lite result links are <a class="result-link">
-    let link_sel = Selector::parse("a.result-link").unwrap();
-    // Snippets appear in the same table row as <td class="result-snippet">
-    let snip_sel = Selector::parse("td.result-snippet").unwrap();
-
-    let links: Vec<_> = doc.select(&link_sel).collect();
-    let snippets: Vec<_> = doc.select(&snip_sel).collect();
+    let links: Vec<_> = doc.select(&DDG_LINK_SELECTOR).collect();
+    let snippets: Vec<_> = doc.select(&DDG_SNIPPET_SELECTOR).collect();
 
     links
         .iter()

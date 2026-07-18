@@ -1047,6 +1047,7 @@ fn from_config_path_impl(
             let node_config = supervisor_nodes
                 .iter()
                 .find(|n| &n.name == sup_name)
+                // PANIC-OK: `remaining` is seeded from `supervisor_nodes`, so the name is always present.
                 .expect("sup_name originates from supervisor_nodes — must exist");
             use crate::core::node::orchestrator_node::SupervisorNodeConfig;
             let cfg = SupervisorNodeConfig::from_node_config(node_config)?;
@@ -1097,14 +1098,8 @@ fn from_config_path_impl(
                     create_supervisor_handler(cfg, child_arcs, child_mcps)
                 };
                 let arc: ArcHandler<DynState> = Arc::new(move |state| handler(state));
-                built_supervisor_arcs.insert(sup_name.clone(), arc);
-                second_pass_handlers.insert(sup_name.clone(), {
-                    let arc = built_supervisor_arcs
-                        .get(sup_name)
-                        .expect("just inserted above")
-                        .clone();
-                    Box::new(move |state| arc(state))
-                });
+                built_supervisor_arcs.insert(sup_name.clone(), arc.clone());
+                second_pass_handlers.insert(sup_name.clone(), Box::new(move |state| arc(state)));
             } else {
                 still_remaining.push(sup_name.clone());
             }
@@ -1116,6 +1111,7 @@ fn from_config_path_impl(
                 let node_config = supervisor_nodes
                     .iter()
                     .find(|n| &n.name == sup_name)
+                    // PANIC-OK: `still_remaining` is a subset of `remaining`, itself from `supervisor_nodes`.
                     .expect("sup_name originates from supervisor_nodes — must exist");
                 use crate::core::node::orchestrator_node::SupervisorNodeConfig;
                 let cfg = SupervisorNodeConfig::from_node_config(node_config)?;

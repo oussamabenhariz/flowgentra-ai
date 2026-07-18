@@ -75,9 +75,27 @@ fn sandbox_validate_new(sandbox_root: &Path, user_path: &str) -> Result<PathBuf>
     Ok(canonical_parent.join(file_name))
 }
 
+/// Sandbox root used by the `Default` constructors: the current directory,
+/// falling back to the temp directory when it is unavailable (it can be deleted
+/// or made unreadable while the process runs).
+///
+/// The root must stay canonical: `sandbox_validate` canonicalizes the joined
+/// path and compares it against this prefix, so a non-canonical root rejects
+/// every path instead of widening the sandbox. If neither directory can be
+/// canonicalized, the sentinel keeps that fail-closed behavior explicit rather
+/// than panicking. Note that an empty `PathBuf` would be unsafe here — every
+/// path starts with it.
 fn default_sandbox() -> PathBuf {
-    std::fs::canonicalize(std::env::current_dir().expect("cwd")).expect("canonicalize cwd")
+    std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .or_else(|_| std::fs::canonicalize(std::env::temp_dir()))
+        .unwrap_or_else(|_| PathBuf::from(UNRESOLVABLE_SANDBOX))
 }
+
+/// Deliberately unresolvable sandbox root. Any path joined onto it fails to
+/// canonicalize, and any absolute path fails the prefix check, so every
+/// operation is denied.
+const UNRESOLVABLE_SANDBOX: &str = "flowgentra::unresolvable-sandbox";
 
 // =============================================================================
 // CopyFileTool

@@ -228,10 +228,36 @@ impl FilesTool {
     }
 }
 
+impl FilesTool {
+    /// Sandbox the tool to the current directory.
+    ///
+    /// Prefer this over `Default` when you need to know that the current
+    /// directory resolved: it can be deleted or made unreadable while the
+    /// process runs, and `Default` silently falls back to the temp directory.
+    pub fn try_default() -> Result<Self> {
+        let cwd = std::env::current_dir().map_err(|e| {
+            FlowgentraError::ToolError(format!("Cannot read the current directory: {}", e))
+        })?;
+        Self::new_with_root(cwd)
+    }
+}
+
 impl Default for FilesTool {
+    /// Sandbox to the current directory, falling back to the temp directory
+    /// when it is unavailable, then to a root that denies every path.
+    ///
+    /// The root must stay canonical: `safe_path` compares canonicalized paths
+    /// against this prefix, so a non-canonical root rejects everything rather
+    /// than widening the sandbox. Use [`FilesTool::try_default`] to surface the
+    /// failure instead of degrading.
     fn default() -> Self {
-        Self::new_with_root(std::env::current_dir().expect("Failed to get current directory"))
-            .expect("Failed to canonicalize current directory")
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| Self::new_with_root(cwd).ok())
+            .or_else(|| Self::new_with_root(std::env::temp_dir()).ok())
+            .unwrap_or_else(|| Self {
+                sandbox_root: std::path::PathBuf::from("flowgentra::unresolvable-sandbox"),
+            })
     }
 }
 

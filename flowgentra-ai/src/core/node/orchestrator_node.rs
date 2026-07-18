@@ -1871,11 +1871,12 @@ impl PluggableNode<DynState> for SupervisorNode {
             OrchestrationStrategy::Autonomous | OrchestrationStrategy::Dynamic => {
                 // The PluggableNode path is rarely used directly for these strategies.
                 // Full logic lives in create_supervisor_handler (agent/mod.rs).
-                let strategy_name = match &self.config.strategy {
-                    OrchestrationStrategy::Autonomous => "autonomous",
-                    OrchestrationStrategy::Dynamic => "dynamic",
-                    _ => unreachable!(),
-                };
+                let strategy_name =
+                    if matches!(self.config.strategy, OrchestrationStrategy::Autonomous) {
+                        "autonomous"
+                    } else {
+                        "dynamic"
+                    };
                 let elapsed = start.elapsed().as_millis();
                 warn!(
                     "SupervisorNode '{}': {} strategy called via PluggableNode::run; \
