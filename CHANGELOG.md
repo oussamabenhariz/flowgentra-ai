@@ -44,6 +44,15 @@ only as a fallback.
   fallible value trips CI (F-9).
 - `FilesTool::try_default()` — fallible sandbox constructor for callers that
   need to detect an unresolvable current directory instead of degrading.
+- Cost budget (F-10): `StateGraphBuilder::set_max_cost(usd)` +
+  `StateGraphError::CostBudgetExceeded`, enforced between nodes against a
+  `_cost_usd` state field. `observability::record_usage_with_cost` accumulates
+  per-call cost at each call's model price, so multi-model runs are summed
+  correctly; unpriced models count as $0 and warn once. `llm::set_model_price`
+  overrides the built-in table without a release. Config gains a `budget`
+  section (`max_tokens`/`max_cost_usd`/`max_duration_secs`) and a
+  `model_pricing` map — the bridge now applies token/cost/duration budgets to
+  config-driven agents (previously only `max_steps` was wired).
 
 ### Removed
 - Dead tombstone modules under `core::state`: `dynamic`, `scoped`, `shared`,
