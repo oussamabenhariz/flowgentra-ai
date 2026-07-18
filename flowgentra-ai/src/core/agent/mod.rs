@@ -225,6 +225,16 @@ impl Agent {
         handlers: HandlerRegistry<DynState>,
         conditions: ConditionRegistry<DynState>,
     ) -> Result<Self> {
+        // Apply any per-model price overrides from config so the cost budget
+        // and estimated_cost use them ahead of the built-in pricing table.
+        for (model, price) in &config.model_pricing {
+            crate::core::llm::set_model_price(
+                model,
+                price.input_per_million,
+                price.output_per_million,
+            );
+        }
+
         // Create LLM
         let llm = create_llm(&config.llm)?;
 

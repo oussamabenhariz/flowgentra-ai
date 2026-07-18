@@ -74,6 +74,18 @@ pub enum StateGraphError {
     },
 
     #[error(
+        "Graph execution exceeded the cost budget of ${budget:.4} (${used:.4} used) \
+         after node '{node}'. Raise the budget with set_max_cost(), or reduce prompt/\
+         context size. Requires nodes to record cost via record_usage_with_cost(); \
+         unpriced models count as $0."
+    )]
+    CostBudgetExceeded {
+        budget: f64,
+        used: f64,
+        node: String,
+    },
+
+    #[error(
         "Node '{node}' requested an interrupt (human input needed): {payload}. \
          Inspect the payload, then call resume_with_state(thread_id, {{...}}) to \
          inject the answer — the node re-runs with the injected state."

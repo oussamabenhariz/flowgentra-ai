@@ -299,6 +299,57 @@ pub struct AgentConfig {
     /// When enabled, the agent automatically adds AutoEvaluationMiddleware.
     #[serde(default)]
     pub evaluation: Option<EvaluationConfig>,
+
+    /// Optional per-model price overrides for the cost budget, keyed by model
+    /// name (case-insensitive). Values are USD per million tokens. These take
+    /// precedence over the built-in pricing table, so prices can be corrected
+    /// or new models priced without a code release.
+    ///
+    /// ```yaml
+    /// model_pricing:
+    ///   my-custom-model:
+    ///     input_per_million: 1.0
+    ///     output_per_million: 3.0
+    /// ```
+    #[serde(default)]
+    pub model_pricing: HashMap<String, ModelPrice>,
+
+    /// Optional per-invocation budgets (tokens, cost, wall-clock). Enforced by
+    /// the state_graph executor between nodes; a breach aborts the run with the
+    /// matching typed error. Not applied on the deprecated legacy runtime.
+    #[serde(default)]
+    pub budget: BudgetConfig,
+}
+
+/// A model's price in USD per million tokens, split by input and output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPrice {
+    pub input_per_million: f64,
+    pub output_per_million: f64,
+}
+
+/// Per-invocation runaway protection, alongside `graph.recursion_limit`.
+///
+/// ```yaml
+/// budget:
+///   max_tokens: 100000       # cumulative total tokens
+///   max_cost_usd: 5.0        # cumulative estimated USD
+///   max_duration_secs: 60    # wall-clock seconds
+/// ```
+///
+/// Each is optional; an unset field imposes no limit. The cost budget needs
+/// nodes to record usage via `record_usage_with_cost`; the token budget needs
+/// `_token_usage`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BudgetConfig {
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_cost_usd: Option<f64>,
+    #[serde(default)]
+    pub max_duration_secs: Option<f64>,
 }
 
 /// Planner configuration for LLM-driven dynamic routing.
@@ -952,6 +1003,10 @@ struct RawAgentConfig {
     memory: MemoryConfig,
     #[serde(default)]
     evaluation: Option<EvaluationConfig>,
+    #[serde(default)]
+    model_pricing: HashMap<String, ModelPrice>,
+    #[serde(default)]
+    budget: BudgetConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1011,6 +1066,8 @@ impl RawAgentConfig {
             validation_schema: None, // Set via with_validation_schema()
             memory: self.memory,
             evaluation: self.evaluation,
+            model_pricing: self.model_pricing,
+            budget: self.budget,
         };
 
         Ok(config)
@@ -1089,6 +1146,50 @@ state_schema:
         assert!(result.is_ok());
         let config = result.unwrap();
         assert_eq!(config.name, "coding_agent");
+        // Budget and pricing default to empty when omitted.
+        assert!(config.budget.max_cost_usd.is_none());
+        assert!(config.model_pricing.is_empty());
+    }
+
+    #[test]
+    fn parses_budget_and_model_pricing() {
+        let yaml = r#"
+name: budgeted_agent
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ${OPENAI_API_KEY}
+
+graph:
+  nodes:
+    - name: n
+      function: some.handler
+  edges:
+    - from: START
+      to: n
+    - from: n
+      to: END
+
+budget:
+  max_tokens: 100000
+  max_cost_usd: 5.0
+  max_duration_secs: 60
+
+model_pricing:
+  my-custom-model:
+    input_per_million: 1.0
+    output_per_million: 3.0
+"#;
+        let config = AgentConfig::from_yaml_str(yaml).expect("parse");
+        assert_eq!(config.budget.max_tokens, Some(100_000));
+        assert_eq!(config.budget.max_cost_usd, Some(5.0));
+        assert_eq!(config.budget.max_duration_secs, Some(60.0));
+        let price = config
+            .model_pricing
+            .get("my-custom-model")
+            .expect("custom model priced");
+        assert_eq!(price.input_per_million, 1.0);
+        assert_eq!(price.output_per_million, 3.0);
     }
 
     #[test]

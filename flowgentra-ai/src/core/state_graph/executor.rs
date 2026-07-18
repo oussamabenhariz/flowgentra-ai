@@ -46,6 +46,17 @@ fn total_tokens_used<S: State>(state: &S) -> u64 {
         .unwrap_or(0)
 }
 
+/// Read cumulative estimated cost (USD) from a state's `_cost_usd` field.
+///
+/// Returns 0.0 when absent, so the cost budget is a no-op for graphs whose
+/// nodes don't record cost via `record_usage_with_cost`.
+fn total_cost_used<S: State>(state: &S) -> f64 {
+    serde_json::to_value(state)
+        .ok()
+        .and_then(|v| v.get("_cost_usd").and_then(|c| c.as_f64()))
+        .unwrap_or(0.0)
+}
+
 /// State graph builder - fluent API for constructing graphs
 pub struct StateGraphBuilder<S: State> {
     nodes: HashMap<String, Arc<dyn Node<S>>>,
@@ -55,6 +66,7 @@ pub struct StateGraphBuilder<S: State> {
     max_steps: usize,
     max_duration: Option<std::time::Duration>,
     max_tokens: Option<u64>,
+    max_cost: Option<f64>,
     cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     interrupt_before: HashSet<String>,
     interrupt_after: HashSet<String>,
@@ -75,6 +87,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             max_steps: 1000,
             max_duration: None,
             max_tokens: None,
+            max_cost: None,
             cancel_flag: None,
             interrupt_before: HashSet::new(),
             interrupt_after: HashSet::new(),
@@ -163,6 +176,19 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
     /// [`StateGraphError::TokenBudgetExceeded`].
     pub fn set_max_tokens(mut self, max_tokens: u64) -> Self {
         self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set an estimated-cost budget (USD) for a single invocation. Checked
+    /// between nodes against the cumulative `_cost_usd` state field, which
+    /// nodes populate via `record_usage_with_cost`. Breach returns
+    /// [`StateGraphError::CostBudgetExceeded`].
+    ///
+    /// Cost is summed per LLM call at that call's model price (see
+    /// `llm::model_pricing` and `llm::set_model_price`), so runs that mix
+    /// models are priced correctly. Unpriced models contribute $0.
+    pub fn set_max_cost(mut self, max_cost_usd: f64) -> Self {
+        self.max_cost = Some(max_cost_usd);
         self
     }
 
@@ -326,6 +352,7 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
             max_steps: self.max_steps,
             max_duration: self.max_duration,
             max_tokens: self.max_tokens,
+            max_cost: self.max_cost,
             cancel_flag: self.cancel_flag,
             interrupt_before: self.interrupt_before,
             interrupt_after: self.interrupt_after,
@@ -391,6 +418,7 @@ pub struct StateGraph<S: State> {
     max_steps: usize,
     max_duration: Option<std::time::Duration>,
     max_tokens: Option<u64>,
+    max_cost: Option<f64>,
     cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     interrupt_before: HashSet<String>,
     interrupt_after: HashSet<String>,
@@ -763,6 +791,22 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                         }
                     }
 
+                    if let Some(budget) = self.max_cost {
+                        let used = total_cost_used(&current_state);
+                        if used > budget {
+                            let err = StateGraphError::CostBudgetExceeded {
+                                budget,
+                                used,
+                                node: current_node.clone(),
+                            };
+                            self.broadcaster.emit(ExecutionEvent::GraphFailed {
+                                error: err.to_string(),
+                                last_node: Some(current_node.clone()),
+                            });
+                            return Err(err);
+                        }
+                    }
+
                     if self.interrupt_after.contains(&current_node) {
                         return Err(StateGraphError::InterruptedAtBreakpoint {
                             node: current_node,
@@ -967,6 +1011,17 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             let used = total_tokens_used(&state);
             if used > budget {
                 return Err(StateGraphError::TokenBudgetExceeded {
+                    budget,
+                    used,
+                    node: wave.join("+"),
+                });
+            }
+        }
+
+        if let Some(budget) = self.max_cost {
+            let used = total_cost_used(&state);
+            if used > budget {
+                return Err(StateGraphError::CostBudgetExceeded {
                     budget,
                     used,
                     node: wave.join("+"),
@@ -1429,6 +1484,43 @@ mod budget_tests {
                 assert!(used > 250, "used={used}");
             }
             other => panic!("expected TokenBudgetExceeded, got {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cost_budget_stops_execution() {
+        use crate::core::state::{DynState, DynStateUpdate};
+
+        // Each step adds $0.50 to _cost_usd and loops forever.
+        let burn: Arc<dyn Node<DynState>> = Arc::new(FunctionNode::new(
+            "burn",
+            |state: &DynState, _ctx: &Context| {
+                let prior = state
+                    .get("_cost_usd")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                Box::pin(async move {
+                    let mut update = DynStateUpdate::new();
+                    update.insert("_cost_usd".to_string(), serde_json::json!(prior + 0.50));
+                    Ok(update)
+                })
+            },
+        ));
+        let graph = StateGraph::<DynState>::builder()
+            .add_node("burn", burn)
+            .set_entry_point("burn")
+            .add_conditional_edge("burn", Box::new(|_s: &DynState| Ok("burn".to_string())))
+            .set_max_cost(2.0)
+            .compile()
+            .unwrap();
+
+        let err = graph.invoke(DynState::new()).await.unwrap_err();
+        match err {
+            StateGraphError::CostBudgetExceeded { budget, used, .. } => {
+                assert_eq!(budget, 2.0);
+                assert!(used > 2.0, "used={used}");
+            }
+            other => panic!("expected CostBudgetExceeded, got {other}"),
         }
     }
 

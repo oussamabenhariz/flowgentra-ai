@@ -87,3 +87,105 @@ pub fn record_token_usage(state: &mut DynState, usage: &TokenUsage) {
         }),
     );
 }
+
+/// State field holding cumulative estimated cost in USD across a run.
+pub const COST_USAGE_STATE_KEY: &str = "_cost_usd";
+
+/// Record token usage **and** its estimated USD cost for the given model.
+///
+/// Accumulates tokens exactly like [`record_token_usage`], and additionally
+/// adds the per-call cost (from the model's price, including any override set
+/// via `llm::set_model_price`) into the `_cost_usd` field that the cost budget
+/// checks. A run that mixes models sums each call at its own price.
+///
+/// When the model is not priced, the cost contribution is `0.0` and a warning
+/// is logged once per model — the budget under-counts rather than blocking the
+/// run (audit F-10 decision).
+pub fn record_usage_with_cost(state: &mut DynState, usage: &TokenUsage, model: &str) {
+    record_token_usage(state, usage);
+
+    let call_cost = match usage.estimated_cost(model) {
+        Some(c) => c,
+        None => {
+            warn_unpriced_model(model);
+            0.0
+        }
+    };
+
+    let existing = state
+        .get(COST_USAGE_STATE_KEY)
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    state.set(COST_USAGE_STATE_KEY, json!(existing + call_cost));
+}
+
+/// Models already warned about, so the "no price" log fires once each.
+static WARNED_MODELS: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashSet<String>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+fn warn_unpriced_model(model: &str) {
+    if let Ok(mut seen) = WARNED_MODELS.lock() {
+        if seen.insert(model.to_string()) {
+            tracing::warn!(
+                model,
+                "no price found for model; its calls count as $0 toward the cost budget. \
+                 Add one with llm::set_model_price(\"{model}\", input, output).",
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod cost_tests {
+    use super::*;
+
+    fn cost_of(state: &DynState) -> f64 {
+        state
+            .get(COST_USAGE_STATE_KEY)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+    }
+
+    #[test]
+    fn cost_accumulates_across_models() {
+        let mut state = DynState::new();
+
+        // 1M input + 1M output on gpt-4o = $2.50 + $10.00 = $12.50.
+        record_usage_with_cost(&mut state, &TokenUsage::new(1_000_000, 1_000_000), "gpt-4o");
+        assert!(
+            (cost_of(&state) - 12.50).abs() < 1e-9,
+            "{}",
+            cost_of(&state)
+        );
+
+        // gpt-4o-mini: $0.15 + $0.60 = $0.75, summed on top.
+        record_usage_with_cost(
+            &mut state,
+            &TokenUsage::new(1_000_000, 1_000_000),
+            "gpt-4o-mini",
+        );
+        assert!(
+            (cost_of(&state) - 13.25).abs() < 1e-9,
+            "{}",
+            cost_of(&state)
+        );
+
+        // Tokens accumulate too.
+        let tokens = state
+            .get(TOKEN_USAGE_STATE_KEY)
+            .and_then(|v| v.get("total_tokens").and_then(|t| t.as_u64()))
+            .unwrap_or(0);
+        assert_eq!(tokens, 4_000_000);
+    }
+
+    #[test]
+    fn unpriced_model_counts_as_zero() {
+        let mut state = DynState::new();
+        record_usage_with_cost(
+            &mut state,
+            &TokenUsage::new(1000, 1000),
+            "no-such-model-abc",
+        );
+        assert_eq!(cost_of(&state), 0.0);
+    }
+}

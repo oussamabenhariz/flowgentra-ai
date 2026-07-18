@@ -73,7 +73,10 @@ pub use context::ExecutionContext;
 pub use db::{DbError, DocumentStore, SqlDatabase};
 #[allow(deprecated)]
 pub use graph::Graph;
-pub use llm::{LLMConfig, LLMProvider, Message, MessageRole};
+pub use llm::{
+    clear_model_price_overrides, model_pricing, set_model_price, LLMConfig, LLMProvider, Message,
+    MessageRole,
+};
 pub use mcp::{MCPConfig, MCPConnectionType};
 pub use memory::{
     BufferWindowConfig, Checkpoint, CheckpointMetadata, Checkpointer, CheckpointerConfig,
@@ -92,8 +95,8 @@ pub use nodes_trait::{
     RetryNodeConfig, TimeoutNodeConfig, ToolNodeConfig,
 };
 pub use observability::{
-    record_token_usage, FailureSnapshot, GraphVisualizer, NodeTiming, ObservabilityMiddleware,
-    PathSegment, ReplayMode, TOKEN_USAGE_STATE_KEY,
+    record_token_usage, record_usage_with_cost, FailureSnapshot, GraphVisualizer, NodeTiming,
+    ObservabilityMiddleware, PathSegment, ReplayMode, COST_USAGE_STATE_KEY, TOKEN_USAGE_STATE_KEY,
 };
 pub use parallel::{BranchResult, BranchSync, ParallelExecutor};
 pub use plugins::{Plugin, PluginContext, PluginId, PluginRegistry};

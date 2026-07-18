@@ -87,9 +87,43 @@ impl TokenUsage {
     }
 }
 
+/// User-supplied price overrides, keyed by lowercased model name. Checked
+/// before the built-in table so prices can be corrected or new models added
+/// without a release (audit F-10). Populated from config via
+/// [`set_model_price`].
+static PRICING_OVERRIDES: once_cell::sync::Lazy<std::sync::RwLock<HashMap<String, (f64, f64)>>> =
+    once_cell::sync::Lazy::new(|| std::sync::RwLock::new(HashMap::new()));
+
+/// Override or add the price for a model, in USD per million tokens
+/// `(input, output)`. Matched by exact (case-insensitive) model name, ahead of
+/// the built-in [`model_pricing`] table. Idempotent; last write wins.
+pub fn set_model_price(model: &str, input_per_million: f64, output_per_million: f64) {
+    if let Ok(mut map) = PRICING_OVERRIDES.write() {
+        map.insert(
+            model.to_lowercase(),
+            (input_per_million, output_per_million),
+        );
+    }
+}
+
+/// Remove all price overrides, restoring the built-in table. Mainly for tests.
+pub fn clear_model_price_overrides() {
+    if let Ok(mut map) = PRICING_OVERRIDES.write() {
+        map.clear();
+    }
+}
+
 /// Returns (input_price_per_million_tokens, output_price_per_million_tokens) in USD.
+///
+/// Consults user overrides ([`set_model_price`]) by exact model name first,
+/// then the built-in table by provider prefix.
 pub fn model_pricing(model: &str) -> Option<(f64, f64)> {
     let m = model.to_lowercase();
+    if let Ok(overrides) = PRICING_OVERRIDES.read() {
+        if let Some(&price) = overrides.get(&m) {
+            return Some(price);
+        }
+    }
     match m.as_str() {
         // OpenAI
         s if s.starts_with("gpt-4o-mini") => Some((0.15, 0.60)),
@@ -685,6 +719,45 @@ pub trait LLM: Send + Sync {
 
 // Provider-specific clients are in separate modules
 // Use factory::create_llm() to create the appropriate client
+
+#[cfg(test)]
+mod pricing_tests {
+    use super::*;
+
+    #[test]
+    fn estimated_cost_uses_builtin_table() {
+        // gpt-4o: $2.50 input, $10.00 output per million.
+        let usage = TokenUsage::new(1_000_000, 1_000_000);
+        let cost = usage.estimated_cost("gpt-4o").expect("gpt-4o is priced");
+        assert!((cost - 12.50).abs() < 1e-9, "cost={cost}");
+    }
+
+    #[test]
+    fn unpriced_model_has_no_cost() {
+        let usage = TokenUsage::new(1000, 1000);
+        assert!(usage.estimated_cost("totally-unknown-model-xyz").is_none());
+    }
+
+    #[test]
+    fn override_takes_precedence_over_builtin() {
+        // Use a unique model name so the test is order-independent.
+        let model = "pricing-test-override-model";
+        assert!(model_pricing(model).is_none());
+
+        set_model_price(model, 1.0, 3.0);
+        assert_eq!(model_pricing(model), Some((1.0, 3.0)));
+
+        let usage = TokenUsage::new(1_000_000, 1_000_000);
+        let cost = usage.estimated_cost(model).expect("override priced");
+        assert!((cost - 4.0).abs() < 1e-9, "cost={cost}");
+
+        // Override is case-insensitive on the model name.
+        assert_eq!(model_pricing(&model.to_uppercase()), Some((1.0, 3.0)));
+
+        clear_model_price_overrides();
+        assert!(model_pricing(model).is_none());
+    }
+}
 
 #[cfg(test)]
 mod llm_config_secret_tests {

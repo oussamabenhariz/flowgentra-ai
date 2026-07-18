@@ -625,6 +625,15 @@ pub fn build_state_graph_with_llm(
     }
 
     builder = builder.set_max_steps(config.graph.recursion_limit);
+    if let Some(max_tokens) = config.budget.max_tokens {
+        builder = builder.set_max_tokens(max_tokens);
+    }
+    if let Some(max_cost) = config.budget.max_cost_usd {
+        builder = builder.set_max_cost(max_cost);
+    }
+    if let Some(secs) = config.budget.max_duration_secs {
+        builder = builder.set_max_duration(std::time::Duration::from_secs_f64(secs));
+    }
     builder
         .compile()
         .map_err(|e| FlowgentraError::GraphError(e.to_string()))
