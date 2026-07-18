@@ -38,10 +38,17 @@ only as a fallback.
 - `core::llm::mock::MockLLM` — scripted offline LLM (`always`, `sequence`,
   `when_contains`, `when`, `otherwise`, usage, streaming, `call_count`) for
   deterministic tests of LLM-driven paths such as planner routing.
+- Panic-site CI gate (`scripts/check_panics.py`, run in the lint job): every
+  `.unwrap()`/`.expect()`/`panic!`/`unreachable!`/`todo!` in production code
+  must carry a `// PANIC-OK: <reason>` marker, so a new bare unwrap on a
+  fallible value trips CI (F-9).
+- `FilesTool::try_default()` — fallible sandbox constructor for callers that
+  need to detect an unresolvable current directory instead of degrading.
 
 ### Removed
 - Dead tombstone modules under `core::state`: `dynamic`, `scoped`, `shared`,
   `state_ext`, `typed`. Each was an empty file exporting nothing.
+- Orphan `core::examples` module (never declared, never compiled).
 
 ### Fixed
 - `CachedNode` hashed serialized state with nondeterministic map ordering, so
@@ -50,6 +57,11 @@ only as a fallback.
 - Per-node MCP injection mutated the executor's live state, because cloning a
   `DynState` shares the inner `Arc<RwLock>`. The bridge now deep-clones the
   node input and keeps `_node_mcps` out of the emitted update.
+- Reachable panics removed (F-9): `ToolRegistry::with_builtins` no longer
+  `.expect()`s each registration; the default file-tool sandbox falls back to
+  the temp dir (then a deny-all root) instead of panicking when the current
+  directory is unavailable; `OptimizedState::as_mut` uses `Arc::make_mut`,
+  which cannot panic on a live `Weak`.
 
 ## [0.3.0] - 2026-07-16
 
