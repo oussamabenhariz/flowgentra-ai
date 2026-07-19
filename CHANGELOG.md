@@ -10,6 +10,15 @@ The config-driven `Agent` now runs on the `state_graph` executor for every
 valid config. The legacy `Graph`/`AgentRuntime` engine is deprecated and built
 only as a fallback.
 
+### Security
+- Dependency advisories cleared (`cargo deny` green): quick-xml 0.41
+  (RUSTSEC-2026-0194/0195 DoS fixes; ArXiv Atom parsing ported to the new
+  entity-event API with a regression test), pdf-extract 0.12 / lopdf 0.42
+  (RUSTSEC-2026-0187 stack overflow), scraper 0.27 (drops unmaintained
+  fxhash), dotenv → dotenvy (maintained fork), crossbeam-epoch 0.9.20.
+  Remaining: ttf-parser unmaintained (transitive via the fixed lopdf; ignored
+  in deny.toml with rationale).
+
 ### Changed
 - **BREAKING**: `Agent::runtime_mut()` returns `Option<&mut AgentRuntime>`.
   The runtime is now built only when the state_graph bridge cannot compile the
