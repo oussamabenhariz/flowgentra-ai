@@ -141,8 +141,10 @@ fn parse_arxiv_xml(xml: &str) -> Vec<Value> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
 
+    // No trim_text: entities split a tag's text into multiple fragments
+    // (Text / GeneralRef / Text), and trimming each fragment would eat the
+    // spaces around entities. Values are trimmed once, at entry end.
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
 
     let mut entries: Vec<Value> = Vec::new();
     let mut current: HashMap<String, String> = HashMap::new();
@@ -168,14 +170,30 @@ fn parse_arxiv_xml(xml: &str) -> Vec<Value> {
             }
             Ok(Event::Text(ref e)) => {
                 if in_entry && !current_tag.is_empty() {
-                    let text = e.unescape().unwrap_or_default().into_owned();
+                    let text = e.decode().unwrap_or_default();
                     current
                         .entry(current_tag.clone())
-                        .and_modify(|v| {
-                            v.push(' ');
-                            v.push_str(&text);
-                        })
-                        .or_insert(text);
+                        .or_default()
+                        .push_str(&text);
+                }
+            }
+            // quick-xml 0.37+ emits entity references (&amp; / &#38; …) as a
+            // separate event instead of expanding them inside Text.
+            Ok(Event::GeneralRef(ref e)) => {
+                if in_entry && !current_tag.is_empty() {
+                    let resolved: String = if let Ok(Some(ch)) = e.resolve_char_ref() {
+                        ch.to_string()
+                    } else {
+                        let name = e.decode().unwrap_or_default();
+                        quick_xml::escape::resolve_predefined_entity(&name)
+                            .map(|s| s.to_string())
+                            // Unknown entity: keep it verbatim rather than drop it.
+                            .unwrap_or_else(|| format!("&{name};"))
+                    };
+                    current
+                        .entry(current_tag.clone())
+                        .or_default()
+                        .push_str(&resolved);
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -502,5 +520,47 @@ impl Tool for WolframAlphaTool {
             json!({"query": "integrate x^2 dx", "result": "x^3/3 + constant", "success": true}),
             "Compute a mathematical integral",
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins entity + structure semantics of the ArXiv Atom parser across the
+    /// quick-xml 0.31 -> 0.41 upgrade (unescape() was replaced by decode()).
+    #[test]
+    fn parse_arxiv_xml_extracts_entries_and_unescapes_entities() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/1234.5678</id>
+    <title>Graphs &amp; Agents: A &lt;Survey&gt;</title>
+    <summary>State machines &amp; reducers.</summary>
+    <published>2026-01-01T00:00:00Z</published>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/9999.0001</id>
+    <title>Second Entry</title>
+    <summary>Another summary.</summary>
+    <published>2026-02-02T00:00:00Z</published>
+  </entry>
+</feed>"#;
+
+        let entries = parse_arxiv_xml(xml);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0]["title"].as_str().unwrap(),
+            "Graphs & Agents: A <Survey>"
+        );
+        assert_eq!(
+            entries[0]["summary"].as_str().unwrap(),
+            "State machines & reducers."
+        );
+        assert_eq!(entries[1]["title"].as_str().unwrap(), "Second Entry");
+        assert_eq!(
+            entries[0]["id"].as_str().unwrap(),
+            "http://arxiv.org/abs/1234.5678"
+        );
     }
 }

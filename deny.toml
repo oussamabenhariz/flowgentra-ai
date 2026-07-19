@@ -5,6 +5,12 @@
 # Fail CI on any advisory with a fix available; warn otherwise.
 version = 2
 yanked = "deny"
+ignore = [
+    # ttf-parser is unmaintained; pulled transitively by lopdf 0.42 (itself the
+    # RUSTSEC-2026-0187 fix) via pdf-extract 0.12. No fixed path exists yet —
+    # revisit when lopdf swaps font parsers.
+    "RUSTSEC-2026-0192",
+]
 
 [licenses]
 version = 2
@@ -19,6 +25,8 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
+    # Public-domain dedication (constant_time_eq via zip).
+    "CC0-1.0",
 ]
 
 [bans]

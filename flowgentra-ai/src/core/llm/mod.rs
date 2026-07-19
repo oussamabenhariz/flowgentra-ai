@@ -406,7 +406,7 @@ impl LLMConfig {
                 // Try the process environment first
                 std::env::var(var).unwrap_or_else(|_| {
                     // Fall back to .env file in the working directory
-                    let _ = dotenv::dotenv();
+                    let _ = dotenvy::dotenv();
                     std::env::var(var).unwrap_or_default()
                 })
             } else {
