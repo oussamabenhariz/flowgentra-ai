@@ -4,6 +4,12 @@ All notable changes to the `flowgentra-ai` crate. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning follows SemVer
 (0.x: minor bumps may break).
 
+## [0.3.2] - 2026-07-19
+
+No functional changes in the core crate — version-sync release with the
+Python bindings 0.3.2 (which fix the `Conversational.run()` and
+`document_loaders` wrapper regressions).
+
 ## [0.3.1] - 2026-07-17
 
 The config-driven `Agent` now runs on the `state_graph` executor for every
