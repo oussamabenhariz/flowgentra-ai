@@ -119,6 +119,8 @@ let output = agent.run(&state).await?;
 
 ## 📚 Documentation  
 
+**Hosted docs:** [oussamabenhariz.github.io/flowgentra-ai-docs](https://oussamabenhariz.github.io/flowgentra-ai-docs/) — guides, API reference, and examples for both Rust and Python.
+
 | What | Where | Time |
 |------|-------|------|
 | **Getting Started** | [flowgentra-ai/docs/QUICKSTART.md](flowgentra-ai/docs/QUICKSTART.md) | 5 min |
