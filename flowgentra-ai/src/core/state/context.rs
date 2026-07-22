@@ -181,6 +181,26 @@ impl Context {
         self.metadata.get(key)
     }
 
+    /// Get the value handed to this node by `Command::resume(value)`.
+    ///
+    /// Set only on the node that was paused by
+    /// [`interrupt`](crate::core::state_graph::error::interrupt) and resumed via
+    /// [`StateGraph::resume_with_command`](crate::core::state_graph::StateGraph::resume_with_command).
+    /// `None` on every other node call, including a plain [`interrupt`](crate::core::state_graph::error::interrupt)
+    /// that was resumed with `resume()` or `resume_with_update()` instead.
+    ///
+    /// ```ignore
+    /// async fn approve(state: &MyState, ctx: &Context) -> Result<MyStateUpdate> {
+    ///     match ctx.resume_value() {
+    ///         Some(answer) => Ok(update! { approved: answer == "yes" }),
+    ///         None => Err(interrupt(serde_json::json!({"question": "Approve?"}))),
+    ///     }
+    /// }
+    /// ```
+    pub fn resume_value(&self) -> Option<&serde_json::Value> {
+        self.get_metadata("__resume_value")
+    }
+
     /// Get the MCP names assigned to the current node.
     pub fn node_mcps(&self) -> &[String] {
         &self.node_mcps

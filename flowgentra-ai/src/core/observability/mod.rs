@@ -37,6 +37,7 @@
 //! }
 //! ```
 
+pub mod dev_server;
 pub mod events;
 pub mod graph_visualizer;
 mod middleware;
@@ -48,6 +49,7 @@ mod types;
 pub mod ui;
 pub mod visualization;
 
+pub use dev_server::DevServerHandle;
 pub use events::{EventBroadcaster, ExecutionEvent};
 pub use graph_visualizer::{
     ExecutionStatistics, NodeExecutionStatus, NodeStatistics, NodeType, StateGraphEdge,

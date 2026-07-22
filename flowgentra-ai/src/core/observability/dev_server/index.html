@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flowgentra — dev viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0d1117; color: #e6edf3;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: #8b949e; margin: 0 0 24px; font-size: 13px; }
+  .nodes { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .node {
+    padding: 8px 14px; border-radius: 6px; border: 1px solid #30363d;
+    background: #161b22; font-family: ui-monospace, monospace; font-size: 13px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .node.entry { border-color: #58a6ff; }
+  .node.running { background: #9e6a03; border-color: #d29922; }
+  .node.done { background: #14532d; border-color: #2ea043; }
+  .node.failed { background: #4c1414; border-color: #f85149; }
+  .log {
+    border: 1px solid #30363d; border-radius: 6px; background: #161b22;
+    height: 60vh; overflow-y: auto; padding: 12px;
+    font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .log-line { padding: 2px 0; white-space: pre-wrap; word-break: break-all; }
+  .log-line .t { color: #8b949e; }
+  .kind-NodeStarted { color: #d29922; }
+  .kind-NodeCompleted { color: #3fb950; }
+  .kind-NodeFailed, .kind-GraphFailed { color: #f85149; }
+  .kind-GraphStarted, .kind-GraphCompleted { color: #58a6ff; }
+  .status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .status.connected { background: #3fb950; }
+  .status.disconnected { background: #f85149; }
+</style>
+</head>
+<body>
+  <h1>Flowgentra dev viewer</h1>
+  <p class="sub"><span id="status" class="status disconnected"></span><span id="status-text">connecting…</span> — waiting for graph.invoke() calls in the connected process</p>
+
+  <div class="nodes" id="nodes"></div>
+  <div class="log" id="log"></div>
+
+<script>
+const nodesEl = document.getElementById('nodes');
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const statusTextEl = document.getElementById('status-text');
+const nodeEls = {};
+
+function setNode(name, cls) {
+  const el = nodeEls[name];
+  if (!el) return;
+  el.className = 'node' + (el.dataset.entry === '1' ? ' entry' : '') + (cls ? ' ' + cls : '');
+}
+
+fetch('/graph').then(r => r.json()).then(g => {
+  nodesEl.innerHTML = '';
+  for (const name of g.nodes) {
+    const el = document.createElement('div');
+    el.className = 'node' + (name === g.entry_point ? ' entry' : '');
+    el.dataset.entry = name === g.entry_point ? '1' : '0';
+    el.textContent = name;
+    nodesEl.appendChild(el);
+    nodeEls[name] = el;
+  }
+});
+
+function logLine(kindClass, text) {
+  const line = document.createElement('div');
+  line.className = 'log-line ' + kindClass;
+  const t = new Date().toLocaleTimeString();
+  line.innerHTML = '<span class="t">' + t + '</span>  ' + text;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+const es = new EventSource('/events');
+es.onopen = () => {
+  statusEl.className = 'status connected';
+  statusTextEl.textContent = 'connected';
+};
+es.onerror = () => {
+  statusEl.className = 'status disconnected';
+  statusTextEl.textContent = 'disconnected (retrying…)';
+};
+es.onmessage = (ev) => {
+  const event = JSON.parse(ev.data);
+  const kind = Object.keys(event)[0];
+  const payload = event[kind];
+  logLine('kind-' + kind, kind + ' ' + JSON.stringify(payload));
+
+  if (kind === 'NodeStarted') setNode(payload.node_name, 'running');
+  else if (kind === 'NodeCompleted') setNode(payload.node_name, 'done');
+  else if (kind === 'NodeFailed') setNode(payload.node_name, 'failed');
+  else if (kind === 'GraphStarted') {
+    for (const n in nodeEls) setNode(n, null);
+  }
+};
+</script>
+</body>
+</html>

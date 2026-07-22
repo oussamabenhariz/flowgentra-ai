@@ -22,6 +22,7 @@ fn max_nesting_depth() -> usize {
 }
 
 use super::checkpoint::{Checkpoint, Checkpointer, InMemoryCheckpointer};
+use super::command::Command;
 use super::edge::{Edge, FixedEdge, END, START};
 use super::error::{Result, StateGraphError};
 use super::node::{Node, RouterFn};
@@ -102,13 +103,6 @@ impl<S: State + Send + Sync + 'static> StateGraphBuilder<S> {
     pub fn add_node(mut self, name: impl Into<String>, node: Arc<dyn Node<S>>) -> Self {
         self.nodes.insert(name.into(), node);
         self
-    }
-
-    /// Add a compiled subgraph as a node.
-    pub fn add_subgraph(self, name: impl Into<String>, subgraph: StateGraph<S>) -> Self {
-        let name = name.into();
-        let node = Arc::new(SubgraphNode::new(name.clone(), subgraph));
-        self.add_node(name, node)
     }
 
     /// Add a fixed edge (A → B)
@@ -372,6 +366,27 @@ impl<S: State> Default for StateGraphBuilder<S> {
 }
 
 /// A node that delegates execution to a compiled subgraph.
+impl<S> StateGraphBuilder<S>
+where
+    S: State + Send + Sync + 'static,
+    S::Update: serde::de::DeserializeOwned,
+{
+    /// Add a compiled subgraph as a node.
+    ///
+    /// The subgraph must share the parent's state type `S`. It runs to
+    /// completion, then its final state is diffed against what it was given
+    /// to produce a real parent update — see [`subgraph_field_delta`] for how
+    /// Append/Sum-reduced fields avoid being double-counted.
+    ///
+    /// Requires `S::Update: DeserializeOwned`, which every `#[derive(State)]`-
+    /// generated update type satisfies automatically.
+    pub fn add_subgraph(self, name: impl Into<String>, subgraph: StateGraph<S>) -> Self {
+        let name = name.into();
+        let node = Arc::new(SubgraphNode::new(name.clone(), subgraph));
+        self.add_node(name, node)
+    }
+}
+
 pub struct SubgraphNode<S: State> {
     name: String,
     subgraph: Arc<StateGraph<S>>,
@@ -386,22 +401,77 @@ impl<S: State + Send + Sync + 'static> SubgraphNode<S> {
     }
 }
 
+/// Compute what a subgraph node should emit for a single field, given its
+/// value before the subgraph ran (`old`, `None` if the key is new) and after
+/// (`new`).
+///
+/// Returning every key the subgraph's final state holds would double-count
+/// Append/Sum-reduced fields — the parent would re-apply the reducer on top
+/// of values the subgraph already accumulated. So:
+/// * Unchanged fields → excluded from the update.
+/// * An array extended only at the tail (pure append) → just the new elements.
+/// * Any other changed field → the full new value (last-value replacement).
+fn subgraph_field_delta(
+    old: Option<&serde_json::Value>,
+    new: serde_json::Value,
+) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    match old {
+        None => Some(new),                        // new key produced by subgraph
+        Some(old_val) if old_val == &new => None, // unchanged — skip
+        Some(Value::Array(old_arr)) => {
+            if let Value::Array(ref new_arr) = new {
+                if new_arr.len() > old_arr.len() && new_arr[..old_arr.len()] == old_arr[..] {
+                    Some(Value::Array(new_arr[old_arr.len()..].to_vec()))
+                } else {
+                    Some(new) // non-append modification — full replacement
+                }
+            } else {
+                Some(new) // type changed
+            }
+        }
+        Some(_) => Some(new), // changed non-array field
+    }
+}
+
 #[async_trait::async_trait]
-impl<S: State + Send + Sync + 'static> Node<S> for SubgraphNode<S> {
+impl<S> Node<S> for SubgraphNode<S>
+where
+    S: State + Send + Sync + 'static,
+    S::Update: serde::de::DeserializeOwned,
+{
     async fn execute(&self, state: &S, _ctx: &Context) -> Result<S::Update> {
-        // Run the subgraph to completion, then diff to produce an update.
-        // For subgraphs, we run the full graph and return a "replace all" update.
-        // The subgraph internally applies its own updates step by step.
+        // Run the subgraph to completion, then diff its final state against
+        // the state it was given to produce a real (non-no-op) parent update.
+        // `State` can't be diffed generically at the type level, so we go
+        // through JSON: serialize both sides, compute a per-field delta, and
+        // deserialize the delta object as S::Update (whose fields are all
+        // `Option<T>` with `#[serde(default)]`, so keys absent from the delta
+        // deserialize as `None` — i.e. no-op for that field).
         let result = self.subgraph.invoke(state.clone()).await?;
-        // We need to produce an S::Update from the final state.
-        // Since we can't generically diff two S values, we serialize and let
-        // the caller decide. For now, we use a workaround: store the result
-        // in a thread-local and return a default update.
-        // TODO: A better approach is to have the subgraph return the accumulated updates.
-        // For now, we return default (no-op) and the executor will use the subgraph's
-        // final state directly via the SubgraphNode execution path.
-        let _ = result;
-        Ok(S::Update::default())
+
+        let old_json = serde_json::to_value(state)
+            .map_err(|e| StateGraphError::SerializationError(e.to_string()))?;
+        let new_json = serde_json::to_value(&result)
+            .map_err(|e| StateGraphError::SerializationError(e.to_string()))?;
+        let new_map = new_json.as_object().ok_or_else(|| {
+            StateGraphError::SerializationError(
+                "subgraph state did not serialize to a JSON object".to_string(),
+            )
+        })?;
+        let old_map = old_json.as_object();
+
+        let mut delta = serde_json::Map::new();
+        for (key, new_val) in new_map {
+            let old_val = old_map.and_then(|m| m.get(key));
+            if let Some(d) = subgraph_field_delta(old_val, new_val.clone()) {
+                delta.insert(key.clone(), d);
+            }
+        }
+
+        serde_json::from_value(serde_json::Value::Object(delta)).map_err(|e| {
+            StateGraphError::SerializationError(format!("subgraph update deserialize: {e}"))
+        })
     }
 
     fn name(&self) -> &str {
@@ -472,6 +542,29 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// ```
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<ExecutionEvent> {
         self.broadcaster.subscribe()
+    }
+
+    /// Start a local dev server showing this graph's nodes and a live feed
+    /// of execution events — point a browser at `handle.url()` and watch
+    /// `invoke()` calls happen in real time. Not a hosted product (no state
+    /// editing, no time-travel): the smallest thing that's actually useful
+    /// for watching a graph run without wiring up your own dashboard.
+    ///
+    /// Non-blocking — spawns the server in the background and returns
+    /// immediately, so you can start it and then call `invoke()` normally:
+    ///
+    /// ```ignore
+    /// let handle = graph.serve_dev(7878);
+    /// println!("dev viewer: {}", handle.url());
+    /// let result = graph.invoke(state).await?;
+    /// ```
+    pub fn serve_dev(&self, port: u16) -> crate::core::observability::DevServerHandle {
+        crate::core::observability::dev_server::start(
+            port,
+            self.node_names(),
+            self.entry_point().to_string(),
+            self.subscribe(),
+        )
     }
 
     /// Get a reference to the event broadcaster.
@@ -568,7 +661,8 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     }
 
     async fn invoke_inner(&self, thread_id: String, initial_state: S) -> Result<S> {
-        self.invoke_inner_at(thread_id, initial_state, None).await
+        self.invoke_inner_at(thread_id, initial_state, None, None)
+            .await
     }
 
     /// Core execution loop.
@@ -577,11 +671,18 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// with checkpoint numbering starting at `step`, and bypasses those nodes'
     /// `interrupt_before` breakpoints once (otherwise resuming from a
     /// breakpoint would immediately re-trigger it). Used by `resume()`.
+    ///
+    /// `resume_value`: a `Command::resume(value)` payload. Injected into the
+    /// `Context` (readable via `ctx.resume_value()`) of the *first* node
+    /// executed after resuming — i.e. exactly the node the run paused at.
+    /// Only applies to the serial (single-node-frontier) path; a resume that
+    /// lands on a parallel superstep does not receive it.
     async fn invoke_inner_at(
         &self,
         thread_id: String,
         initial_state: S,
         start_override: Option<(Vec<String>, usize)>,
+        resume_value: Option<serde_json::Value>,
     ) -> Result<S> {
         // Serialize concurrent invocations on the same thread_id to prevent
         // checkpoint read-modify-write races when two callers share a thread.
@@ -611,6 +712,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             initial_state
         };
 
+        let mut pending_resume_value = resume_value;
         let mut current_state = state;
         let mut frontier: Vec<String> = start_override
             .as_ref()
@@ -727,6 +829,9 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
             let mut node_ctx = self.context.clone();
             node_ctx.set_node_name(&current_node);
             node_ctx.set_event_broadcaster(Arc::clone(&self.broadcaster));
+            if let Some(v) = pending_resume_value.take() {
+                node_ctx.set_metadata("__resume_value", v);
+            }
 
             tracing::info!(node = %current_node, step = %step, "Executing node");
 
@@ -1052,7 +1157,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// it does not re-run the graph from the entry point, and a breakpoint
     /// that paused the run does not immediately re-trigger.
     pub async fn resume(&self, thread_id: &str) -> Result<S> {
-        self.resume_internal(thread_id, None).await
+        self.resume_internal(thread_id, None, None, None).await
     }
 
     /// Resume execution from a checkpoint with injected state updates.
@@ -1060,10 +1165,25 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
     /// Human-in-the-loop: execution pauses at a breakpoint, the user modifies
     /// state via an update, and execution resumes.
     pub async fn resume_with_update(&self, thread_id: &str, state_update: S::Update) -> Result<S> {
-        self.resume_internal(thread_id, Some(state_update)).await
+        self.resume_internal(thread_id, Some(state_update), None, None)
+            .await
     }
 
-    async fn resume_internal(&self, thread_id: &str, update: Option<S::Update>) -> Result<S> {
+    /// Resume execution using a [`Command`] — unifies state update, a value
+    /// handed to the paused node (`ctx.resume_value()`), and a `goto` override
+    /// in one call. See [`Command`] for details and an example.
+    pub async fn resume_with_command(&self, thread_id: &str, command: Command<S>) -> Result<S> {
+        self.resume_internal(thread_id, command.update, command.goto, command.resume)
+            .await
+    }
+
+    async fn resume_internal(
+        &self,
+        thread_id: &str,
+        update: Option<S::Update>,
+        goto: Option<String>,
+        resume_value: Option<serde_json::Value>,
+    ) -> Result<S> {
         let checkpoint = self
             .checkpointer
             .load_latest(thread_id)
@@ -1083,7 +1203,15 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
         // Exception: a checkpoint written by an in-node interrupt() marks the
         // node that did NOT complete — resume re-runs that node itself so it
         // can read the injected answer from state.
-        let next: Vec<String> = if checkpoint.metadata.contains_key("interrupted_at") {
+        //
+        // `goto` (from `Command::with_goto`) overrides both: resume at the
+        // given node regardless of what the checkpoint says comes next.
+        let next: Vec<String> = if let Some(target) = goto {
+            if !self.nodes.contains_key(&target) && target != END {
+                return Err(StateGraphError::NodeNotFound(target));
+            }
+            vec![target]
+        } else if checkpoint.metadata.contains_key("interrupted_at") {
             vec![checkpoint.node_name.clone()]
         } else {
             let completed: Vec<String> = match checkpoint.metadata.get("wave") {
@@ -1120,6 +1248,7 @@ impl<S: State + Send + Sync + 'static> StateGraph<S> {
                     thread_id.to_string(),
                     state,
                     Some((next, checkpoint.step + 1)),
+                    resume_value,
                 ),
             )
             .await
@@ -1665,5 +1794,259 @@ mod resume_tests {
             .collect();
         // "draft" ran once (not twice), and "publish" actually ran after resume.
         assert_eq!(contents, vec!["go", "draft", "publish"], "{contents:?}");
+    }
+
+    /// `Command::resume(value)` reaches the paused node via `ctx.resume_value()` —
+    /// no need for the caller to know which state field to overwrite.
+    #[tokio::test]
+    async fn command_resume_value_reaches_paused_node() {
+        use crate::core::state_graph::error::interrupt;
+        use crate::core::state_graph::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let gate: Arc<dyn Node<MessageState>> = Arc::new(FunctionNode::new(
+            "gate",
+            |_state: &MessageState, ctx: &Context| {
+                let resume = ctx.resume_value().cloned();
+                Box::pin(async move {
+                    match resume {
+                        Some(v) => Ok(MessageStateUpdate {
+                            messages: Some(vec![Message::assistant(format!("got:{v}"))]),
+                        }),
+                        None => Err(interrupt(serde_json::json!({"question": "approve?"}))),
+                    }
+                })
+            },
+        ));
+
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("gate", gate)
+            .set_entry_point("gate")
+            .add_edge("gate", END)
+            .set_checkpointer(Arc::new(
+                super::super::file_checkpointer::FileCheckpointer::new(tmp.path()).unwrap(),
+            ))
+            .compile()
+            .unwrap();
+
+        graph
+            .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+
+        let final_state = graph
+            .resume_with_command("t1", Command::resume(serde_json::json!("yes")))
+            .await
+            .unwrap();
+        let contents: Vec<&str> = final_state
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(contents.contains(&"got:\"yes\""), "{contents:?}");
+    }
+
+    /// `Command::with_goto` resumes at an arbitrary node, overriding the
+    /// checkpoint's natural successor.
+    #[tokio::test]
+    async fn command_goto_overrides_checkpointed_successor() {
+        use crate::core::state_graph::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("draft", append_node("draft"))
+            .add_node("review", append_node("review"))
+            .add_node("cleanup", append_node("cleanup"))
+            .set_entry_point("draft")
+            .add_edge("draft", "review")
+            .add_edge("review", END)
+            .add_edge("cleanup", END)
+            .interrupt_after("draft")
+            .set_checkpointer(Arc::new(
+                super::super::file_checkpointer::FileCheckpointer::new(tmp.path()).unwrap(),
+            ))
+            .compile()
+            .unwrap();
+
+        graph
+            .invoke_with_id("t1".into(), MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap_err();
+
+        // Skip "review" entirely and jump straight to "cleanup".
+        let final_state = graph
+            .resume_with_command("t1", Command::default().with_goto("cleanup"))
+            .await
+            .unwrap();
+        let contents: Vec<&str> = final_state
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(contents, vec!["go", "draft", "cleanup"], "{contents:?}");
+    }
+}
+
+#[cfg(test)]
+mod subgraph_tests {
+    use super::*;
+    use crate::core::llm::Message;
+    use crate::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
+    use crate::core::state_graph::node::FunctionNode;
+
+    /// A subgraph's contribution must actually reach the parent state — the
+    /// old `SubgraphNode::execute` discarded the subgraph's result and always
+    /// returned a no-op update, so `add_subgraph` silently did nothing.
+    #[tokio::test]
+    async fn subgraph_result_merges_into_parent_state() {
+        let inner: Arc<dyn Node<MessageState>> = Arc::new(FunctionNode::new(
+            "inner_echo",
+            |_state: &MessageState, _ctx: &Context| {
+                Box::pin(async move {
+                    Ok(MessageStateUpdate {
+                        messages: Some(vec![Message::assistant("from_subgraph")]),
+                    })
+                })
+            },
+        ));
+        let subgraph = StateGraph::<MessageState>::builder()
+            .add_node("inner_echo", inner)
+            .set_entry_point("inner_echo")
+            .add_edge("inner_echo", END)
+            .compile()
+            .unwrap();
+
+        let outer_start: Arc<dyn Node<MessageState>> = Arc::new(FunctionNode::new(
+            "outer_start",
+            |_state: &MessageState, _ctx: &Context| {
+                Box::pin(async move {
+                    Ok(MessageStateUpdate {
+                        messages: Some(vec![Message::user("outer")]),
+                    })
+                })
+            },
+        ));
+
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("outer_start", outer_start)
+            .add_subgraph("sub", subgraph)
+            .set_entry_point("outer_start")
+            .add_edge("outer_start", "sub")
+            .add_edge("sub", END)
+            .compile()
+            .unwrap();
+
+        let final_state = graph.invoke(MessageState::new(vec![])).await.unwrap();
+        let contents: Vec<&str> = final_state
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        // Both the outer node's message and the subgraph's message must be
+        // present exactly once — no drop (old bug) and no double-count.
+        assert_eq!(contents, vec!["outer", "from_subgraph"], "{contents:?}");
+    }
+}
+
+#[cfg(test)]
+mod dev_server_tests {
+    use super::*;
+    use crate::core::llm::Message;
+    use crate::core::state_graph::message_graph::{MessageState, MessageStateUpdate};
+    use crate::core::state_graph::node::FunctionNode;
+
+    fn free_port() -> u16 {
+        // Bind to port 0 to let the OS pick a free one, then drop the
+        // listener immediately — good enough for a test (small race window,
+        // negligible in practice for a single-threaded test process).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    #[tokio::test]
+    async fn serve_dev_exposes_graph_and_streams_events() {
+        let echo: Arc<dyn Node<MessageState>> = Arc::new(FunctionNode::new(
+            "echo",
+            |_state: &MessageState, _ctx: &Context| {
+                Box::pin(async move {
+                    Ok(MessageStateUpdate {
+                        messages: Some(vec![Message::assistant("hi")]),
+                    })
+                })
+            },
+        ));
+        let graph = StateGraph::<MessageState>::builder()
+            .add_node("echo", echo)
+            .set_entry_point("echo")
+            .add_edge("echo", END)
+            .compile()
+            .unwrap();
+
+        let port = free_port();
+        let handle = graph.serve_dev(port);
+        // Give the listener a moment to come up.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+
+        // GET / serves the embedded HTML viewer.
+        let index = client
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .unwrap();
+        assert!(index.status().is_success());
+        let body = index.text().await.unwrap();
+        assert!(body.contains("Flowgentra"), "{body}");
+
+        // GET /graph reflects the compiled graph's structure.
+        let graph_json: serde_json::Value = client
+            .get(format!("http://127.0.0.1:{port}/graph"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(graph_json["entry_point"], "echo");
+        assert_eq!(graph_json["nodes"], serde_json::json!(["echo"]));
+
+        // GET /events streams a NodeStarted event once invoke() runs.
+        let events_task = tokio::spawn({
+            let client = client.clone();
+            async move {
+                use futures::StreamExt;
+                let resp = client
+                    .get(format!("http://127.0.0.1:{port}/events"))
+                    .send()
+                    .await
+                    .unwrap();
+                let mut stream = resp.bytes_stream();
+                let mut collected = String::new();
+                while let Some(chunk) = stream.next().await {
+                    collected.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+                    if collected.contains("NodeStarted") {
+                        return collected;
+                    }
+                }
+                collected
+            }
+        });
+
+        // Give the SSE client a moment to connect before triggering events.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        graph
+            .invoke(MessageState::new(vec![Message::user("go")]))
+            .await
+            .unwrap();
+
+        let collected = tokio::time::timeout(std::time::Duration::from_secs(5), events_task)
+            .await
+            .expect("events stream timed out")
+            .unwrap();
+        assert!(collected.contains("NodeStarted"), "{collected}");
+        assert!(collected.contains("echo"), "{collected}");
+
+        handle.shutdown();
     }
 }

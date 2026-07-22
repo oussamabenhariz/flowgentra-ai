@@ -71,7 +71,7 @@ inventory = "0.1"
 # Procedural macros for handler registration.
 # The path makes the workspace member authoritative; the version pin is what
 # gets published to crates.io.
-flowgentra-ai-macros = { version = "0.3.2", path = "../flowgentra-ai-macros" }
+flowgentra-ai-macros = { version = "0.3.3", path = "../flowgentra-ai-macros" }
 
 # Visualization (SVG generation for graphs)
 svg = { version = "0.13" }

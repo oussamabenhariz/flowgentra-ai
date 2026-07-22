@@ -21,6 +21,7 @@
 
 pub mod cached_node;
 pub mod checkpoint;
+pub mod command;
 pub mod control_flow;
 pub mod edge;
 pub mod error;
@@ -28,6 +29,8 @@ pub mod executor;
 pub mod file_checkpointer;
 pub mod message_graph;
 pub mod node;
+#[cfg(feature = "postgres")]
+pub mod postgres_checkpointer;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_checkpointer;
 pub mod tool_node;
@@ -35,12 +38,15 @@ pub mod tool_node;
 // Re-export public API
 pub use cached_node::CachedNode;
 pub use checkpoint::{Checkpoint, CheckpointMigrator, Checkpointer, InMemoryCheckpointer};
+pub use command::Command;
 pub use control_flow::{OnTimeout, RetryNode, TimeoutNode};
 pub use edge::{Edge, FixedEdge, END, START};
 pub use error::{interrupt, Result, StateGraphError};
 pub use executor::{StateGraph, StateGraphBuilder, SubgraphNode};
 pub use file_checkpointer::FileCheckpointer;
 pub use message_graph::{MessageGraphBuilder, MessageState, MessageStateUpdate};
+#[cfg(feature = "postgres")]
+pub use postgres_checkpointer::PostgresCheckpointer;
 #[cfg(feature = "sqlite")]
 pub use sqlite_checkpointer::SqliteCheckpointer;
 /// Compiled message-centric graph. Returned by [`MessageGraphBuilder::compile`].
